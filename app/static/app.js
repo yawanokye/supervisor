@@ -22,6 +22,9 @@ const previousUploadHelp = document.getElementById("previousUploadHelp");
 const mainUploadTitle = document.getElementById("mainUploadTitle");
 const statusFilter = document.getElementById("statusFilter");
 const showAllButton = document.getElementById("showAllButton");
+const aiReviewMode = document.getElementById("aiReviewMode");
+const aiProviderStatus = document.getElementById("aiProviderStatus");
+const aiReviewPanel = document.getElementById("aiReviewPanel");
 
 let currentReview = null;
 let showAll = false;
@@ -162,6 +165,16 @@ function revisionDetailsHtml(item) {
   return source + comparison;
 }
 
+function aiProvenanceHtml(item) {
+  if (!item.ai_reviewed) return "";
+  let text = `${item.ai_primary_provider || "AI"} / ${item.ai_primary_model || "model"}`;
+  if (item.ai_verified) {
+    text += `, verified by ${item.ai_verification_provider || "OpenAI"} / ${item.ai_verification_model || "model"}`;
+  }
+  if (item.ai_disagreement) text += ", reviewer disagreement resolved";
+  return `<p><span class="label">AI review:</span> ${escapeHtml(text)}</p>`;
+}
+
 function findingHtml(item) {
   return `
     <article class="finding" data-status="${escapeHtml(item.status)}">
@@ -173,6 +186,7 @@ function findingHtml(item) {
       <div class="finding-body hidden">
         <p><span class="label">Section:</span> ${escapeHtml(item.section)}</p>
         <p><span class="label">Priority:</span> ${escapeHtml(item.severity)}</p>
+        ${aiProvenanceHtml(item)}
         ${revisionDetailsHtml(item)}
         <p><span class="label">Expert assessment:</span> ${escapeHtml(item.comment)}</p>
         <p><span class="label">Required action:</span> ${escapeHtml(item.required_action)}</p>
@@ -225,6 +239,28 @@ function renderRevisionSourceSummary(review) {
   return sourceRows.join("");
 }
 
+function renderAIReview(review) {
+  const ai = review.ai_review || {};
+  const enabled = Boolean(ai.enabled);
+  aiReviewPanel.classList.toggle("hidden", !enabled && !(ai.warnings || []).length);
+  if (!enabled && !(ai.warnings || []).length) return;
+
+  const mode = String(ai.resolved_mode || "local").replaceAll("_", " ");
+  document.getElementById("aiReviewTitle").textContent = enabled ? `${mode} review` : "Local review fallback";
+  const models = (ai.models_used || []).join(", ") || "Local rule engine";
+  const warnings = (ai.warnings || []).map(value => escapeHtml(value)).join(" · ");
+  document.getElementById("aiReviewDetails").innerHTML = `${escapeHtml(models)}${warnings ? `<br><span class="ai-warning">${warnings}</span>` : ""}`;
+  const stats = [
+    ["AI decisions", ai.primary_reviewed_count || 0],
+    ["OpenAI checks", ai.openai_verified_count || 0],
+    ["Disagreements", ai.disagreement_count || 0],
+    ["Estimated cost", `$${Number(ai.estimated_cost_usd || 0).toFixed(4)}`],
+  ];
+  document.getElementById("aiReviewStats").innerHTML = stats.map(([label, value]) =>
+    `<span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></span>`
+  ).join("");
+}
+
 function renderReview(review) {
   currentReview = review;
   const s = review.summary;
@@ -254,6 +290,7 @@ function renderReview(review) {
     ];
   }
   document.getElementById("metrics").innerHTML = metricRows.join("");
+  renderAIReview(review);
 
   document.getElementById("priorityActions").innerHTML =
     (review.priority_actions || []).map(action => `
@@ -371,4 +408,20 @@ showAllButton.addEventListener("click", () => {
   applyFilter();
 });
 
+async function loadAIStatus() {
+  try {
+    const response = await fetch("/api/ai/status");
+    const status = await response.json();
+    const providers = [];
+    if (status.deepseek_configured) providers.push("DeepSeek configured");
+    if (status.openai_configured) providers.push("OpenAI configured");
+    aiProviderStatus.textContent = providers.length
+      ? `${providers.join(" · ")}. Automatic mode resolves to ${String(status.automatic_mode).replaceAll("_", " ")}.`
+      : "No API keys detected. Automatic mode will use the local checklist engine.";
+  } catch (error) {
+    aiProviderStatus.textContent = "Provider status could not be loaded. The server will validate the selected mode.";
+  }
+}
+
 updateUploadWorkflow();
+loadAIStatus();
