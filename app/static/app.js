@@ -1,26 +1,115 @@
 const form = document.getElementById("reviewForm");
 const fileInput = document.getElementById("fileInput");
 const fileName = document.getElementById("fileName");
+const previousFilesInput = document.getElementById("previousFilesInput");
+const previousFileNames = document.getElementById("previousFileNames");
+const supervisorCommentFilesInput = document.getElementById("supervisorCommentFilesInput");
+const supervisorCommentFileNames = document.getElementById("supervisorCommentFileNames");
+const supervisorCommentsText = document.getElementById("supervisorCommentsText");
+const originalFileInput = document.getElementById("originalFileInput");
+const originalFileName = document.getElementById("originalFileName");
+const revisionReviewFields = document.getElementById("revisionReviewFields");
 const emptyState = document.getElementById("emptyState");
 const loadingState = document.getElementById("loadingState");
 const resultsState = document.getElementById("resultsState");
 const submitButton = document.getElementById("submitButton");
 const chapterField = document.getElementById("chapterField");
+const chapterSelect = document.getElementById("chapterSelect");
+const documentTypeField = document.getElementById("documentTypeField");
+const previousChaptersField = document.getElementById("previousChaptersField");
+const previousUploadTitle = document.getElementById("previousUploadTitle");
+const previousUploadHelp = document.getElementById("previousUploadHelp");
+const mainUploadTitle = document.getElementById("mainUploadTitle");
 const statusFilter = document.getElementById("statusFilter");
 const showAllButton = document.getElementById("showAllButton");
 
 let currentReview = null;
 let showAll = false;
 
+function selectedScope() {
+  return document.querySelector('input[name="review_scope"]:checked')?.value || "chapter";
+}
+
+function selectedDocumentType() {
+  return document.querySelector('input[name="document_type"]:checked')?.value || "chapter_one";
+}
+
+function selectedStage() {
+  return document.querySelector('input[name="submission_stage"]:checked')?.value || "initial";
+}
+
+function updateUploadWorkflow() {
+  const scope = selectedScope();
+  const stage = selectedStage();
+  const chapter = Number(chapterSelect.value || 0);
+  const fullThesis = scope === "full_thesis";
+  const revised = stage === "revised";
+
+  chapterField.classList.toggle("hidden", fullThesis);
+  chapterSelect.required = !fullThesis;
+  chapterSelect.disabled = fullThesis;
+
+  documentTypeField.classList.toggle("hidden", fullThesis || chapter !== 1);
+  previousChaptersField.classList.toggle("hidden", fullThesis || chapter < 2);
+  previousFilesInput.required = !fullThesis && chapter >= 2;
+  previousFilesInput.disabled = fullThesis || chapter < 2;
+
+  revisionReviewFields.classList.toggle("hidden", !revised);
+  supervisorCommentFilesInput.disabled = !revised;
+  supervisorCommentsText.disabled = !revised;
+  originalFileInput.disabled = !revised;
+
+  const prefix = revised ? "Choose the revised " : "Choose ";
+  if (fullThesis) {
+    mainUploadTitle.textContent = revised ? "Choose the revised complete thesis" : "Choose the complete thesis";
+    return;
+  }
+
+  if (chapter === 1) {
+    const proposal = selectedDocumentType() === "proposal";
+    if (revised) {
+      mainUploadTitle.textContent = proposal ? "Choose the revised research proposal" : "Choose the revised Chapter One";
+    } else {
+      mainUploadTitle.textContent = proposal ? "Choose the research proposal" : "Choose Chapter One";
+    }
+  } else if (chapter >= 2) {
+    mainUploadTitle.textContent = `${prefix}Chapter ${chapter} for review`;
+    const last = chapter - 1;
+    previousUploadTitle.textContent = last === 1 ? "Upload Chapter One" : `Upload Chapters 1 to ${last}`;
+    previousUploadHelp.textContent = last === 1
+      ? "Upload Chapter One as a DOCX or PDF so the current chapter can be checked against the problem, objectives, questions, hypotheses, concepts, and variables."
+      : `Upload Chapters 1 to ${last} as one composite DOCX/PDF or as separate files. These files are used to test alignment with Chapter ${chapter}.`;
+  } else {
+    mainUploadTitle.textContent = revised ? "Choose the revised chapter under review" : "Choose the chapter under review";
+  }
+}
+
+function setFileNames(input, target, emptyText) {
+  const names = Array.from(input.files || []).map(file => file.name);
+  target.textContent = names.length ? names.join(" • ") : emptyText;
+}
+
 fileInput.addEventListener("change", () => {
   fileName.textContent = fileInput.files[0]?.name || "No file selected";
 });
 
-document.querySelectorAll('input[name="review_scope"]').forEach(input => {
-  input.addEventListener("change", () => {
-    chapterField.classList.toggle("hidden", input.value === "full_thesis" && input.checked);
-  });
+previousFilesInput.addEventListener("change", () => {
+  setFileNames(previousFilesInput, previousFileNames, "No previous chapter selected");
 });
+
+supervisorCommentFilesInput.addEventListener("change", () => {
+  setFileNames(supervisorCommentFilesInput, supervisorCommentFileNames, "No supervisor-comment file selected");
+});
+
+originalFileInput.addEventListener("change", () => {
+  originalFileName.textContent = originalFileInput.files[0]?.name || "No original chapter selected";
+});
+
+document.querySelectorAll('input[name="review_scope"], input[name="document_type"], input[name="submission_stage"]').forEach(input => {
+  input.addEventListener("change", updateUploadWorkflow);
+});
+
+chapterSelect.addEventListener("change", updateUploadWorkflow);
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({
@@ -37,12 +126,40 @@ function evidenceHtml(item) {
   if (!evidence.length) return "";
   return evidence.slice(0, 2).map(e => {
     const loc = [
+      e.source_filename,
       e.heading,
       e.page != null ? `page ${e.page}` : "",
       e.paragraph != null ? `paragraph ${e.paragraph}` : ""
     ].filter(Boolean).join(", ");
     return `<div class="evidence"><small>${escapeHtml(loc || "Evidence location")}</small>${escapeHtml(e.text)}</div>`;
   }).join("");
+}
+
+function alignmentDetailsHtml(item) {
+  const details = item.alignment_details || {};
+  const unmatched = details.unmatched || [];
+  if (!unmatched.length) return "";
+  return `
+    <div class="alignment-details">
+      <strong>Earlier items not clearly carried forward</strong>
+      <ol>${unmatched.map(value => `<li>${escapeHtml(value)}</li>`).join("")}</ol>
+    </div>`;
+}
+
+function revisionDetailsHtml(item) {
+  if (item.review_type !== "supervisor_comment") return "";
+  const details = item.revision_details || {};
+  const values = [];
+  if (details.current_match_score != null) values.push(`Revised evidence match: ${Math.round(details.current_match_score * 100)}%`);
+  if (details.original_match_score != null) values.push(`Original evidence match: ${Math.round(details.original_match_score * 100)}%`);
+  if (details.passage_similarity != null) values.push(`Original-to-revised similarity: ${Math.round(details.passage_similarity * 100)}%`);
+  const source = item.supervisor_comment_source
+    ? `<p><span class="label">Comment source:</span> ${escapeHtml(item.supervisor_comment_source)}</p>`
+    : "";
+  const comparison = values.length
+    ? `<p><span class="label">Revision comparison:</span> ${escapeHtml(values.join(" · "))}</p>`
+    : "";
+  return source + comparison;
 }
 
 function findingHtml(item) {
@@ -56,8 +173,10 @@ function findingHtml(item) {
       <div class="finding-body hidden">
         <p><span class="label">Section:</span> ${escapeHtml(item.section)}</p>
         <p><span class="label">Priority:</span> ${escapeHtml(item.severity)}</p>
+        ${revisionDetailsHtml(item)}
         <p><span class="label">Expert assessment:</span> ${escapeHtml(item.comment)}</p>
         <p><span class="label">Required action:</span> ${escapeHtml(item.required_action)}</p>
+        ${alignmentDetailsHtml(item)}
         ${evidenceHtml(item)}
       </div>
     </article>`;
@@ -83,20 +202,58 @@ function applyFilter() {
   bindFindings();
 }
 
+function renderContextSummary(review) {
+  const documents = review.context_documents || [];
+  if (!documents.length) return "";
+  return documents.map(doc => {
+    const chapters = (doc.detected_chapters || []).length
+      ? `Detected chapter(s): ${doc.detected_chapters.join(", ")}`
+      : "Chapter labels need manual confirmation";
+    return `<div class="context-file"><strong>${escapeHtml(doc.filename)}</strong><span>${escapeHtml(chapters)}</span></div>`;
+  }).join("");
+}
+
+function renderRevisionSourceSummary(review) {
+  const sources = review.supervisor_comment_sources || [];
+  const original = review.original_document;
+  const sourceRows = sources.map(source =>
+    `<div class="context-file"><strong>${escapeHtml(source)}</strong><span>Supervisor comments</span></div>`
+  );
+  if (original) {
+    sourceRows.push(`<div class="context-file"><strong>${escapeHtml(original.filename)}</strong><span>Original version used for comparison</span></div>`);
+  }
+  return sourceRows.join("");
+}
+
 function renderReview(review) {
   currentReview = review;
   const s = review.summary;
-  document.getElementById("resultTitle").textContent = s.filename;
+  document.getElementById("resultTitle").textContent = `${s.document_label}: ${s.filename}`;
   document.getElementById("overallScore").textContent = `${s.overall_score}%`;
   document.getElementById("readinessLabel").textContent = s.readiness_label;
   document.getElementById("readinessMeaning").textContent = s.readiness_meaning;
-  document.getElementById("metrics").innerHTML = [
-    metric("Meets", s.meets),
-    metric("Partly meets", s.partial),
-    metric("Does not meet", s.missing),
-    metric("Manual review", s.manual),
-    metric("Critical unresolved", s.critical_failed),
-  ].join("");
+
+  let metricRows;
+  if (s.revised_mode) {
+    metricRows = [
+      metric("Checklist score", `${s.checklist_score}%`),
+      metric("Alignment score", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
+      metric("Comment compliance", s.revision_score == null ? "Manual" : `${s.revision_score}%`),
+      metric("Comments addressed", s.revision_addressed),
+      metric("Comments not addressed", s.revision_not_addressed),
+      metric("Critical unresolved", s.critical_failed),
+    ];
+  } else {
+    metricRows = [
+      metric("Checklist score", `${s.checklist_score}%`),
+      metric("Alignment score", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
+      metric("Meets", s.meets),
+      metric("Partly meets", s.partial),
+      metric("Does not meet", s.missing),
+      metric("Critical unresolved", s.critical_failed),
+    ];
+  }
+  document.getElementById("metrics").innerHTML = metricRows.join("");
 
   document.getElementById("priorityActions").innerHTML =
     (review.priority_actions || []).map(action => `
@@ -106,6 +263,24 @@ function renderReview(review) {
         <p>${escapeHtml(action.action)}</p>
       </article>`).join("") ||
     `<p class="form-note">No priority actions were generated.</p>`;
+
+  const revisionRows = review.revision_results || [];
+  const revisionSection = document.getElementById("revisionSection");
+  revisionSection.classList.toggle("hidden", !revisionRows.length);
+  if (revisionRows.length) {
+    document.getElementById("revisionScore").textContent = s.revision_score == null ? "Manual review" : `${s.revision_score}%`;
+    document.getElementById("revisionSourceSummary").innerHTML = renderRevisionSourceSummary(review);
+    document.getElementById("revisionList").innerHTML = revisionRows.map(findingHtml).join("");
+  }
+
+  const alignmentRows = review.alignment_results || [];
+  const alignmentSection = document.getElementById("alignmentSection");
+  alignmentSection.classList.toggle("hidden", !alignmentRows.length);
+  if (alignmentRows.length) {
+    document.getElementById("alignmentScore").textContent = s.alignment_score == null ? "Manual review" : `${s.alignment_score}%`;
+    document.getElementById("contextSummary").innerHTML = renderContextSummary(review);
+    document.getElementById("alignmentList").innerHTML = alignmentRows.map(findingHtml).join("");
+  }
 
   const annotatedButton = document.getElementById("annotatedButton");
   if (s.annotated_document_available) {
@@ -122,12 +297,39 @@ function renderReview(review) {
     window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/export.docx`;
   };
   applyFilter();
+  bindFindings();
+}
+
+function showFormError(message, target = null) {
+  const oldError = document.querySelector(".error-banner");
+  if (oldError) oldError.remove();
+  const banner = document.createElement("div");
+  banner.className = "error-banner";
+  banner.textContent = message;
+  document.querySelector(".result-panel").prepend(banner);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const oldError = document.querySelector(".error-banner");
   if (oldError) oldError.remove();
+
+  const scope = selectedScope();
+  const stage = selectedStage();
+  const chapter = Number(chapterSelect.value || 0);
+  if (scope === "chapter" && !chapter) {
+    chapterSelect.focus();
+    return;
+  }
+  if (scope === "chapter" && chapter >= 2 && !(previousFilesInput.files || []).length) {
+    showFormError(`Upload Chapters 1 to ${chapter - 1} as one composite file or as separate files before running the review.`, previousChaptersField);
+    return;
+  }
+  if (stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
+    showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields);
+    return;
+  }
 
   emptyState.classList.add("hidden");
   resultsState.classList.add("hidden");
@@ -137,6 +339,16 @@ form.addEventListener("submit", async event => {
 
   try {
     const body = new FormData(form);
+    if (scope === "full_thesis") {
+      body.set("selected_chapter", "0");
+      body.set("document_type", "full_thesis");
+      body.delete("previous_files");
+    }
+    if (stage !== "revised") {
+      body.delete("supervisor_comment_files");
+      body.delete("supervisor_comments_text");
+      body.delete("original_file");
+    }
     const response = await fetch("/api/review", { method: "POST", body });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "The review could not be completed.");
@@ -146,10 +358,7 @@ form.addEventListener("submit", async event => {
   } catch (error) {
     loadingState.classList.add("hidden");
     emptyState.classList.remove("hidden");
-    const banner = document.createElement("div");
-    banner.className = "error-banner";
-    banner.textContent = error.message;
-    document.querySelector(".result-panel").prepend(banner);
+    showFormError(error.message);
   } finally {
     submitButton.disabled = false;
     submitButton.querySelector("span").textContent = "Run expert review";
@@ -161,3 +370,5 @@ showAllButton.addEventListener("click", () => {
   showAll = !showAll;
   applyFilter();
 });
+
+updateUploadWorkflow();
