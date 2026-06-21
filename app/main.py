@@ -22,8 +22,8 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.5.0",
-    description="Hybrid DeepSeek and OpenAI expert review for thesis chapters, proposals, revisions, and complete theses.",
+    version="0.5.2",
+    description="Evidence-linked expert review for thesis chapters, proposals, revisions, and complete theses.",
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -32,6 +32,22 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 # MVP only. Replace with Redis or a database before commercial deployment.
 REVIEW_CACHE: Dict[str, dict] = {}
 ANNOTATED_CACHE: Dict[str, bytes] = {}
+AI_USAGE_CACHE: Dict[str, dict] = {}
+
+
+def _strip_internal_ai_metadata(review: dict) -> dict:
+    """Remove provider, model, token, and cost metadata from student-facing output."""
+    review.pop("ai_review", None)
+    summary = review.get("summary") or {}
+    for key in list(summary):
+        if key.startswith("ai_"):
+            summary.pop(key, None)
+    for collection_name in ("results", "alignment_results", "revision_results"):
+        for row in review.get(collection_name) or []:
+            for key in list(row):
+                if key.startswith("ai_"):
+                    row.pop(key, None)
+    return review
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -41,22 +57,11 @@ async def home(request: Request):
 
 @app.get("/health")
 async def health():
-    config = HybridAIConfig.from_env()
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "0.5.0",
-        "ai": {
-            "automatic_mode": config.resolve_mode("auto"),
-            "deepseek_configured": config.deepseek_configured,
-            "openai_configured": config.openai_configured,
-        },
+        "version": "0.5.2",
     }
-
-
-@app.get("/api/ai/status")
-async def ai_status():
-    return HybridAIConfig.from_env().public_status()
 
 
 def _validate_filename(filename: str, label: str) -> None:
@@ -168,6 +173,9 @@ async def create_review(
             requested_mode=ai_review_mode,
             config=HybridAIConfig.from_env(),
         )
+        if review.get("ai_review"):
+            AI_USAGE_CACHE[review["review_id"]] = dict(review["ai_review"])
+        review = _strip_internal_ai_metadata(review)
     except (ValueError, AIConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

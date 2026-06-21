@@ -43,12 +43,6 @@ def _add_detailed_rows(doc: Document, rows: List[Dict[str, Any]]) -> None:
         meta.add_run(str(row.get("severity", "")).title())
         meta.add_run("    Confidence: ").bold = True
         meta.add_run(str(row.get("confidence", "")))
-        if row.get("ai_reviewed"):
-            meta.add_run("    AI reviewer: ").bold = True
-            reviewer = f'{row.get("ai_primary_provider", "")} / {row.get("ai_primary_model", "")}'
-            if row.get("ai_verified"):
-                reviewer += f' verified by {row.get("ai_verification_provider", "")} / {row.get("ai_verification_model", "")}'
-            meta.add_run(reviewer)
 
         if row.get("supervisor_comment_source"):
             source_p = doc.add_paragraph()
@@ -134,10 +128,6 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         ("Overall score", f'{summary["overall_score"]}%'),
         ("Readiness", summary["readiness_label"]),
         ("Critical requirements unresolved", summary["critical_failed"]),
-        ("AI review mode", summary.get("ai_review_mode", "local").replace("_", " ").title()),
-        ("AI-reviewed criteria", summary.get("ai_reviewed_count", 0)),
-        ("OpenAI-verified criteria", summary.get("ai_verified_count", 0)),
-        ("Estimated API cost", f'${summary.get("ai_estimated_cost_usd", 0):.4f}' if summary.get("ai_estimated_cost_usd") else "$0.0000"),
     ]
     for label, value in summary_rows:
         cells = table.add_row().cells
@@ -149,33 +139,6 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     doc.add_paragraph(
         "The annotated DOCX uses red text for passages requiring revision and green square-bracketed text for supervisor guidance."
     )
-
-    ai_review = review.get("ai_review") or {}
-    if ai_review.get("enabled"):
-        doc.add_heading("Hybrid AI Review Summary", level=1)
-        ai_table = doc.add_table(rows=0, cols=2)
-        ai_table.style = "Table Grid"
-        ai_rows = [
-            ("Requested mode", str(ai_review.get("requested_mode", "auto")).replace("_", " ").title()),
-            ("Resolved mode", str(ai_review.get("resolved_mode", "local")).replace("_", " ").title()),
-            ("Models used", ", ".join(ai_review.get("models_used") or []) or "None"),
-            ("Primary AI decisions", ai_review.get("primary_reviewed_count", 0)),
-            ("OpenAI verifications", ai_review.get("openai_verified_count", 0)),
-            ("Premium adjudications", ai_review.get("premium_adjudicated_count", 0)),
-            ("Reviewer disagreements", ai_review.get("disagreement_count", 0)),
-            ("Input tokens", ai_review.get("input_tokens", 0)),
-            ("Cached input tokens", ai_review.get("cached_input_tokens", 0)),
-            ("Output tokens", ai_review.get("output_tokens", 0)),
-            ("Estimated API cost", f'${float(ai_review.get("estimated_cost_usd", 0)):.6f}'),
-        ]
-        for label, value in ai_rows:
-            cells = ai_table.add_row().cells
-            _set_cell_text(cells[0], label, True)
-            _set_cell_text(cells[1], value)
-        for warning in ai_review.get("warnings") or []:
-            p = doc.add_paragraph(style="List Bullet")
-            p.add_run("AI routing note: ").bold = True
-            p.add_run(str(warning))
 
     revision_rows = review.get("revision_results") or []
     if revision_rows:
