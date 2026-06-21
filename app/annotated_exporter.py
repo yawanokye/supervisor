@@ -68,7 +68,16 @@ def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
     return spans
 
 
-def _best_span(text: str, matched_terms: Iterable[str]) -> Tuple[int, int]:
+def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str = "") -> Tuple[int, int]:
+    quote = clean_text(problematic_quote)
+    if quote:
+        exact_start = text.find(quote)
+        if exact_start >= 0:
+            return exact_start, exact_start + len(quote)
+        normalised_quote = normalised(quote)
+        for start, end, sentence in _sentence_spans(text):
+            if normalised_quote and normalised_quote in normalised(sentence):
+                return start, end
     terms = [normalised(term) for term in matched_terms if normalised(term)]
     spans = _sentence_spans(text)
     if not spans:
@@ -240,7 +249,11 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
             paragraph_number = best.get("paragraph")
             paragraph = paragraph_map.get(paragraph_number)
             if paragraph is not None:
-                span = _best_span(paragraph.text, best.get("matched_terms") or [])
+                span = _best_span(
+                    paragraph.text,
+                    best.get("matched_terms") or [],
+                    row.get("ai_problematic_quote", ""),
+                )
                 by_paragraph[paragraph_number][span].append(comment)
                 continue
         headings = tuple(row.get("headings") or [])

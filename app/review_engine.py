@@ -515,5 +515,10 @@ def analyse(
         "alignment_results": alignment_results,
         "revision_results": revision_results,
         "results": results,
+        "_runtime_context": {
+            "current_paragraphs": current_paragraphs,
+            "context_paragraphs": context_paragraphs,
+            "original_paragraphs": original_paragraphs,
+        },
     }
 

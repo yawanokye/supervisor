@@ -9,6 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .annotated_exporter import build_annotated_docx
+from .ai_config import AIConfigurationError, HybridAIConfig
+from .hybrid_ai_engine import enrich_review_with_hybrid_ai
 from .report_exporter import build_docx_report
 from .review_engine import analyse
 
@@ -20,8 +22,8 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.4.0",
-    description="Evidence-linked expert review for initial and revised thesis chapters, proposals, and complete theses.",
+    version="0.5.0",
+    description="Hybrid DeepSeek and OpenAI expert review for thesis chapters, proposals, revisions, and complete theses.",
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -39,7 +41,22 @@ async def home(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "0.4.0"}
+    config = HybridAIConfig.from_env()
+    return {
+        "status": "ok",
+        "service": "projectready-supervisor",
+        "version": "0.5.0",
+        "ai": {
+            "automatic_mode": config.resolve_mode("auto"),
+            "deepseek_configured": config.deepseek_configured,
+            "openai_configured": config.openai_configured,
+        },
+    }
+
+
+@app.get("/api/ai/status")
+async def ai_status():
+    return HybridAIConfig.from_env().public_status()
 
 
 def _validate_filename(filename: str, label: str) -> None:
@@ -71,6 +88,7 @@ async def create_review(
     supervisor_comment_files: Optional[List[UploadFile]] = File(None),
     supervisor_comments_text: str = Form(""),
     original_file: Optional[UploadFile] = File(None),
+    ai_review_mode: str = Form("auto"),
 ):
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
@@ -143,7 +161,14 @@ async def create_review(
             supervisor_comments_text=supervisor_comments_text,
             original_document=original_document,
         )
-    except ValueError as exc:
+        runtime_context = review.pop("_runtime_context", {})
+        review = await enrich_review_with_hybrid_ai(
+            review,
+            runtime_context,
+            requested_mode=ai_review_mode,
+            config=HybridAIConfig.from_env(),
+        )
+    except (ValueError, AIConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Review failed: {exc}") from exc
