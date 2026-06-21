@@ -1,1 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ProjectReady AI Supervisor Assistant</title>
+  <meta name="description" content="Evidence-linked expert review for thesis chapters and complete theses.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">PR</span>
+      <span>
+        <strong>ProjectReady AI</strong>
+        <small>Supervisor Assistant</small>
+      </span>
+    </a>
+    <span class="beta">MVP 0.2</span>
+  </header>
 
+  <main class="page-shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Evidence-linked thesis review</p>
+        <h1>Review every thesis chapter like an experienced supervisor.</h1>
+        <p class="hero-copy">
+          Upload a single chapter or a complete thesis. The assistant checks academic structure,
+          adequacy, alignment, methods, interpretation, conclusions, and submission readiness.
+        </p>
+        <div class="trust-row">
+          <span>DOCX and PDF</span>
+          <span>Page and paragraph evidence</span>
+          <span>109 checklist criteria</span>
+          <span>Word report</span>
+        </div>
+      </div>
+      <div class="hero-card">
+        <div class="score-preview">
+          <span>Readiness</span>
+          <strong>78%</strong>
+          <small>Ready after minor revision</small>
+        </div>
+        <div class="preview-list">
+          <p><b>Critical</b> Objective-result alignment</p>
+          <p><b>Major</b> Literature synthesis</p>
+          <p><b>Moderate</b> Sample-size justification</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="panel setup-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Start a review</p>
+            <h2>Upload and configure</h2>
+          </div>
+          <span class="step">Step 1</span>
+        </div>
+
+        <form id="reviewForm">
+          <label class="field">
+            <span>Academic level</span>
+            <select name="academic_level" required>
+              <option value="Bachelors">Bachelor’s</option>
+              <option value="Non-Research Masters">Non-Research Master’s</option>
+              <option value="Research Masters / MPhil">Research Master’s / MPhil</option>
+              <option value="Professional Doctorate">Professional Doctorate</option>
+              <option value="PhD">PhD</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Research approach</span>
+            <select name="research_approach" required>
+              <option value="quantitative">Quantitative</option>
+              <option value="qualitative">Qualitative</option>
+              <option value="mixed">Mixed methods</option>
+              <option value="sem">SEM / PLS-SEM</option>
+              <option value="econometrics">Econometrics / time series / panel</option>
+            </select>
+          </label>
+
+          <div class="field">
+            <span>Review scope</span>
+            <div class="segmented">
+              <label><input type="radio" name="review_scope" value="chapter" checked><span>Single chapter</span></label>
+              <label><input type="radio" name="review_scope" value="full_thesis"><span>Complete thesis</span></label>
+            </div>
+          </div>
+
+          <label class="field" id="chapterField">
+            <span>Chapter</span>
+            <select name="selected_chapter">
+              <option value="0">Detect automatically</option>
+              <option value="1">Chapter One: Introduction</option>
+              <option value="2">Chapter Two: Literature Review</option>
+              <option value="3">Chapter Three: Research Methods</option>
+              <option value="4">Chapter Four: Results and Discussion</option>
+              <option value="5">Chapter Five: Conclusions and Recommendations</option>
+            </select>
+          </label>
+
+          <label class="upload-box" id="uploadBox">
+            <input type="file" name="file" id="fileInput" accept=".docx,.pdf" required>
+            <span class="upload-icon">↑</span>
+            <strong>Choose a thesis chapter or complete thesis</strong>
+            <small>DOCX for a colour-annotated review copy, or text-based PDF for stable page evidence. Maximum 25 MB</small>
+            <em id="fileName">No file selected</em>
+          </label>
+
+          <button class="primary-button" type="submit" id="submitButton">
+            <span>Run expert review</span>
+          </button>
+          <p class="form-note">The MVP does not rewrite the student’s chapter. It identifies issues and guides revision.</p>
+        </form>
+      </div>
+
+      <div class="panel result-panel">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon">✓</div>
+          <h2>Your review dashboard will appear here</h2>
+          <p>Results will include readiness, priority actions, checklist findings, evidence locations, comments, and required actions.</p>
+        </div>
+
+        <div id="loadingState" class="loading-state hidden">
+          <div class="spinner"></div>
+          <h2>Reviewing the document</h2>
+          <p>Extracting headings, locating evidence, assessing criteria, and building the revision plan.</p>
+        </div>
+
+        <div id="resultsState" class="hidden">
+          <div class="result-top">
+            <div>
+              <p class="eyebrow">Review complete</p>
+              <h2 id="resultTitle">Supervisor review</h2>
+              <p id="readinessMeaning"></p>
+            </div>
+            <div class="score-ring">
+              <strong id="overallScore">0%</strong>
+              <span id="readinessLabel">Pending</span>
+            </div>
+          </div>
+
+          <div class="metrics" id="metrics"></div>
+
+          <div class="result-actions">
+            <button class="secondary-button" id="annotatedButton">Download annotated document</button>
+            <button class="ghost-button" id="downloadButton">Download review report</button>
+            <button class="ghost-button" id="showAllButton">Show all criteria</button>
+          </div>
+
+          <section class="result-section">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Revision order</p>
+                <h3>Priority actions</h3>
+              </div>
+            </div>
+            <div id="priorityActions" class="action-list"></div>
+          </section>
+
+          <section class="result-section">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Detailed findings</p>
+                <h3>Checklist review</h3>
+              </div>
+              <select id="statusFilter" class="compact-select">
+                <option value="all">All statuses</option>
+                <option value="does_not_meet_requirement">Does not meet</option>
+                <option value="partly_meets_requirement">Partly meets</option>
+                <option value="manual_review_required">Manual review</option>
+                <option value="meets_requirement">Meets</option>
+              </select>
+            </div>
+            <div id="findingList" class="finding-list"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
