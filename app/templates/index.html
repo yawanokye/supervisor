@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ProjectReady AI Supervisor Assistant</title>
-  <meta name="description" content="Evidence-linked expert review for thesis chapters and complete theses.">
+  <meta name="description" content="Evidence-linked expert review for thesis chapters, research proposals, and complete theses.">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -16,35 +16,36 @@
         <small>Supervisor Assistant</small>
       </span>
     </a>
-    <span class="beta">MVP 0.2</span>
+    <span class="beta">MVP 0.4</span>
   </header>
 
   <main class="page-shell">
     <section class="hero">
       <div>
         <p class="eyebrow">Evidence-linked thesis review</p>
-        <h1>Review every thesis chapter like an experienced supervisor.</h1>
+        <h1>Review initial and revised chapters against the thesis checklist and supervisor comments.</h1>
         <p class="hero-copy">
-          Upload a single chapter or a complete thesis. The assistant checks academic structure,
-          adequacy, alignment, methods, interpretation, conclusions, and submission readiness.
+          Review a new chapter or check whether a revised chapter has addressed the supervisor’s comments.
+          From Chapter Two onward, add earlier chapters so the assistant can also test continuity and alignment.
         </p>
         <div class="trust-row">
-          <span>DOCX and PDF</span>
-          <span>Page and paragraph evidence</span>
-          <span>109 checklist criteria</span>
-          <span>Word report</span>
+          <span>Initial and revised chapters</span>
+          <span>Supervisor-comment follow-up</span>
+          <span>Previous-chapter alignment</span>
+          <span>109 official criteria</span>
+          <span>Annotated Word output</span>
         </div>
       </div>
       <div class="hero-card">
         <div class="score-preview">
-          <span>Readiness</span>
+          <span>Combined readiness</span>
           <strong>78%</strong>
-          <small>Ready after minor revision</small>
+          <small>Checklist + alignment + comment compliance</small>
         </div>
         <div class="preview-list">
-          <p><b>Critical</b> Objective-result alignment</p>
-          <p><b>Major</b> Literature synthesis</p>
-          <p><b>Moderate</b> Sample-size justification</p>
+          <p><b>Checklist</b> Chapter content and adequacy</p>
+          <p><b>Revision</b> Supervisor comments addressed</p>
+          <p><b>Alignment</b> Objectives carried across chapters</p>
         </div>
       </div>
     </section>
@@ -90,10 +91,19 @@
             </div>
           </div>
 
+          <div class="field" id="submissionStageField">
+            <span>Review stage</span>
+            <div class="segmented">
+              <label><input type="radio" name="submission_stage" value="initial" checked><span>Initial chapter</span></label>
+              <label><input type="radio" name="submission_stage" value="revised"><span>Revised chapter</span></label>
+            </div>
+            <p class="field-help">Choose Revised chapter to check the revision against the supervisor’s earlier comments.</p>
+          </div>
+
           <label class="field" id="chapterField">
-            <span>Chapter</span>
-            <select name="selected_chapter">
-              <option value="0">Detect automatically</option>
+            <span>Chapter being reviewed</span>
+            <select name="selected_chapter" id="chapterSelect" required>
+              <option value="" selected disabled>Select a chapter</option>
               <option value="1">Chapter One: Introduction</option>
               <option value="2">Chapter Two: Literature Review</option>
               <option value="3">Chapter Three: Research Methods</option>
@@ -102,18 +112,83 @@
             </select>
           </label>
 
+          <div class="field hidden" id="documentTypeField">
+            <span>Chapter One document type</span>
+            <div class="segmented">
+              <label><input type="radio" name="document_type" value="chapter_one" checked><span>Chapter One only</span></label>
+              <label><input type="radio" name="document_type" value="proposal"><span>Research proposal</span></label>
+            </div>
+            <p class="field-help">Proposal mode is optional. It reviews Chapters One to Three where they are present in the uploaded proposal.</p>
+          </div>
+
+          <div class="context-card revision-card hidden" id="revisionReviewFields">
+            <div class="context-heading">
+              <div>
+                <span class="required-badge">Required for revised review</span>
+                <h3>Supervisor comments</h3>
+              </div>
+              <span class="context-icon">✓</span>
+            </div>
+            <p>Upload the supervisor’s comments, paste them below, or use both. DOCX files may contain normal text, green square-bracketed comments, tables, or native Word comments.</p>
+
+            <label class="upload-box context-upload">
+              <input type="file" name="supervisor_comment_files" id="supervisorCommentFilesInput" accept=".docx,.pdf" multiple>
+              <span class="upload-icon">＋</span>
+              <strong>Choose supervisor-comment file(s)</strong>
+              <small>DOCX or PDF. Up to 5 files, combined limit 50 MB.</small>
+              <em id="supervisorCommentFileNames">No supervisor-comment file selected</em>
+            </label>
+
+            <label class="field compact-field">
+              <span>Or paste the supervisor comments</span>
+              <textarea name="supervisor_comments_text" id="supervisorCommentsText" rows="5" placeholder="Paste each supervisor comment on a separate line..."></textarea>
+            </label>
+
+            <div class="optional-upload">
+              <span class="optional-badge">Optional but recommended</span>
+              <p>Upload the original chapter so the assistant can compare the relevant passage before and after revision.</p>
+              <label class="upload-box context-upload">
+                <input type="file" name="original_file" id="originalFileInput" accept=".docx,.pdf">
+                <span class="upload-icon">↺</span>
+                <strong>Choose the original chapter</strong>
+                <small>Used only for revision comparison.</small>
+                <em id="originalFileName">No original chapter selected</em>
+              </label>
+            </div>
+          </div>
+
           <label class="upload-box" id="uploadBox">
             <input type="file" name="file" id="fileInput" accept=".docx,.pdf" required>
             <span class="upload-icon">↑</span>
-            <strong>Choose a thesis chapter or complete thesis</strong>
-            <small>DOCX for a colour-annotated review copy, or text-based PDF for stable page evidence. Maximum 25 MB</small>
+            <strong id="mainUploadTitle">Choose the chapter under review</strong>
+            <small id="mainUploadHelp">DOCX creates a colour-annotated copy. PDF provides stable page evidence. Maximum 25 MB.</small>
             <em id="fileName">No file selected</em>
           </label>
+
+          <div class="context-card hidden" id="previousChaptersField">
+            <div class="context-heading">
+              <div>
+                <span class="required-badge">Required for alignment</span>
+                <h3 id="previousUploadTitle">Upload previous chapters</h3>
+              </div>
+              <span class="context-icon">↔</span>
+            </div>
+            <p id="previousUploadHelp">
+              Upload the earlier chapters as one composite DOCX/PDF or select several separate files.
+            </p>
+            <label class="upload-box context-upload">
+              <input type="file" name="previous_files" id="previousFilesInput" accept=".docx,.pdf" multiple>
+              <span class="upload-icon">＋</span>
+              <strong>Choose previous chapter file(s)</strong>
+              <small>Up to 5 files. Combined limit 75 MB.</small>
+              <em id="previousFileNames">No previous chapter selected</em>
+            </label>
+          </div>
 
           <button class="primary-button" type="submit" id="submitButton">
             <span>Run expert review</span>
           </button>
-          <p class="form-note">The MVP does not rewrite the student’s chapter. It identifies issues and guides revision.</p>
+          <p class="form-note">For revised chapters, the assistant checks every extracted supervisor comment and reports whether it is addressed, partly addressed, not addressed, or requires manual confirmation.</p>
         </form>
       </div>
 
@@ -121,13 +196,13 @@
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">✓</div>
           <h2>Your review dashboard will appear here</h2>
-          <p>Results will include readiness, priority actions, checklist findings, evidence locations, comments, and required actions.</p>
+          <p>Results will include the official checklist, supervisor-comment compliance, cross-chapter alignment, priority actions, evidence locations, and revision guidance.</p>
         </div>
 
         <div id="loadingState" class="loading-state hidden">
           <div class="spinner"></div>
           <h2>Reviewing the document</h2>
-          <p>Extracting headings, locating evidence, assessing criteria, and building the revision plan.</p>
+          <p>Extracting the chapter, reading supervisor comments and previous chapters, testing revision compliance, and building the action plan.</p>
         </div>
 
         <div id="resultsState" class="hidden">
@@ -151,6 +226,30 @@
             <button class="ghost-button" id="showAllButton">Show all criteria</button>
           </div>
 
+          <section class="result-section hidden" id="revisionSection">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Revised chapter follow-up</p>
+                <h3>Supervisor comment compliance</h3>
+              </div>
+              <span class="alignment-score" id="revisionScore">—</span>
+            </div>
+            <div id="revisionSourceSummary" class="context-summary"></div>
+            <div id="revisionList" class="finding-list"></div>
+          </section>
+
+          <section class="result-section hidden" id="alignmentSection">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Previous chapter comparison</p>
+                <h3>Cross-chapter alignment</h3>
+              </div>
+              <span class="alignment-score" id="alignmentScore">—</span>
+            </div>
+            <div id="contextSummary" class="context-summary"></div>
+            <div id="alignmentList" class="finding-list"></div>
+          </section>
+
           <section class="result-section">
             <div class="section-title">
               <div>
@@ -164,8 +263,8 @@
           <section class="result-section">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Detailed findings</p>
-                <h3>Checklist review</h3>
+                <p class="eyebrow">Official checklist</p>
+                <h3>Detailed findings</h3>
               </div>
               <select id="statusFilter" class="compact-select">
                 <option value="all">All statuses</option>
