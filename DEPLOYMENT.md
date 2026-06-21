@@ -54,3 +54,20 @@ Use **Automatic routing** in the interface. With both keys configured, it resolv
 - Use Render secret environment variables.
 - Rotate any key that has been exposed.
 - Replace the in-memory review cache before running multiple Render instances.
+
+## Required Python version
+
+This release pins Render to Python `3.12.11` in two places:
+
+- `.python-version`
+- `render.yaml` through `PYTHON_VERSION`
+
+This prevents packages such as `pydantic-core` from being compiled against Render's newer default Python runtime.
+
+For an existing manually configured Render service, also add this environment variable:
+
+```text
+PYTHON_VERSION=3.12.11
+```
+
+Then select **Clear build cache & deploy**.

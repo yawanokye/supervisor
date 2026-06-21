@@ -38,6 +38,10 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000`.
 
+## Python runtime
+
+The project pins Python `3.12.11` through `.python-version` and `render.yaml` to ensure binary-wheel compatibility during Render builds.
+
 ## Render configuration
 
 Build command:
