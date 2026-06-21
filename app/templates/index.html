@@ -16,20 +16,20 @@
         <small>Supervisor Assistant</small>
       </span>
     </a>
-    <span class="beta">MVP 0.5</span>
+    <span class="beta">MVP 0.5.2</span>
   </header>
 
   <main class="page-shell">
     <section class="hero">
       <div>
         <p class="eyebrow">Evidence-linked thesis review</p>
-        <h1>Review thesis chapters with cost-efficient DeepSeek analysis and OpenAI quality control.</h1>
+        <h1>Review thesis chapters with evidence-based academic guidance and clear revision priorities.</h1>
         <p class="hero-copy">
-          DeepSeek performs the main evidence-based review, while OpenAI verifies critical, uncertain, and disputed decisions.
-          The local engine preserves page and paragraph evidence, scoring, annotations, and document formatting.
+          The Supervisor Assistant examines academic content, cross-chapter alignment, supervisor comments, and submission readiness.
+          It preserves page and paragraph evidence and produces an annotated Word document with clear revision guidance.
         </p>
         <div class="trust-row">
-          <span>Hybrid DeepSeek + OpenAI</span>
+          <span>Expert academic review</span>
           <span>Initial and revised chapters</span>
           <span>Supervisor-comment follow-up</span>
           <span>Previous-chapter alignment</span>
@@ -83,19 +83,7 @@
               <option value="econometrics">Econometrics / time series / panel</option>
             </select>
           </label>
-
-          <label class="field">
-            <span>Review engine</span>
-            <select name="ai_review_mode" id="aiReviewMode">
-              <option value="auto" selected>Automatic routing, recommended</option>
-              <option value="hybrid">Cost-efficient hybrid, DeepSeek + OpenAI</option>
-              <option value="deepseek_only">DeepSeek only</option>
-              <option value="openai_only">OpenAI only</option>
-              <option value="premium">Premium dual review and adjudication</option>
-              <option value="local">Local checklist only, no API cost</option>
-            </select>
-            <p class="field-help" id="aiProviderStatus">Checking provider configuration…</p>
-          </label>
+          <input type="hidden" name="ai_review_mode" value="auto">
 
           <div class="field">
             <span>Review scope</span>
@@ -233,15 +221,6 @@
           </div>
 
           <div class="metrics" id="metrics"></div>
-
-          <div class="ai-review-card hidden" id="aiReviewPanel">
-            <div>
-              <p class="eyebrow">Model routing</p>
-              <h3 id="aiReviewTitle">Hybrid AI review</h3>
-              <p id="aiReviewDetails"></p>
-            </div>
-            <div class="ai-review-stats" id="aiReviewStats"></div>
-          </div>
 
           <div class="result-actions">
             <button class="secondary-button" id="annotatedButton">Download annotated document</button>
