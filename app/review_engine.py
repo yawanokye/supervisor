@@ -5,6 +5,9 @@ import uuid
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .alignment_engine import alignment_score, detected_chapters, evaluate_alignment
+from .comment_parser import extract_supervisor_comments
+from .revision_engine import evaluate_revision_comments, revision_counts, revision_score
 from .document_parser import clean_text, infer_primary_chapter, normalised, parse_document
 from .review_rules import (
     CHAPTERS,
@@ -158,6 +161,8 @@ def evaluate_rule(
                 "heading": p.get("heading"),
                 "chapter_number": p.get("chapter_number"),
                 "is_heading": bool(p.get("is_heading")),
+                "source_filename": p.get("source_filename"),
+                "document_role": p.get("document_role", "current"),
                 "matched_terms": hits,
                 "adequacy_terms": adequacy_hits,
                 "rank_score": score,
@@ -197,9 +202,26 @@ def evaluate_rule(
         "required_action": action,
     }
 
-def _select_rules(selected_chapter: Optional[int], full_thesis: bool) -> List[Dict[str, Any]]:
+def _select_rules(
+    selected_chapter: Optional[int],
+    full_thesis: bool,
+    *,
+    proposal_mode: bool = False,
+    current_chapters: Optional[set[int]] = None,
+) -> List[Dict[str, Any]]:
     if full_thesis:
         return RULES
+    if proposal_mode:
+        detected = current_chapters or {1}
+        allowed_keys = {"B"}
+        if 2 in detected:
+            allowed_keys.add("C")
+        if 3 in detected:
+            allowed_keys.add("D")
+        selected = [r for r in RULES if r["chapter_key"] in allowed_keys]
+        # A1-A4 are useful proposal-level coherence checks. A5 requires Chapter Five.
+        selected.extend(r for r in RULES if r["code"] in {"A1", "A2", "A3", "A4"})
+        return selected
     chapter_key = next((k for k, v in CHAPTERS.items() if v["number"] == selected_chapter), None)
     if not chapter_key:
         return []
@@ -254,6 +276,23 @@ def _priority_actions(results: List[Dict[str, Any]], limit: int = 12) -> List[Di
         "action": r["required_action"],
     } for r in actionable[:limit]]
 
+def _tag_paragraphs(
+    paragraphs: List[Dict[str, Any]],
+    *,
+    filename: str,
+    role: str,
+    document_index: int = 0,
+) -> List[Dict[str, Any]]:
+    tagged: List[Dict[str, Any]] = []
+    for paragraph in paragraphs:
+        item = dict(paragraph)
+        item["source_filename"] = filename
+        item["document_role"] = role
+        item["document_index"] = document_index
+        tagged.append(item)
+    return tagged
+
+
 def analyse(
     file_bytes: bytes,
     filename: str,
@@ -262,42 +301,166 @@ def analyse(
     research_approach: str,
     selected_chapter: Optional[int] = None,
     review_scope: str = "chapter",
+    document_type: str = "chapter_one",
+    context_documents: Optional[List[Dict[str, Any]]] = None,
+    submission_stage: str = "initial",
+    supervisor_comment_documents: Optional[List[Dict[str, Any]]] = None,
+    supervisor_comments_text: str = "",
+    original_document: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    paragraphs = parse_document(file_bytes, filename)
-    if not paragraphs:
+    current_paragraphs = _tag_paragraphs(
+        parse_document(file_bytes, filename),
+        filename=filename,
+        role="current",
+    )
+    if not current_paragraphs:
         raise ValueError("No readable text was extracted from the document.")
 
     full_thesis = review_scope == "full_thesis"
-    inferred = infer_primary_chapter(paragraphs)
+    revised_mode = submission_stage == "revised"
+    inferred = infer_primary_chapter(current_paragraphs)
+    proposal_mode = bool(not full_thesis and selected_chapter == 1 and document_type == "proposal")
 
     if not full_thesis:
         selected_chapter = selected_chapter or inferred
         if selected_chapter not in {1, 2, 3, 4, 5}:
             raise ValueError("Select the chapter being reviewed because it could not be detected reliably.")
 
-    rules = _select_rules(selected_chapter, full_thesis)
+    prepared_context: List[Dict[str, Any]] = []
+    context_paragraphs: List[Dict[str, Any]] = []
+    for index, document in enumerate(context_documents or [], start=1):
+        context_name = document.get("filename") or f"previous-document-{index}"
+        context_bytes = document.get("data") or b""
+        if not context_bytes:
+            continue
+        parsed = _tag_paragraphs(
+            parse_document(context_bytes, context_name),
+            filename=context_name,
+            role="previous",
+            document_index=index,
+        )
+        chapters = sorted(detected_chapters(parsed, context_name))
+        context_paragraphs.extend(parsed)
+        prepared_context.append({
+            "filename": context_name,
+            "detected_chapters": chapters,
+            "paragraphs_extracted": len(parsed),
+        })
+
+    if not full_thesis and selected_chapter and selected_chapter >= 2 and not prepared_context:
+        raise ValueError(
+            f"Upload Chapters 1 to {selected_chapter - 1} as one composite file or as separate files to check alignment."
+        )
+
+    original_paragraphs: List[Dict[str, Any]] = []
+    original_summary: Optional[Dict[str, Any]] = None
+    if original_document and original_document.get("data"):
+        original_name = original_document.get("filename") or "original-chapter"
+        original_paragraphs = _tag_paragraphs(
+            parse_document(original_document["data"], original_name),
+            filename=original_name,
+            role="original",
+        )
+        original_summary = {
+            "filename": original_name,
+            "paragraphs_extracted": len(original_paragraphs),
+            "detected_chapters": sorted(detected_chapters(original_paragraphs, original_name)),
+        }
+
+    supervisor_comments: List[Dict[str, Any]] = []
+    revision_results: List[Dict[str, Any]] = []
+    revision_value: Optional[float] = None
+    revision_summary_counts = {"addressed": 0, "partly_addressed": 0, "not_addressed": 0, "manual": 0}
+    if revised_mode:
+        supervisor_comments = extract_supervisor_comments(
+            supervisor_comment_documents or [],
+            supervisor_comments_text,
+        )
+        if not supervisor_comments:
+            raise ValueError(
+                "No readable supervisor comments were found. Upload a DOCX/PDF comment file or paste the comments into the text box."
+            )
+        revision_results = evaluate_revision_comments(
+            supervisor_comments,
+            current_paragraphs,
+            original_paragraphs=original_paragraphs,
+        )
+        revision_value = revision_score(revision_results)
+        revision_summary_counts = revision_counts(revision_results)
+
+    current_chapters = detected_chapters(current_paragraphs, filename)
+    rules = _select_rules(
+        selected_chapter,
+        full_thesis,
+        proposal_mode=proposal_mode,
+        current_chapters=current_chapters,
+    )
     if not rules:
         raise ValueError("No review rules were selected.")
 
     results = [
-        evaluate_rule(rule, paragraphs, selected_chapter, research_approach, full_thesis)
+        evaluate_rule(rule, current_paragraphs, selected_chapter, research_approach, full_thesis or proposal_mode)
         for rule in rules
     ]
-    overall_score, chapter_scores = _score_results(results)
-    gates = _critical_gate(results)
+
+    alignment_results: List[Dict[str, Any]] = []
+    if not full_thesis and selected_chapter and selected_chapter >= 2:
+        alignment_results = evaluate_alignment(
+            selected_chapter=selected_chapter,
+            current_paragraphs=current_paragraphs,
+            context_paragraphs=context_paragraphs,
+            context_documents=prepared_context,
+        )
+
+    checklist_score, chapter_scores = _score_results(results)
+    align_score = alignment_score(alignment_results)
+
+    if revised_mode and revision_value is not None and align_score is not None:
+        overall_score = round(checklist_score * 0.65 + align_score * 0.15 + revision_value * 0.20, 1)
+    elif revised_mode and revision_value is not None:
+        overall_score = round(checklist_score * 0.80 + revision_value * 0.20, 1)
+    elif align_score is not None:
+        overall_score = round(checklist_score * 0.80 + align_score * 0.20, 1)
+    else:
+        overall_score = checklist_score
+
+    combined_results = results + alignment_results + revision_results
+    gates = _critical_gate(combined_results)
+    revision_gate_blocked = any(row.get("status") == STATUS_MISSING for row in revision_results)
+    revision_manual_pending = any(row.get("status") == STATUS_MANUAL for row in revision_results)
     readiness = readiness_band(overall_score)
 
-    if gates["blocked"] and overall_score >= 85:
+    if revision_gate_blocked:
+        readiness = {
+            "label": "Further revision required",
+            "meaning": "One or more supervisor comments have not been addressed in the revised chapter."
+        }
+    elif revised_mode and revision_manual_pending and overall_score >= 70:
+        readiness = {
+            "label": "Supervisor confirmation required",
+            "meaning": "The revision is broadly developed, but one or more supervisor comments require manual confirmation."
+        }
+    elif gates["blocked"] and overall_score >= 85:
         readiness = {
             "label": "Revision required before approval",
             "meaning": "The numerical score is high, but one or more critical requirements remain unresolved."
         }
 
     counts = defaultdict(int)
-    for row in results:
+    for row in combined_results:
         counts[row["status"]] += 1
 
     review_id = uuid.uuid4().hex
+    expected_previous = list(range(1, selected_chapter)) if selected_chapter and selected_chapter >= 2 else []
+    detected_previous = sorted({chapter for doc in prepared_context for chapter in doc.get("detected_chapters", [])})
+    base_label = "Research proposal" if proposal_mode else (
+        "Complete thesis" if full_thesis else f"Chapter {selected_chapter}"
+    )
+    document_label = f"Revised {base_label.lower()}" if revised_mode else base_label
+    comment_sources = list(dict.fromkeys(
+        str(item.get("source_filename") or "Supervisor comments") for item in supervisor_comments
+    ))
+
     return {
         "review_id": review_id,
         "summary": {
@@ -305,23 +468,52 @@ def analyse(
             "academic_level": academic_level,
             "research_approach": research_approach,
             "review_scope": review_scope,
+            "document_type": document_type,
+            "document_label": document_label,
+            "proposal_mode": proposal_mode,
+            "submission_stage": submission_stage,
+            "revised_mode": revised_mode,
             "selected_chapter": selected_chapter,
             "inferred_chapter": inferred,
-            "paragraphs_extracted": len(paragraphs),
-            "rules_checked": len(results),
+            "current_chapters_detected": sorted(current_chapters),
+            "paragraphs_extracted": len(current_paragraphs),
+            "rules_checked": len(combined_results),
+            "official_rules_checked": len(results),
+            "alignment_rules_checked": len(alignment_results),
+            "supervisor_comments_checked": len(revision_results),
+            "checklist_score": checklist_score,
+            "alignment_score": align_score,
+            "revision_score": revision_value,
             "overall_score": overall_score,
             "readiness_label": readiness["label"],
             "readiness_meaning": readiness["meaning"],
             "critical_gate_blocked": gates["blocked"],
             "critical_failed": gates["failed_count"],
+            "revision_gate_blocked": revision_gate_blocked,
+            "revision_manual_pending": revision_manual_pending,
             "meets": counts[STATUS_MEETS],
             "partial": counts[STATUS_PARTIAL],
             "missing": counts[STATUS_MISSING],
             "manual": counts[STATUS_MANUAL],
             "not_applicable": counts[STATUS_NA],
+            "revision_addressed": revision_summary_counts["addressed"],
+            "revision_partly_addressed": revision_summary_counts["partly_addressed"],
+            "revision_not_addressed": revision_summary_counts["not_addressed"],
+            "revision_manual": revision_summary_counts["manual"],
+            "previous_files_count": len(prepared_context),
+            "expected_previous_chapters": expected_previous,
+            "detected_previous_chapters": detected_previous,
+            "supervisor_comment_sources": comment_sources,
+            "original_document_supplied": bool(original_summary),
         },
+        "context_documents": prepared_context,
+        "original_document": original_summary,
+        "supervisor_comment_sources": comment_sources,
         "chapter_scores": chapter_scores,
         "critical_gates": gates,
-        "priority_actions": _priority_actions(results),
+        "priority_actions": _priority_actions(combined_results),
+        "alignment_results": alignment_results,
+        "revision_results": revision_results,
         "results": results,
     }
+

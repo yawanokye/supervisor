@@ -87,6 +87,15 @@ def _concise_comment(row: Dict[str, Any]) -> str:
     code = row.get("code", "")
     item = clean_text(row.get("item", "")).rstrip(".")
     status = row.get("status")
+    if row.get("review_type") == "supervisor_comment":
+        short_item = item if len(item) <= 220 else item[:217].rstrip() + "..."
+        if status == STATUS_MISSING:
+            guidance = f"The earlier supervisor comment has not been clearly addressed: {short_item}"
+        elif status == STATUS_MANUAL:
+            guidance = f"Manual confirmation is required for the earlier supervisor comment: {short_item}"
+        else:
+            guidance = f"The earlier supervisor comment is only partly addressed. Strengthen the revision: {short_item}"
+        return f"[{code} Supervisor comment follow-up: {guidance}]"
     if status == STATUS_MISSING:
         guidance = f"Add content that clearly demonstrates that {item.lower()}."
     elif status == STATUS_MANUAL:
@@ -217,11 +226,15 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     missing_by_heading: Dict[Tuple[str, ...], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
 
-    for row in review.get("results", []):
+    review_rows = list(review.get("results", [])) + list(review.get("alignment_results", [])) + list(review.get("revision_results", []))
+    for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
         comment = _concise_comment(row)
-        evidence = [item for item in (row.get("evidence") or []) if not item.get("is_heading")]
+        evidence = [
+            item for item in (row.get("evidence") or [])
+            if not item.get("is_heading") and item.get("document_role", "current") == "current"
+        ]
         if evidence:
             best = evidence[0]
             paragraph_number = best.get("paragraph")

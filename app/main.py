@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
@@ -13,11 +13,15 @@ from .report_exporter import build_docx_report
 from .review_engine import analyse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_CONTEXT_FILES = 5
+MAX_TOTAL_CONTEXT_BYTES = 75 * 1024 * 1024
+ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.2.0",
-    description="Evidence-linked expert review for thesis chapters and full theses.",
+    version="0.4.0",
+    description="Evidence-linked expert review for initial and revised thesis chapters, proposals, and complete theses.",
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -27,13 +31,32 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 REVIEW_CACHE: Dict[str, dict] = {}
 ANNOTATED_CACHE: Dict[str, bytes] = {}
 
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "0.4.0"}
+
+
+def _validate_filename(filename: str, label: str) -> None:
+    if not filename.lower().endswith(ALLOWED_EXTENSIONS):
+        raise HTTPException(status_code=400, detail=f"{label} must be a DOCX or text-based PDF file.")
+
+
+async def _read_upload(upload: UploadFile, label: str, max_bytes: int = MAX_FILE_BYTES) -> bytes:
+    filename = upload.filename or label
+    _validate_filename(filename, label)
+    data = await upload.read()
+    if not data:
+        raise HTTPException(status_code=400, detail=f"{label} is empty.")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"{label} exceeds the 25 MB file limit.")
+    return data
+
 
 @app.post("/api/review")
 async def create_review(
@@ -42,16 +65,68 @@ async def create_review(
     research_approach: str = Form(...),
     review_scope: str = Form("chapter"),
     selected_chapter: int = Form(0),
+    document_type: str = Form("chapter_one"),
+    submission_stage: str = Form("initial"),
+    previous_files: Optional[List[UploadFile]] = File(None),
+    supervisor_comment_files: Optional[List[UploadFile]] = File(None),
+    supervisor_comments_text: str = Form(""),
+    original_file: Optional[UploadFile] = File(None),
 ):
     filename = file.filename or "uploaded-document"
-    if not filename.lower().endswith((".docx", ".pdf")):
-        raise HTTPException(status_code=400, detail="Upload a DOCX or PDF file.")
+    data = await _read_upload(file, "The chapter or thesis file")
 
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    if len(data) > 25 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="The MVP file limit is 25 MB.")
+    context_uploads = [item for item in (previous_files or []) if item and item.filename]
+    if review_scope == "chapter" and selected_chapter >= 2 and not context_uploads:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Upload Chapters 1 to {selected_chapter - 1} for alignment. "
+                "You may upload one composite file or several separate files."
+            ),
+        )
+    if len(context_uploads) > MAX_CONTEXT_FILES:
+        raise HTTPException(status_code=400, detail=f"Upload no more than {MAX_CONTEXT_FILES} previous-chapter files.")
+
+    context_documents = []
+    total_context_bytes = 0
+    for index, upload in enumerate(context_uploads, start=1):
+        context_data = await _read_upload(upload, f"Previous-chapter file {index}")
+        total_context_bytes += len(context_data)
+        if total_context_bytes > MAX_TOTAL_CONTEXT_BYTES:
+            raise HTTPException(status_code=413, detail="The combined previous-chapter uploads exceed 75 MB.")
+        context_documents.append({
+            "filename": upload.filename or f"previous-chapter-{index}",
+            "data": context_data,
+        })
+
+    comment_uploads = [item for item in (supervisor_comment_files or []) if item and item.filename]
+    if submission_stage == "revised" and not comment_uploads and not supervisor_comments_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="For a revised chapter, upload the supervisor comments or paste them into the comments box.",
+        )
+    if len(comment_uploads) > MAX_CONTEXT_FILES:
+        raise HTTPException(status_code=400, detail=f"Upload no more than {MAX_CONTEXT_FILES} supervisor-comment files.")
+
+    supervisor_comment_documents = []
+    total_comment_bytes = 0
+    for index, upload in enumerate(comment_uploads, start=1):
+        comment_data = await _read_upload(upload, f"Supervisor-comment file {index}")
+        total_comment_bytes += len(comment_data)
+        if total_comment_bytes > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="The combined supervisor-comment uploads exceed 50 MB.")
+        supervisor_comment_documents.append({
+            "filename": upload.filename or f"supervisor-comments-{index}",
+            "data": comment_data,
+        })
+
+    original_document = None
+    if original_file and original_file.filename:
+        original_data = await _read_upload(original_file, "The original chapter file")
+        original_document = {
+            "filename": original_file.filename or "original-chapter",
+            "data": original_data,
+        }
 
     try:
         review = analyse(
@@ -61,6 +136,12 @@ async def create_review(
             research_approach=research_approach,
             selected_chapter=selected_chapter or None,
             review_scope=review_scope,
+            document_type=document_type,
+            context_documents=context_documents,
+            submission_stage=submission_stage,
+            supervisor_comment_documents=supervisor_comment_documents,
+            supervisor_comments_text=supervisor_comments_text,
+            original_document=original_document,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -78,6 +159,7 @@ async def create_review(
 
     REVIEW_CACHE[review["review_id"]] = review
     return review
+
 
 @app.get("/api/review/{review_id}")
 async def get_review(review_id: str):
@@ -102,6 +184,7 @@ async def export_annotated_document(review_id: str):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers=headers,
     )
+
 
 @app.get("/api/review/{review_id}/export.docx")
 async def export_review(review_id: str):
