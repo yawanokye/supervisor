@@ -163,11 +163,20 @@ function revisionDetailsHtml(item) {
 }
 
 
+function categoryLabel(value) {
+  return String(value || "Academic review").replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function findingHtml(item) {
+  const category = item.review_type === "supervisor_comment"
+    ? "Supervisor Follow-up"
+    : item.review_type === "alignment"
+      ? "Cross-Chapter Alignment"
+      : categoryLabel(item.category);
   return `
-    <article class="finding" data-status="${escapeHtml(item.status)}">
+    <article class="finding" data-status="${escapeHtml(item.status)}" data-severity="${escapeHtml(item.severity)}">
       <button class="finding-summary" type="button">
-        <span class="code">${escapeHtml(item.code)}</span>
+        <span class="code category-tag">${escapeHtml(category)}</span>
         <span class="criterion">${escapeHtml(item.item)}</span>
         <span class="status-pill status-${escapeHtml(item.status)}">${escapeHtml(item.status_label)}</span>
       </button>
@@ -175,8 +184,8 @@ function findingHtml(item) {
         <p><span class="label">Section:</span> ${escapeHtml(item.section)}</p>
         <p><span class="label">Priority:</span> ${escapeHtml(item.severity)}</p>
         ${revisionDetailsHtml(item)}
-        <p><span class="label">Expert assessment:</span> ${escapeHtml(item.comment)}</p>
-        <p><span class="label">Required action:</span> ${escapeHtml(item.required_action)}</p>
+        <p><span class="label">Academic assessment:</span> ${escapeHtml(item.comment)}</p>
+        <p><span class="label">Required revision:</span> ${escapeHtml(item.required_action)}</p>
         ${alignmentDetailsHtml(item)}
         ${evidenceHtml(item)}
       </div>
@@ -194,12 +203,12 @@ function bindFindings() {
 function applyFilter() {
   if (!currentReview) return;
   const filter = statusFilter.value;
-  const rows = currentReview.results.filter(row => filter === "all" || row.status === filter);
+  const rows = (currentReview.academic_findings || []).filter(row => filter === "all" || row.severity === filter);
   const limited = showAll ? rows : rows.slice(0, 20);
   document.getElementById("findingList").innerHTML =
     limited.map(findingHtml).join("") ||
-    `<p class="form-note">No findings match this filter.</p>`;
-  showAllButton.textContent = showAll ? "Show first 20" : `Show all criteria (${rows.length})`;
+    `<p class="form-note">No academic findings match this filter.</p>`;
+  showAllButton.textContent = showAll ? "Show first 20" : `Show all findings (${rows.length})`;
   bindFindings();
 }
 
@@ -234,32 +243,34 @@ function renderReview(review) {
   document.getElementById("readinessLabel").textContent = s.readiness_label;
   document.getElementById("readinessMeaning").textContent = s.readiness_meaning;
 
-  let metricRows;
+  const metricRows = [
+    metric("Academic review", `${s.academic_review_score}%`),
+    metric("Alignment", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
+    metric("Critical issues", s.critical_issues || 0),
+    metric("Major issues", s.major_issues || 0),
+    metric("Moderate issues", s.moderate_issues || 0),
+    metric("Strengths", s.strengths_identified || 0),
+  ];
   if (s.revised_mode) {
-    metricRows = [
-      metric("Checklist score", `${s.checklist_score}%`),
-      metric("Alignment score", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
-      metric("Comment compliance", s.revision_score == null ? "Manual" : `${s.revision_score}%`),
-      metric("Comments addressed", s.revision_addressed),
-      metric("Comments not addressed", s.revision_not_addressed),
-      metric("Critical unresolved", s.critical_failed),
-    ];
-  } else {
-    metricRows = [
-      metric("Checklist score", `${s.checklist_score}%`),
-      metric("Alignment score", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
-      metric("Meets", s.meets),
-      metric("Partly meets", s.partial),
-      metric("Does not meet", s.missing),
-      metric("Critical unresolved", s.critical_failed),
-    ];
+    metricRows.splice(2, 0, metric("Comment compliance", s.revision_score == null ? "Manual" : `${s.revision_score}%`));
   }
   document.getElementById("metrics").innerHTML = metricRows.join("");
+
+  const strengths = review.academic_strengths || [];
+  const strengthsSection = document.getElementById("strengthsSection");
+  strengthsSection.classList.toggle("hidden", !strengths.length);
+  if (strengths.length) {
+    document.getElementById("strengthsList").innerHTML = strengths.slice(0, 12).map(item => `
+      <article class="action-item strength">
+        <strong>${escapeHtml(item.section || "Chapter")}</strong>
+        <p>${escapeHtml(item.observation)}</p>
+      </article>`).join("");
+  }
 
   document.getElementById("priorityActions").innerHTML =
     (review.priority_actions || []).map(action => `
       <article class="action-item ${escapeHtml(action.severity)}">
-        <strong>${escapeHtml(action.code)}</strong>
+        <strong>${escapeHtml(action.issue || action.section || "Academic revision")}</strong>
         <span>${escapeHtml(action.status)} · ${escapeHtml(action.severity)}</span>
         <p>${escapeHtml(action.action)}</p>
       </article>`).join("") ||
