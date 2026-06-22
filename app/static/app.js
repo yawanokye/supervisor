@@ -204,6 +204,7 @@ function findingHtml(item) {
         ${revisionDetailsHtml(item)}
         <p><span class="label">Academic assessment:</span> ${escapeHtml(item.comment)}</p>
         <p><span class="label">Required revision:</span> ${escapeHtml(item.required_action)}</p>
+        ${item.illustrative_guidance ? `<p><span class="label">Illustrative guidance:</span> <em>${escapeHtml(item.illustrative_guidance)}</em></p>` : ""}
         ${alignmentDetailsHtml(item)}
         ${evidenceHtml(item)}
       </div>
