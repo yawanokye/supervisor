@@ -16,7 +16,7 @@
         <small>Supervisor Assistant</small>
       </span>
     </a>
-    <span class="beta">MVP 0.6</span>
+    <span class="beta">MVP 0.7</span>
   </header>
 
   <main class="page-shell">
@@ -82,7 +82,16 @@
               <option value="econometrics">Econometrics / time series / panel</option>
             </select>
           </label>
-          <input type="hidden" name="ai_review_mode" value="auto">
+          
+          <div class="field" id="reviewDepthField">
+            <span>Review depth</span>
+            <div class="segmented">
+              <label><input type="radio" name="review_depth" value="standard" checked><span>Standard review</span></label>
+              <label><input type="radio" name="review_depth" value="advanced"><span>Advanced review</span></label>
+            </div>
+            <p class="field-help" id="reviewDepthHelp">Standard review is faster and suitable for bachelor’s, master’s and most chapter reviews.</p>
+            <div class="doctoral-note hidden" id="doctoralNote">Advanced review is recommended for professional doctorate and PhD work requiring deeper scrutiny of originality, theory, methodology and contribution to knowledge.</div>
+          </div>
 
           <div class="field">
             <span>Review scope</span>
@@ -203,7 +212,9 @@
         <div id="loadingState" class="loading-state hidden">
           <div class="spinner"></div>
           <h2>Reviewing the document</h2>
-          <p>Extracting evidence, running the main review, verifying critical decisions, and building the annotated action plan.</p>
+          <p id="loadingMessage">Preparing the document for academic review.</p>
+          <div class="progress-track"><span id="progressBar"></span></div>
+          <small id="progressText">Starting…</small>
         </div>
 
         <div id="resultsState" class="hidden">
