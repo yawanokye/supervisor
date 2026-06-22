@@ -1,55 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
-from pathlib import Path
+import json
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from pydantic import BaseModel
 from app.ai_config import HybridAIConfig
-from app.ai_providers import DeepSeekProvider, OpenAIProvider
+from app.ai_providers import OpenAIProvider
+from app.ai_schemas import DocumentMap
 
-
-class DiagnosticResult(BaseModel):
-    status: str
-    message: str
-
-
-async def main() -> None:
+async def main():
     config = HybridAIConfig.from_env()
-    print(f"DeepSeek configured: {config.deepseek_configured}; model: {config.deepseek_review_model}")
-    print(f"OpenAI configured: {config.openai_configured}; model: {config.openai_verify_model}")
-    prompt = 'Return JSON with status="ok" and message="provider connection succeeded".'
-    if config.deepseek_configured:
-        try:
-            result = await DeepSeekProvider(config).complete_json(
-                model=config.deepseek_review_model,
-                system_prompt="You are a provider diagnostics assistant.",
-                user_prompt=prompt,
-                schema_model=DiagnosticResult,
-                purpose="provider_diagnostic",
-                thinking=False,
-            )
-            print("DeepSeek OK:", result.data)
-        except Exception as exc:
-            print("DeepSeek FAILED:", exc)
-    if config.openai_configured:
-        try:
-            result = await OpenAIProvider(config).complete_json(
-                model=config.openai_verify_model,
-                system_prompt="You are a provider diagnostics assistant.",
-                user_prompt=prompt,
-                schema_model=DiagnosticResult,
-                purpose="provider_diagnostic",
-                reasoning_effort="low",
-            )
-            print("OpenAI OK:", result.data)
-        except Exception as exc:
-            print("OpenAI FAILED:", exc)
-
+    if not config.openai_configured:
+        raise SystemExit("OPENAI_API_KEY is not configured")
+    provider = OpenAIProvider(config)
+    for model in (config.openai_mini_model, config.openai_review_model):
+        result = await provider.complete_json(
+            model=model, system_prompt="Return JSON only.",
+            user_prompt="Return an empty thesis map.", schema_model=DocumentMap,
+            purpose="smoke_test", reasoning_effort="low", max_output_tokens=1200,
+        )
+        print(model, "OK", json.dumps(result.data)[:120])
 
 if __name__ == "__main__":
     asyncio.run(main())
