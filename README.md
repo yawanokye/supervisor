@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant MVP 0.7
+# ProjectReady AI Supervisor Assistant MVP 0.8
 
 ProjectReady AI Supervisor Assistant conducts a complete academic review of thesis chapters, research proposals, revised chapters, and complete theses.
 
@@ -70,7 +70,7 @@ Python is pinned to 3.12.11 through `.python-version` and `render.yaml`.
 The academic-review layer retries empty or schema-invalid DeepSeek JSON and automatically sends only unresolved sections to OpenAI when both providers are configured. Exact provider errors are recorded in the Render logs.
 
 
-## Version 0.7 model routing
+## Version 0.8 model routing
 
 - Standard Review: GPT-5.4 mini performs batched section review, then GPT-5.4 checks the findings and identifies important omissions.
 - Advanced Review: GPT-5.4 performs the main review, then GPT-5.5 conducts the advanced audit. GPT-5.5 is never called unless Advanced Review is selected.
@@ -78,3 +78,12 @@ The academic-review layer retries empty or schema-invalid DeepSeek JSON and auto
 - Review requests run as background jobs and the browser polls for progress. This avoids long HTTP requests and HTML timeout pages being parsed as JSON.
 
 The in-memory job store is suitable for one Render instance. Before horizontal scaling, replace it with Redis and a worker queue.
+## Version 0.8 report improvements
+
+- Produces a concise human-supervisor report instead of repeating the same findings in tables and narrative sections.
+- Consolidates related findings that point to the same passage.
+- Uses topic-specific assessments and actions based on the study context.
+- Includes short illustrative guidance where it helps the student act on the comment, without inventing evidence or citations.
+- Groups successive annotations as one numbered green note, for example `[Supervisor comments: 1. ...; 2. ...]`.
+- Removes repetitive internal wording such as “retain this finding” from student-facing comments.
+
