@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -11,6 +13,8 @@ from pydantic import BaseModel, ValidationError
 
 from .ai_config import HybridAIConfig
 from .ai_schemas import AIUsageRecord
+
+logger = logging.getLogger(__name__)
 
 
 class AIProviderError(RuntimeError):
@@ -23,8 +27,15 @@ class ProviderResult:
     usage: AIUsageRecord
 
 
+def _short(value: Any, limit: int = 1200) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def _extract_json_text(text: str) -> Dict[str, Any]:
     raw = (text or "").strip()
+    if not raw:
+        raise AIProviderError("The model returned empty JSON content.")
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
         raw = re.sub(r"\s*```$", "", raw)
@@ -37,9 +48,9 @@ def _extract_json_text(text: str) -> Dict[str, Any]:
             try:
                 value = json.loads(raw[start : end + 1])
             except json.JSONDecodeError:
-                raise AIProviderError(f"The model returned invalid JSON: {exc}") from exc
+                raise AIProviderError(f"The model returned invalid JSON: {exc}. Output: {_short(raw)}") from exc
         else:
-            raise AIProviderError(f"The model returned invalid JSON: {exc}") from exc
+            raise AIProviderError(f"The model returned invalid JSON: {exc}. Output: {_short(raw)}") from exc
     if not isinstance(value, dict):
         raise AIProviderError("The model response must be a JSON object.")
     return value
@@ -63,6 +74,128 @@ def _make_openai_strict_schema(value: Any) -> Any:
     return output
 
 
+def _example_from_schema(schema: Dict[str, Any], root: Optional[Dict[str, Any]] = None, depth: int = 0) -> Any:
+    root = root or schema
+    if depth > 7:
+        return ""
+    if "$ref" in schema:
+        ref = schema["$ref"].split("/")[-1]
+        target = (root.get("$defs") or {}).get(ref, {})
+        return _example_from_schema(target, root, depth + 1)
+    if "anyOf" in schema:
+        options = [x for x in schema["anyOf"] if x.get("type") != "null"]
+        return _example_from_schema(options[0] if options else {}, root, depth + 1)
+    if "enum" in schema and schema["enum"]:
+        return schema["enum"][0]
+    kind = schema.get("type")
+    if kind == "object" or "properties" in schema:
+        return {key: _example_from_schema(value, root, depth + 1) for key, value in (schema.get("properties") or {}).items()}
+    if kind == "array":
+        return [_example_from_schema(schema.get("items") or {}, root, depth + 1)]
+    if kind in {"number", "integer"}:
+        return 75 if kind == "integer" else 0.85
+    if kind == "boolean":
+        return True
+    return "text"
+
+
+def _json_contract(schema_model: type[BaseModel]) -> str:
+    schema = schema_model.model_json_schema()
+    example = _example_from_schema(schema)
+    return (
+        "Return one JSON object that matches this schema exactly. Do not rename, omit, or add fields.\n"
+        f"JSON SCHEMA:\n{json.dumps(schema, ensure_ascii=False, separators=(',', ':'))}\n"
+        f"EXAMPLE SHAPE:\n{json.dumps(example, ensure_ascii=False, separators=(',', ':'))}"
+    )
+
+
+def _clamp(value: Any, low: float, high: float, default: float) -> float:
+    try:
+        return max(low, min(high, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _list(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel]) -> Dict[str, Any]:
+    """Repair small, common model-format deviations without inventing academic findings."""
+    name = schema_model.__name__
+    value = dict(raw)
+
+    if name == "AcademicSectionReview":
+        if isinstance(value.get("review"), dict):
+            value = dict(value["review"])
+        section_name = str(value.get("section_name") or value.get("section") or "Reviewed section").strip()
+        assessment = str(value.get("section_assessment") or value.get("assessment") or value.get("summary") or "").strip()
+        score = _clamp(value.get("section_score", value.get("score")), 0, 100, 50.0)
+        strengths = []
+        for item in _list(value.get("strengths")):
+            if not isinstance(item, dict):
+                continue
+            strengths.append({
+                "category": item.get("category") or "other",
+                "section": item.get("section") or section_name,
+                "evidence_paragraph_ids": _list(item.get("evidence_paragraph_ids") or item.get("paragraph_ids")),
+                "observation": str(item.get("observation") or item.get("strength") or "").strip(),
+            })
+        issues = []
+        for idx, item in enumerate(_list(value.get("issues") or value.get("findings")), start=1):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("issue_title") or item.get("title") or "Academic issue").strip()
+            fid = str(item.get("finding_id") or "").strip()
+            if not fid:
+                digest = hashlib.sha1(f"{section_name}|{idx}|{title}".encode("utf-8")).hexdigest()[:10]
+                fid = f"finding-{digest}"
+            issues.append({
+                "finding_id": fid,
+                "category": item.get("category") or "other",
+                "section": item.get("section") or section_name,
+                "issue_title": title,
+                "severity": item.get("severity") if item.get("severity") in {"critical", "major", "moderate", "minor"} else "moderate",
+                "confidence": _clamp(item.get("confidence"), 0, 1, 0.75),
+                "evidence_paragraph_ids": _list(item.get("evidence_paragraph_ids") or item.get("paragraph_ids")),
+                "problematic_quote": str(item.get("problematic_quote") or item.get("quote") or "").strip(),
+                "assessment": str(item.get("assessment") or item.get("expert_assessment") or item.get("explanation") or "").strip(),
+                "academic_consequence": str(item.get("academic_consequence") or item.get("consequence") or item.get("implication") or "").strip(),
+                "required_action": str(item.get("required_action") or item.get("action") or item.get("recommendation") or "").strip(),
+            })
+        value = {
+            "section_name": section_name,
+            "section_score": score,
+            "section_assessment": assessment,
+            "strengths": strengths,
+            "issues": issues,
+            "coverage_warning": str(value.get("coverage_warning") or "").strip(),
+        }
+        if not assessment and not strengths and not issues:
+            raise AIProviderError("The model returned an empty academic section review.")
+
+    elif name == "AcademicVerificationBatch":
+        if isinstance(value.get("verification"), dict):
+            value = dict(value["verification"])
+        value.setdefault("verifications", [])
+        value.setdefault("missed_issues", [])
+
+    elif name == "DecisionBatch":
+        value.setdefault("decisions", [])
+
+    elif name == "DocumentMap":
+        defaults = {
+            "research_problem": "", "purpose": "", "objectives": [], "research_questions": [],
+            "hypotheses": [], "theories": [], "variables": [], "population_and_sample": "",
+            "methods_by_objective": {}, "findings_by_objective": {}, "conclusions_by_objective": {},
+            "recommendations_by_finding": {}, "inconsistencies": [],
+        }
+        for key, default in defaults.items():
+            value.setdefault(key, default)
+
+    return value
+
+
 def _openai_output_text(payload: Dict[str, Any]) -> str:
     chunks = []
     for item in payload.get("output", []) or []:
@@ -77,7 +210,9 @@ def _openai_output_text(payload: Dict[str, Any]) -> str:
         return "".join(chunks)
     if isinstance(payload.get("output_text"), str):
         return payload["output_text"]
-    raise AIProviderError("OpenAI returned no structured text output.")
+    incomplete = payload.get("incomplete_details") or {}
+    reason = incomplete.get("reason") if isinstance(incomplete, dict) else ""
+    raise AIProviderError(f"OpenAI returned no structured text output{f' ({reason})' if reason else ''}.")
 
 
 def _usage_value(source: Dict[str, Any], *paths: str) -> int:
@@ -113,7 +248,11 @@ async def _post_json_with_retry(
                     if attempt < max_retries:
                         await asyncio.sleep(min(8, 1.5 ** attempt))
                         continue
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    raise AIProviderError(
+                        f"HTTP {response.status_code} from {url}: {_short(response.text)}"
+                        + (f" [request_id={request_id}]" if request_id else "")
+                    )
                 value = response.json()
                 if not isinstance(value, dict):
                     raise AIProviderError("Provider returned a non-object response.")
@@ -141,57 +280,71 @@ class DeepSeekProvider:
         purpose: str,
         thinking: bool,
     ) -> ProviderResult:
-        body: Dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt + "\nThe final response must be valid JSON."},
-                {"role": "user", "content": user_prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "max_tokens": self.config.max_output_tokens,
-            "thinking": {"type": "enabled" if thinking else "disabled"},
-        }
-        if thinking:
-            body["reasoning_effort"] = self.config.deepseek_reasoning_effort
+        contract = _json_contract(schema_model)
+        last_error: Optional[Exception] = None
+        total_input = total_output = total_cached = 0
+        final_request_id = ""
 
-        payload, request_id = await _post_json_with_retry(
-            url=f"{self.config.deepseek_base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.config.deepseek_api_key}",
-                "Content-Type": "application/json",
-            },
-            payload=body,
-            timeout_seconds=self.config.timeout_seconds,
-            max_retries=self.config.max_retries,
-        )
-        try:
-            text = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise AIProviderError("DeepSeek returned no message content.") from exc
-        raw = _extract_json_text(text)
-        try:
-            validated = schema_model.model_validate(raw)
-        except ValidationError as exc:
-            raise AIProviderError(f"DeepSeek output failed schema validation: {exc}") from exc
+        for structured_attempt in range(self.config.structured_output_retries + 1):
+            repair_note = ""
+            if structured_attempt:
+                repair_note = (
+                    "\nA previous response was empty, invalid, or did not match the schema. "
+                    "Return a complete JSON object only. Do not use markdown. Do not omit required fields."
+                )
+            body: Dict[str, Any] = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt + "\n" + contract + repair_note},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "response_format": {"type": "json_object"},
+                "max_tokens": self.config.max_output_tokens,
+                "thinking": {"type": "enabled" if thinking else "disabled"},
+                "stream": False,
+            }
+            if thinking:
+                body["reasoning_effort"] = self.config.deepseek_reasoning_effort
 
-        usage_source = payload.get("usage") or {}
-        input_tokens = _usage_value(usage_source, "prompt_tokens")
-        output_tokens = _usage_value(usage_source, "completion_tokens")
-        cached_tokens = _usage_value(
-            usage_source,
-            "prompt_cache_hit_tokens",
-            "prompt_tokens_details.cached_tokens",
-        )
-        usage = AIUsageRecord(
-            provider="deepseek",
-            model=model,
-            purpose=purpose,
-            input_tokens=input_tokens,
-            cached_input_tokens=cached_tokens,
-            output_tokens=output_tokens,
-            request_id=request_id or payload.get("id", ""),
-        )
-        return ProviderResult(data=validated.model_dump(), usage=usage)
+            try:
+                payload, request_id = await _post_json_with_retry(
+                    url=f"{self.config.deepseek_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.config.deepseek_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    payload=body,
+                    timeout_seconds=self.config.timeout_seconds,
+                    max_retries=self.config.max_retries,
+                )
+                final_request_id = request_id or payload.get("id", "")
+                usage_source = payload.get("usage") or {}
+                total_input += _usage_value(usage_source, "prompt_tokens")
+                total_output += _usage_value(usage_source, "completion_tokens")
+                total_cached += _usage_value(usage_source, "prompt_cache_hit_tokens", "prompt_tokens_details.cached_tokens")
+                try:
+                    choice = payload["choices"][0]
+                    message = choice["message"]
+                    text = message.get("content")
+                    finish_reason = choice.get("finish_reason")
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise AIProviderError("DeepSeek returned no message content.") from exc
+                if finish_reason == "length":
+                    raise AIProviderError("DeepSeek truncated the JSON response because max_tokens was reached.")
+                raw = _extract_json_text(text or "")
+                raw = _normalise_model_payload(raw, schema_model)
+                validated = schema_model.model_validate(raw)
+                usage = AIUsageRecord(
+                    provider="deepseek", model=model, purpose=purpose,
+                    input_tokens=total_input, cached_input_tokens=total_cached,
+                    output_tokens=total_output, request_id=final_request_id,
+                )
+                return ProviderResult(data=validated.model_dump(), usage=usage)
+            except (ValidationError, AIProviderError) as exc:
+                last_error = exc
+                logger.warning("DeepSeek structured output attempt %s failed for %s: %s", structured_attempt + 1, purpose, exc)
+
+        raise AIProviderError(f"DeepSeek could not produce a valid {schema_model.__name__}: {last_error}")
 
 
 class OpenAIProvider:
@@ -241,6 +394,7 @@ class OpenAIProvider:
             max_retries=self.config.max_retries,
         )
         raw = _extract_json_text(_openai_output_text(payload))
+        raw = _normalise_model_payload(raw, schema_model)
         try:
             validated = schema_model.model_validate(raw)
         except ValidationError as exc:
@@ -251,11 +405,8 @@ class OpenAIProvider:
         output_tokens = _usage_value(usage_source, "output_tokens")
         cached_tokens = _usage_value(usage_source, "input_tokens_details.cached_tokens")
         usage = AIUsageRecord(
-            provider="openai",
-            model=model,
-            purpose=purpose,
-            input_tokens=input_tokens,
-            cached_input_tokens=cached_tokens,
+            provider="openai", model=model, purpose=purpose,
+            input_tokens=input_tokens, cached_input_tokens=cached_tokens,
             output_tokens=output_tokens,
             request_id=request_id or payload.get("id", ""),
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -19,6 +20,8 @@ from .ai_schemas import (
 from .document_parser import clean_text, normalised
 
 SEVERITY_WEIGHT = {"critical": 16.0, "major": 8.0, "moderate": 3.5, "minor": 1.0}
+logger = logging.getLogger(__name__)
+
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
 ACTIONABLE_STATUS = {
     "critical": ("does_not_meet_requirement", "Critical revision"),
@@ -516,12 +519,84 @@ async def enrich_review_with_academic_ai(
         )
 
     primary_results = await _run_limited([primary_call(section) for section in sections], config.max_parallel_calls)
+    result_provider_by_index = {index: primary_provider for index in range(len(sections))}
+    error_details: Dict[int, List[str]] = {}
+
+    for index, result in enumerate(primary_results):
+        if isinstance(result, Exception):
+            error_details[index] = [f"{primary_provider}: {result}"]
+            logger.error(
+                "Primary academic review failed for section %s using %s: %s",
+                clean_text(sections[index].get("heading", "Untitled section")),
+                primary_provider,
+                result,
+            )
+
+    failed_indexes = [index for index, result in enumerate(primary_results) if isinstance(result, Exception)]
+    fallback_provider = None
+    if config.provider_failover and failed_indexes:
+        if primary_provider == "deepseek" and openai is not None:
+            fallback_provider = "openai"
+        elif primary_provider == "openai" and deepseek is not None:
+            fallback_provider = "deepseek"
+
+    if fallback_provider:
+        async def fallback_call(index: int) -> ProviderResult:
+            section = sections[index]
+            prompt = _section_prompt(
+                review,
+                section,
+                document_map,
+                is_alignment_audit=bool(section.get("alignment_audit")),
+            )
+            if fallback_provider == "openai":
+                return await openai.complete_json(
+                    model=config.openai_verify_model,
+                    system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    schema_model=AcademicSectionReview,
+                    purpose="academic_section_failover",
+                    reasoning_effort=config.openai_reasoning_effort,
+                )
+            return await deepseek.complete_json(
+                model=config.deepseek_review_model,
+                system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
+                user_prompt=prompt,
+                schema_model=AcademicSectionReview,
+                purpose="academic_section_failover",
+                thinking=True,
+            )
+
+        fallback_results = await _run_limited(
+            [fallback_call(index) for index in failed_indexes],
+            config.max_parallel_calls,
+        )
+        for index, fallback_result in zip(failed_indexes, fallback_results):
+            if isinstance(fallback_result, Exception):
+                error_details.setdefault(index, []).append(f"{fallback_provider}: {fallback_result}")
+                logger.error(
+                    "Fallback academic review failed for section %s using %s: %s",
+                    clean_text(sections[index].get("heading", "Untitled section")),
+                    fallback_provider,
+                    fallback_result,
+                )
+            else:
+                primary_results[index] = fallback_result
+                result_provider_by_index[index] = fallback_provider
+                logger.info(
+                    "Academic review failover succeeded for section %s using %s",
+                    clean_text(sections[index].get("heading", "Untitled section")),
+                    fallback_provider,
+                )
+
     section_reviews: List[Dict[str, Any]] = []
     failed_sections: List[str] = []
 
-    for section, result in zip(sections, primary_results):
+    for index, (section, result) in enumerate(zip(sections, primary_results)):
         if isinstance(result, Exception):
-            failed_sections.append(clean_text(section.get("heading", "Untitled section")))
+            heading = clean_text(section.get("heading", "Untitled section"))
+            details = " | ".join(error_details.get(index, [str(result)]))
+            failed_sections.append(f"{heading}: {details}")
             continue
         usage_records.append(_usage_cost(result.usage, config))
         data = result.data
@@ -548,19 +623,26 @@ async def enrich_review_with_academic_ai(
             "strengths": valid_strengths,
             "issues": valid_issues,
             "source_section": section,
+            "review_provider": result_provider_by_index.get(index, primary_provider),
         })
 
     if failed_sections and config.strict_failure:
         raise AIProviderError(
-            "The expert review could not complete every section. Failed section(s): " + ", ".join(failed_sections)
+            "The expert review could not complete every section after provider failover. "
+            + " Failed section(s): " + " || ".join(failed_sections[:6])
         )
     if not section_reviews:
-        raise AIProviderError("The expert review service returned no valid section reviews.")
+        raise AIProviderError(
+            "No section could be reviewed by the configured providers. "
+            + " || ".join(failed_sections[:6])
+        )
 
     # OpenAI verifies high-impact or uncertain DeepSeek findings, without repeating every low-risk section.
-    if primary_provider == "deepseek" and openai is not None:
+    if openai is not None:
         verify_targets = []
         for section_review in section_reviews:
+            if section_review.get("review_provider") != "deepseek":
+                continue
             issues = section_review["issues"]
             should_verify = mode == "premium" or any(
                 issue.get("severity") in {"critical", "major"}

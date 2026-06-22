@@ -55,6 +55,8 @@ class HybridAIConfig:
     max_parallel_calls: int
     use_flash_document_map: bool
     strict_failure: bool
+    provider_failover: bool
+    structured_output_retries: int
     verify_critical: bool
     verify_manual: bool
     verify_disagreement: bool
@@ -98,6 +100,8 @@ class HybridAIConfig:
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 2),
             use_flash_document_map=_env_bool("AI_USE_FLASH_DOCUMENT_MAP", True),
             strict_failure=_env_bool("AI_STRICT_FAILURE", True),
+            provider_failover=_env_bool("AI_PROVIDER_FAILOVER", True),
+            structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 1, 0),
             verify_critical=_env_bool("AI_VERIFY_CRITICAL", True),
             verify_manual=_env_bool("AI_VERIFY_MANUAL", True),
             verify_disagreement=_env_bool("AI_VERIFY_DISAGREEMENT", True),

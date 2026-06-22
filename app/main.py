@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -11,9 +12,12 @@ from fastapi.templating import Jinja2Templates
 from .annotated_exporter import build_annotated_docx
 from .academic_ai_engine import enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig
+from .ai_providers import AIProviderError
 from .hybrid_ai_engine import enrich_review_with_hybrid_ai
 from .report_exporter import build_docx_report
 from .review_engine import analyse
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -23,7 +27,7 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.6.0",
+    version="0.6.1",
     description="Complete academic review for thesis chapters, proposals, revisions, and complete theses.",
 )
 
@@ -72,7 +76,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "0.6.0",
+        "version": "0.6.1",
     }
 
 
@@ -200,7 +204,18 @@ async def create_review(
         review = _strip_internal_ai_metadata(review)
     except (ValueError, AIConfigurationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AIProviderError as exc:
+        logger.exception("Expert review provider failure")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The expert review service could not complete the document review. "
+                "Please try again. The server log now contains the exact provider error. "
+                f"Technical detail: {str(exc)[:700]}"
+            ),
+        ) from exc
     except Exception as exc:
+        logger.exception("Unexpected review failure")
         raise HTTPException(status_code=500, detail=f"Review failed: {exc}") from exc
 
     annotated_available = filename.lower().endswith(".docx")
