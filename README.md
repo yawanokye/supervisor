@@ -1,53 +1,53 @@
-# ProjectReady AI Supervisor Assistant MVP 0.5
+# ProjectReady AI Supervisor Assistant v0.6
 
-This build combines a deterministic thesis-checklist engine with cost-efficient DeepSeek review and selective OpenAI quality control.
+ProjectReady AI Supervisor Assistant conducts a complete academic review of thesis chapters, research proposals, revised chapters, and complete theses.
 
-## Hybrid review flow
+## Review philosophy
 
-1. Python extracts DOCX/PDF text, headings, pages, paragraphs, supervisor comments, and previous chapters.
-2. The local engine applies all 109 official checklist criteria and identifies candidate evidence.
-3. `deepseek-v4-flash` creates a compact thesis map from the most relevant passages.
-4. `deepseek-v4-pro` performs the main expert review of critical, incomplete, uncertain, alignment, and revision items.
-5. `gpt-5.4` independently verifies only critical, low-confidence, manual, and disputed decisions.
-6. In Premium mode, `gpt-5.5` adjudicates remaining disagreements.
-7. Python validates every paragraph ID, recalculates readiness, and generates the annotated DOCX and review report.
+The official thesis self-evaluation checklist is used internally as a coverage guide. It is not presented to the student as the review and its item numbers are not shown in the dashboard, annotated document, or Word report.
 
-The application ignores model reasoning content. Only the structured final decision is used.
+The main review is a section-by-section academic assessment covering:
 
-## Review modes
+- title accuracy, focus, and scope
+- chapter structure, progression, and coherence
+- conceptual and theoretical grounding
+- empirical evidence, source quality, and critical synthesis
+- research problem, gap, purpose, objectives, questions, and hypotheses
+- methodological rigour and justification
+- results, interpretation, discussion, conclusions, and recommendations
+- cross-chapter alignment
+- citation and source risks
+- academic writing, terminology, grammar, and presentation
+- supervisor-comment compliance for revised chapters
 
-- **Automatic routing**: Hybrid when both API keys exist, DeepSeek-only or OpenAI-only when one exists, and local review when neither exists.
-- **Cost-efficient hybrid**: DeepSeek primary review plus selective OpenAI verification.
-- **DeepSeek only**: Lowest model cost, without OpenAI verification.
-- **OpenAI only**: OpenAI reviews all routed criteria.
-- **Premium**: DeepSeek primary review, OpenAI verification, and premium adjudication for unresolved disagreements.
-- **Local**: Rule-based checklist review without API cost.
+## Model routing
 
-## Install and run
+- DeepSeek performs the primary section-by-section academic review where configured.
+- OpenAI independently verifies high-impact and uncertain findings where configured.
+- Python extracts the document, validates paragraph evidence, scores the review, and produces the annotated Word file.
+- The app does not silently present a local keyword scan as a complete expert review. At least one AI review provider must be configured.
+
+## Annotated Word output
+
+- Existing text requiring revision is coloured red.
+- A specific supervisor comment is inserted immediately afterwards in green square brackets.
+- Missing content receives a green bracketed instruction beneath the relevant heading.
+- Internal checklist codes are never displayed.
+
+## Run locally
 
 ```bash
 python -m venv .venv
-```
-
-Activate the environment, then:
-
-```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000`.
-
-## Python runtime
-
-The project pins Python `3.12.11` through `.python-version` and `render.yaml` to ensure binary-wheel compatibility during Render builds.
-
-## Render configuration
+## Render commands
 
 Build command:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 Start command:
@@ -62,39 +62,4 @@ Health check:
 /health
 ```
 
-Add the environment variables from `.env.example` in the Render dashboard. At minimum, configure:
-
-```text
-DEEPSEEK_API_KEY
-OPENAI_API_KEY
-```
-
-Never commit real API keys to GitHub.
-
-## Cost controls implemented
-
-- Relevant sections are sent instead of whole documents.
-- Checklist items are grouped into small batches.
-- DeepSeek Flash is used only for compact document mapping.
-- DeepSeek Pro is the default academic reviewer.
-- OpenAI receives only escalated decisions in Hybrid mode.
-- Evidence IDs are validated against the parsed document.
-- API usage and estimated cost are recorded in the review report.
-- Provider failures fall back to validated local decisions unless `AI_STRICT_FAILURE=true`.
-
-## Privacy and reliability
-
-- OpenAI requests use `store: false`.
-- API keys remain server-side.
-- No model can directly edit the Word file.
-- Only existing paragraph IDs are accepted as evidence.
-- A model cannot mark an item YES without a valid evidence paragraph.
-- The final Word annotations are produced by Python, not by the model.
-
-## Production work still required
-
-- Replace in-memory review storage with PostgreSQL and object storage.
-- Move long AI reviews to a background queue.
-- Add authentication, quotas, billing, and per-user usage limits.
-- Add automated evaluation against real supervisor decisions.
-- Encrypt uploaded documents at rest and apply a retention policy.
+Python is pinned to 3.12.11 through `.python-version` and `render.yaml`.
