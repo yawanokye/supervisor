@@ -63,3 +63,8 @@ Health check:
 ```
 
 Python is pinned to 3.12.11 through `.python-version` and `render.yaml`.
+
+
+## Provider failover
+
+The academic-review layer retries empty or schema-invalid DeepSeek JSON and automatically sends only unresolved sections to OpenAI when both providers are configured. Exact provider errors are recorded in the Render logs.

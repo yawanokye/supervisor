@@ -49,3 +49,15 @@ Health check:
 ```
 
 After changing the Python version, use **Clear build cache & deploy** in Render.
+
+## AI provider reliability settings
+
+Add these environment variables on Render:
+
+```text
+AI_PROVIDER_FAILOVER=true
+AI_STRUCTURED_OUTPUT_RETRIES=1
+AI_STRICT_FAILURE=true
+```
+
+With both API keys configured, DeepSeek remains the cost-efficient primary reviewer. If a section returns empty or schema-invalid JSON, the app retries it and then sends only that failed section to OpenAI. Provider failures are written to the Render log with HTTP status, response detail, and request ID where available.
