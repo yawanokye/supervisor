@@ -25,6 +25,24 @@ const showAllButton = document.getElementById("showAllButton");
 
 let currentReview = null;
 let showAll = false;
+const academicLevelSelect = form.querySelector('select[name="academic_level"]');
+const doctoralNote = document.getElementById("doctoralNote");
+const reviewDepthHelp = document.getElementById("reviewDepthHelp");
+const progressBar = document.getElementById("progressBar");
+const progressText = document.getElementById("progressText");
+const loadingMessage = document.getElementById("loadingMessage");
+
+function updateDepthGuidance() {
+  const doctoral = ["Professional Doctorate", "PhD"].includes(academicLevelSelect.value);
+  doctoralNote.classList.toggle("hidden", !doctoral);
+  const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
+  reviewDepthHelp.textContent = depth === "advanced"
+    ? "Advanced review applies an additional high-level audit and may take longer."
+    : "Standard review is faster and suitable for bachelor’s, master’s and most chapter reviews.";
+}
+academicLevelSelect.addEventListener("change", updateDepthGuidance);
+form.querySelectorAll('input[name="review_depth"]').forEach(input => input.addEventListener("change", updateDepthGuidance));
+updateDepthGuidance();
 
 function selectedScope() {
   return document.querySelector('input[name="review_scope"]:checked')?.value || "chapter";
@@ -322,6 +340,54 @@ function showFormError(message, target = null) {
   if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+async function readJsonSafely(response) {
+  const text = await response.text();
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  let payload = null;
+  if (contentType.includes("application/json")) {
+    try { payload = JSON.parse(text); } catch (_) { payload = null; }
+  }
+  if (!payload && text.trim().startsWith("{")) {
+    try { payload = JSON.parse(text); } catch (_) { payload = null; }
+  }
+  if (!payload) {
+    if (text.trim().startsWith("<")) {
+      throw new Error("The server returned a temporary web-service error instead of review data. Please retry. Your document was not processed as a valid review response.");
+    }
+    throw new Error(response.ok ? "The server returned an unreadable response." : `The review service returned error ${response.status}.`);
+  }
+  if (!response.ok) throw new Error(payload.detail || payload.error || "The review could not be completed.");
+  return payload;
+}
+
+function updateProgress(job) {
+  const value = Math.max(2, Math.min(100, Number(job.progress || 2)));
+  progressBar.style.width = `${value}%`;
+  progressText.textContent = `${value}%`;
+  loadingMessage.textContent = job.message || "Reviewing the document";
+}
+
+async function waitForReview(pollUrl) {
+  const started = Date.now();
+  let temporaryFailures = 0;
+  while (Date.now() - started < 30 * 60 * 1000) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const response = await fetch(pollUrl, { headers: { "Accept": "application/json" } });
+      const job = await readJsonSafely(response);
+      temporaryFailures = 0;
+      updateProgress(job);
+      if (job.status === "completed") return job.review;
+      if (job.status === "failed") throw new Error(job.error || "The review could not be completed.");
+    } catch (error) {
+      temporaryFailures += 1;
+      if (temporaryFailures >= 5) throw error;
+      loadingMessage.textContent = "The connection was interrupted. Reconnecting to the review job…";
+    }
+  }
+  throw new Error("The review is still taking longer than expected. Please retry or check the service status.");
+}
+
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const oldError = document.querySelector(".error-banner");
@@ -330,50 +396,32 @@ form.addEventListener("submit", async event => {
   const scope = selectedScope();
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
-  if (scope === "chapter" && !chapter) {
-    chapterSelect.focus();
-    return;
-  }
+  if (scope === "chapter" && !chapter) { chapterSelect.focus(); return; }
   if (scope === "chapter" && chapter >= 2 && !(previousFilesInput.files || []).length) {
-    showFormError(`Upload Chapters 1 to ${chapter - 1} as one composite file or as separate files before running the review.`, previousChaptersField);
-    return;
+    showFormError(`Upload Chapters 1 to ${chapter - 1} as one composite file or as separate files before running the review.`, previousChaptersField); return;
   }
   if (stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
-    showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields);
-    return;
+    showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields); return;
   }
 
-  emptyState.classList.add("hidden");
-  resultsState.classList.add("hidden");
-  loadingState.classList.remove("hidden");
-  submitButton.disabled = true;
-  submitButton.querySelector("span").textContent = "Reviewing…";
+  emptyState.classList.add("hidden"); resultsState.classList.add("hidden"); loadingState.classList.remove("hidden");
+  progressBar.style.width = "2%"; progressText.textContent = "2%"; loadingMessage.textContent = "Uploading and queuing the review";
+  submitButton.disabled = true; submitButton.querySelector("span").textContent = "Review in progress…";
 
   try {
     const body = new FormData(form);
-    if (scope === "full_thesis") {
-      body.set("selected_chapter", "0");
-      body.set("document_type", "full_thesis");
-      body.delete("previous_files");
-    }
-    if (stage !== "revised") {
-      body.delete("supervisor_comment_files");
-      body.delete("supervisor_comments_text");
-      body.delete("original_file");
-    }
-    const response = await fetch("/api/review", { method: "POST", body });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || "The review could not be completed.");
-    renderReview(payload);
-    loadingState.classList.add("hidden");
-    resultsState.classList.remove("hidden");
+    if (scope === "full_thesis") { body.set("selected_chapter", "0"); body.set("document_type", "full_thesis"); body.delete("previous_files"); }
+    if (stage !== "revised") { body.delete("supervisor_comment_files"); body.delete("supervisor_comments_text"); body.delete("original_file"); }
+    const response = await fetch("/api/review", { method: "POST", body, headers: { "Accept": "application/json" } });
+    const queued = await readJsonSafely(response);
+    updateProgress(queued);
+    const review = await waitForReview(queued.poll_url);
+    renderReview(review);
+    loadingState.classList.add("hidden"); resultsState.classList.remove("hidden");
   } catch (error) {
-    loadingState.classList.add("hidden");
-    emptyState.classList.remove("hidden");
-    showFormError(error.message);
+    loadingState.classList.add("hidden"); emptyState.classList.remove("hidden"); showFormError(error.message);
   } finally {
-    submitButton.disabled = false;
-    submitButton.querySelector("span").textContent = "Run expert review";
+    submitButton.disabled = false; submitButton.querySelector("span").textContent = "Run expert review";
   }
 });
 
