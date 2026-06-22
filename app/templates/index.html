@@ -16,24 +16,23 @@
         <small>Supervisor Assistant</small>
       </span>
     </a>
-    <span class="beta">MVP 0.5.2</span>
+    <span class="beta">MVP 0.6</span>
   </header>
 
   <main class="page-shell">
     <section class="hero">
       <div>
-        <p class="eyebrow">Evidence-linked thesis review</p>
-        <h1>Review thesis chapters with evidence-based academic guidance and clear revision priorities.</h1>
+        <p class="eyebrow">Complete academic thesis review</p>
+        <h1>Receive a complete, section-by-section academic review of every thesis chapter.</h1>
         <p class="hero-copy">
-          The Supervisor Assistant examines academic content, cross-chapter alignment, supervisor comments, and submission readiness.
-          It preserves page and paragraph evidence and produces an annotated Word document with clear revision guidance.
+          The Supervisor Assistant examines the chapter as a complete academic work, including structure, scholarly depth, evidence, theory, methodology, alignment, citations, writing quality, and presentation. It then produces an annotated Word document with precise revision guidance.
         </p>
         <div class="trust-row">
           <span>Expert academic review</span>
           <span>Initial and revised chapters</span>
           <span>Supervisor-comment follow-up</span>
           <span>Previous-chapter alignment</span>
-          <span>109 official criteria</span>
+          <span>Complete section-by-section review</span>
           <span>Annotated Word output</span>
         </div>
       </div>
@@ -41,10 +40,10 @@
         <div class="score-preview">
           <span>Combined readiness</span>
           <strong>78%</strong>
-          <small>Checklist + alignment + comment compliance</small>
+          <small>Academic review + alignment + revision follow-up</small>
         </div>
         <div class="preview-list">
-          <p><b>Checklist</b> Chapter content and adequacy</p>
+          <p><b>Academic</b> Content, rigour, evidence and writing</p>
           <p><b>Revision</b> Supervisor comments addressed</p>
           <p><b>Alignment</b> Objectives carried across chapters</p>
         </div>
@@ -198,7 +197,7 @@
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">✓</div>
           <h2>Your review dashboard will appear here</h2>
-          <p>Results will include the official checklist, supervisor-comment compliance, cross-chapter alignment, priority actions, evidence locations, and revision guidance.</p>
+          <p>Results will include a complete academic assessment, strengths, priority revisions, cross-chapter alignment, supervisor-comment follow-up, evidence locations, and annotated guidance.</p>
         </div>
 
         <div id="loadingState" class="loading-state hidden">
@@ -225,7 +224,7 @@
           <div class="result-actions">
             <button class="secondary-button" id="annotatedButton">Download annotated document</button>
             <button class="ghost-button" id="downloadButton">Download review report</button>
-            <button class="ghost-button" id="showAllButton">Show all criteria</button>
+            <button class="ghost-button" id="showAllButton">Show all findings</button>
           </div>
 
           <section class="result-section hidden" id="revisionSection">
@@ -252,6 +251,16 @@
             <div id="alignmentList" class="finding-list"></div>
           </section>
 
+          <section class="result-section hidden" id="strengthsSection">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">What is working</p>
+                <h3>Academic strengths</h3>
+              </div>
+            </div>
+            <div id="strengthsList" class="action-list"></div>
+          </section>
+
           <section class="result-section">
             <div class="section-title">
               <div>
@@ -265,15 +274,15 @@
           <section class="result-section">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Official checklist</p>
-                <h3>Detailed findings</h3>
+                <p class="eyebrow">Complete academic review</p>
+                <h3>Detailed academic findings</h3>
               </div>
               <select id="statusFilter" class="compact-select">
-                <option value="all">All statuses</option>
-                <option value="does_not_meet_requirement">Does not meet</option>
-                <option value="partly_meets_requirement">Partly meets</option>
-                <option value="manual_review_required">Manual review</option>
-                <option value="meets_requirement">Meets</option>
+                <option value="all">All priorities</option>
+                <option value="critical">Critical</option>
+                <option value="major">Major</option>
+                <option value="moderate">Moderate</option>
+                <option value="minor">Minor</option>
               </select>
             </div>
             <div id="findingList" class="finding-list"></div>
