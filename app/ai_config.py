@@ -97,7 +97,7 @@ class HybridAIConfig:
             max_retries=_env_int("AI_MAX_RETRIES", 2, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 2),
             use_flash_document_map=_env_bool("AI_USE_FLASH_DOCUMENT_MAP", True),
-            strict_failure=_env_bool("AI_STRICT_FAILURE", False),
+            strict_failure=_env_bool("AI_STRICT_FAILURE", True),
             verify_critical=_env_bool("AI_VERIFY_CRITICAL", True),
             verify_manual=_env_bool("AI_VERIFY_MANUAL", True),
             verify_disagreement=_env_bool("AI_VERIFY_DISAGREEMENT", True),

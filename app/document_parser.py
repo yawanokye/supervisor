@@ -23,21 +23,27 @@ CHAPTER_TITLE_MAP = {
 }
 
 KNOWN_SECTION_TERMS = [
-    "background to the study", "statement of the problem", "purpose of the study",
-    "research objectives", "research questions", "research hypotheses",
-    "significance of the study", "limitations of the study", "delimitations of the study",
-    "organisation of the study", "organization of the study", "conceptual review",
-    "theoretical review", "theoretical framework", "empirical review",
-    "conceptual framework", "hypotheses development", "chapter summary",
-    "research philosophy", "research approach", "research design", "study area",
-    "study setting", "population of the study", "target population", "sampling frame",
-    "sample size", "sampling technique", "data collection instrument",
-    "operationalisation of variables", "operationalization of variables",
-    "pilot study", "validity and reliability", "data collection procedure",
-    "data preparation", "data analysis", "ethical considerations",
-    "response rate", "descriptive statistics", "hypothesis testing",
-    "discussion of findings", "summary of findings", "conclusions",
-    "recommendations", "future research", "references", "appendices",
+    "introduction", "background", "background to the study", "background of the study",
+    "statement of the problem", "problem statement", "purpose of the study", "aim of the study",
+    "objective of the study", "objectives of the study", "research objective", "research objectives",
+    "general objective", "specific objective", "specific objectives", "research question", "research questions",
+    "research hypothesis", "research hypotheses", "hypothesis", "hypotheses",
+    "significance of the study", "significant of the study", "limitations of the study", "limitation of the study",
+    "delimitations of the study", "delimitation of the study", "scope of the study", "definition of terms",
+    "operational definition of terms", "organisation of the study", "organization of the study",
+    "conceptual review", "conceptual literature", "theoretical review", "theoretical framework",
+    "empirical review", "review of empirical literature", "conceptual framework", "hypothesis development",
+    "hypotheses development", "chapter summary", "summary of the chapter", "research philosophy",
+    "research paradigm", "research approach", "research design", "study area", "study setting",
+    "population of the study", "target population", "sampling frame", "sample size", "sample size determination",
+    "sampling technique", "sampling procedure", "data source", "data sources", "data collection instrument",
+    "research instrument", "operationalisation of variables", "operationalization of variables",
+    "measurement of variables", "pilot study", "pretesting", "validity and reliability", "trustworthiness",
+    "data collection procedure", "data collection procedures", "data preparation", "data analysis",
+    "model specification", "ethical considerations", "ethics", "response rate", "descriptive statistics",
+    "hypothesis testing", "results", "findings", "presentation of results", "discussion", "discussion of findings",
+    "summary of findings", "conclusion", "conclusions", "recommendation", "recommendations",
+    "suggestions for future research", "future research", "references", "appendix", "appendices",
 ]
 
 def clean_text(text: str) -> str:
@@ -64,7 +70,16 @@ def is_heading(text: str, style_name: str = "") -> bool:
         return True
     if raw.isupper() and len(raw.split()) <= 14:
         return True
-    return any(term == low or low.startswith(term + " ") for term in KNOWN_SECTION_TERMS) and len(raw.split()) <= 18
+    if any(term == low or low.startswith(term + " ") for term in KNOWN_SECTION_TERMS) and len(raw.split()) <= 18:
+        return True
+    # Student chapters often contain unnumbered and imperfectly worded headings.
+    heading_tokens = {"introduction", "background", "problem", "purpose", "objective", "objectives", "question", "questions",
+                      "hypothesis", "hypotheses", "significance", "significant", "limitation", "limitations", "delimitation",
+                      "delimitations", "definition", "literature", "theory", "theoretical", "empirical", "methodology", "methods",
+                      "design", "population", "sampling", "instrument", "validity", "reliability", "analysis", "ethics", "results",
+                      "findings", "discussion", "conclusion", "recommendations", "references", "appendix"}
+    words = set(low.split())
+    return len(raw.split()) <= 10 and bool(words & heading_tokens) and not raw.endswith((".", ",", ";", ":"))
 
 def detect_chapter_number(text: str) -> Optional[int]:
     low = normalised(text)

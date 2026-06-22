@@ -106,6 +106,11 @@ def _deterministic_sample(code: str, rate: float) -> bool:
 def _candidate_rows(review: Dict[str, Any], mode: str, config: HybridAIConfig) -> List[Dict[str, Any]]:
     rows = []
     for row in _all_rows(review):
+        # The official checklist is now an internal guide for the complete academic review.
+        # Only cross-chapter alignment and supervisor-comment follow-up are routed through
+        # this legacy structured-decision pass.
+        if row.get("review_type") not in {"alignment", "supervisor_comment"}:
+            continue
         if row.get("status") == STATUS_NA:
             continue
         status = row.get("status")

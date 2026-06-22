@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .annotated_exporter import build_annotated_docx
+from .academic_ai_engine import enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .hybrid_ai_engine import enrich_review_with_hybrid_ai
 from .report_exporter import build_docx_report
@@ -22,8 +23,8 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.5.2",
-    description="Evidence-linked expert review for thesis chapters, proposals, revisions, and complete theses.",
+    version="0.6.0",
+    description="Complete academic review for thesis chapters, proposals, revisions, and complete theses.",
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -36,17 +37,28 @@ AI_USAGE_CACHE: Dict[str, dict] = {}
 
 
 def _strip_internal_ai_metadata(review: dict) -> dict:
-    """Remove provider, model, token, and cost metadata from student-facing output."""
+    """Remove provider metadata and the internal checklist guide from student-facing output."""
     review.pop("ai_review", None)
+    review.pop("ai_document_map", None)
+    review.pop("results", None)
+    review.pop("chapter_scores", None)
+    review.pop("critical_gates", None)
     summary = review.get("summary") or {}
+    hidden_summary_keys = {
+        "checklist_score", "rules_checked", "official_rules_checked", "meets", "partial",
+        "missing", "manual", "not_applicable", "critical_gate_blocked", "critical_failed",
+    }
     for key in list(summary):
-        if key.startswith("ai_"):
+        if key.startswith("ai_") or key in hidden_summary_keys:
             summary.pop(key, None)
-    for collection_name in ("results", "alignment_results", "revision_results"):
+    for collection_name in ("academic_findings", "alignment_results", "revision_results"):
         for row in review.get(collection_name) or []:
+            row.pop("code", None)
             for key in list(row):
-                if key.startswith("ai_"):
+                if key.startswith("ai_") or key.startswith("local_"):
                     row.pop(key, None)
+    for action in review.get("priority_actions") or []:
+        action.pop("code", None)
     return review
 
 
@@ -60,7 +72,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "0.5.2",
+        "version": "0.6.0",
     }
 
 
@@ -167,11 +179,21 @@ async def create_review(
             original_document=original_document,
         )
         runtime_context = review.pop("_runtime_context", {})
+        config = HybridAIConfig.from_env()
+        # First refine cross-chapter alignment and revised-comment follow-up.
         review = await enrich_review_with_hybrid_ai(
             review,
             runtime_context,
             requested_mode=ai_review_mode,
-            config=HybridAIConfig.from_env(),
+            config=config,
+        )
+        # Then conduct a complete section-by-section academic review. The official checklist
+        # is supplied only as hidden guidance and is never shown as the review itself.
+        review = await enrich_review_with_academic_ai(
+            review,
+            runtime_context,
+            requested_mode=ai_review_mode,
+            config=config,
         )
         if review.get("ai_review"):
             AI_USAGE_CACHE[review["review_id"]] = dict(review["ai_review"])
