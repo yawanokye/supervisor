@@ -519,6 +519,7 @@ def analyse(
             "current_paragraphs": current_paragraphs,
             "context_paragraphs": context_paragraphs,
             "original_paragraphs": original_paragraphs,
+            "supervisor_comments": supervisor_comments,
         },
     }
 

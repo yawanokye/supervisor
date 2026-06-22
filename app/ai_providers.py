@@ -125,7 +125,11 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
     name = schema_model.__name__
     value = dict(raw)
 
-    if name == "AcademicSectionReview":
+    if name == "AcademicReviewBatch":
+        reviews = value.get("reviews") if isinstance(value.get("reviews"), list) else []
+        value = {"reviews": reviews}
+
+    elif name == "AcademicSectionReview":
         if isinstance(value.get("review"), dict):
             value = dict(value["review"])
         section_name = str(value.get("section_name") or value.get("section") or "Reviewed section").strip()
@@ -253,9 +257,16 @@ async def _post_json_with_retry(
                         f"HTTP {response.status_code} from {url}: {_short(response.text)}"
                         + (f" [request_id={request_id}]" if request_id else "")
                     )
+                content_type = (response.headers.get("content-type") or "").lower()
+                if "application/json" not in content_type:
+                    preview = _short(response.text, 500)
+                    raise AIProviderError(
+                        "The model service returned a non-JSON response. "
+                        f"Content-Type: {content_type or 'unknown'}. Response: {preview}"
+                    )
                 value = response.json()
                 if not isinstance(value, dict):
-                    raise AIProviderError("Provider returned a non-object response.")
+                    raise AIProviderError("Provider returned a non-object JSON response.")
                 return value, request_id
             except (httpx.HTTPError, ValueError, AIProviderError) as exc:
                 last_error = exc
@@ -264,87 +275,6 @@ async def _post_json_with_retry(
                     continue
                 break
     raise AIProviderError(str(last_error or "The provider request failed."))
-
-
-class DeepSeekProvider:
-    def __init__(self, config: HybridAIConfig):
-        self.config = config
-
-    async def complete_json(
-        self,
-        *,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
-        schema_model: type[BaseModel],
-        purpose: str,
-        thinking: bool,
-    ) -> ProviderResult:
-        contract = _json_contract(schema_model)
-        last_error: Optional[Exception] = None
-        total_input = total_output = total_cached = 0
-        final_request_id = ""
-
-        for structured_attempt in range(self.config.structured_output_retries + 1):
-            repair_note = ""
-            if structured_attempt:
-                repair_note = (
-                    "\nA previous response was empty, invalid, or did not match the schema. "
-                    "Return a complete JSON object only. Do not use markdown. Do not omit required fields."
-                )
-            body: Dict[str, Any] = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt + "\n" + contract + repair_note},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "response_format": {"type": "json_object"},
-                "max_tokens": self.config.max_output_tokens,
-                "thinking": {"type": "enabled" if thinking else "disabled"},
-                "stream": False,
-            }
-            if thinking:
-                body["reasoning_effort"] = self.config.deepseek_reasoning_effort
-
-            try:
-                payload, request_id = await _post_json_with_retry(
-                    url=f"{self.config.deepseek_base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.config.deepseek_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    payload=body,
-                    timeout_seconds=self.config.timeout_seconds,
-                    max_retries=self.config.max_retries,
-                )
-                final_request_id = request_id or payload.get("id", "")
-                usage_source = payload.get("usage") or {}
-                total_input += _usage_value(usage_source, "prompt_tokens")
-                total_output += _usage_value(usage_source, "completion_tokens")
-                total_cached += _usage_value(usage_source, "prompt_cache_hit_tokens", "prompt_tokens_details.cached_tokens")
-                try:
-                    choice = payload["choices"][0]
-                    message = choice["message"]
-                    text = message.get("content")
-                    finish_reason = choice.get("finish_reason")
-                except (KeyError, IndexError, TypeError) as exc:
-                    raise AIProviderError("DeepSeek returned no message content.") from exc
-                if finish_reason == "length":
-                    raise AIProviderError("DeepSeek truncated the JSON response because max_tokens was reached.")
-                raw = _extract_json_text(text or "")
-                raw = _normalise_model_payload(raw, schema_model)
-                validated = schema_model.model_validate(raw)
-                usage = AIUsageRecord(
-                    provider="deepseek", model=model, purpose=purpose,
-                    input_tokens=total_input, cached_input_tokens=total_cached,
-                    output_tokens=total_output, request_id=final_request_id,
-                )
-                return ProviderResult(data=validated.model_dump(), usage=usage)
-            except (ValidationError, AIProviderError) as exc:
-                last_error = exc
-                logger.warning("DeepSeek structured output attempt %s failed for %s: %s", structured_attempt + 1, purpose, exc)
-
-        raise AIProviderError(f"DeepSeek could not produce a valid {schema_model.__name__}: {last_error}")
 
 
 class OpenAIProvider:
@@ -360,6 +290,7 @@ class OpenAIProvider:
         schema_model: type[BaseModel],
         purpose: str,
         reasoning_effort: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> ProviderResult:
         schema = _make_openai_strict_schema(schema_model.model_json_schema())
         body: Dict[str, Any] = {
@@ -376,7 +307,7 @@ class OpenAIProvider:
                     "schema": schema,
                 }
             },
-            "max_output_tokens": self.config.max_output_tokens,
+            "max_output_tokens": max_output_tokens or self.config.max_output_tokens,
             "store": False,
         }
         effort = reasoning_effort or self.config.openai_reasoning_effort

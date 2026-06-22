@@ -101,6 +101,14 @@ class AcademicSectionReview(StrictModel):
     coverage_warning: str = ""
 
 
+class AcademicSectionReviewItem(AcademicSectionReview):
+    section_key: str
+
+
+class AcademicReviewBatch(StrictModel):
+    reviews: List[AcademicSectionReviewItem] = Field(default_factory=list)
+
+
 class AcademicIssueVerification(StrictModel):
     finding_id: str
     keep: bool

@@ -2,25 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
-import logging
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT
-from .ai_providers import AIProviderError, DeepSeekProvider, OpenAIProvider, ProviderResult
+from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
 from .ai_schemas import (
     AIUsageRecord,
     AcademicIssue,
-    AcademicSectionReview,
+    AcademicReviewBatch,
     AcademicVerificationBatch,
 )
 from .document_parser import clean_text, normalised
-
-SEVERITY_WEIGHT = {"critical": 16.0, "major": 8.0, "moderate": 3.5, "minor": 1.0}
-logger = logging.getLogger(__name__)
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
 ACTIONABLE_STATUS = {
@@ -31,33 +28,11 @@ ACTIONABLE_STATUS = {
 }
 
 CHAPTER_DIMENSIONS: Dict[int, List[str]] = {
-    1: [
-        "title accuracy and scope", "background progression and evidence", "research problem and gap",
-        "purpose, objectives, questions and hypotheses", "significance and contribution", "scope and limitations",
-        "definitions and chapter organisation", "terminology consistency", "academic writing and citations",
-    ],
-    2: [
-        "conceptual definitions and construct boundaries", "theory selection and application", "critical empirical synthesis",
-        "objective-driven organisation", "contradictions and limitations in prior studies", "research gap",
-        "hypothesis development and conceptual framework", "source quality, recency and citation accuracy", "academic writing",
-    ],
-    3: [
-        "research philosophy and design fit", "study setting, population and sampling", "sample-size justification",
-        "instrument development and measurement", "validity, reliability or qualitative trustworthiness", "data collection",
-        "data preparation and analysis mapped to objectives", "model specification and assumptions", "ethics and reproducibility",
-        "academic writing and methodological consistency",
-    ],
-    4: [
-        "data quality and preliminary analysis", "objective-by-objective presentation", "accuracy of tables and figures",
-        "statistical or qualitative interpretation", "hypothesis decisions", "effect sizes and uncertainty",
-        "discussion against theory and prior studies", "unexpected findings and alternative explanations",
-        "consistency with Chapter Three", "academic writing and reporting standards",
-    ],
-    5: [
-        "summary by objectives", "conclusions supported by findings", "theoretical, practical and policy implications",
-        "recommendations traceable to findings", "contribution to knowledge", "limitations and future research",
-        "absence of new evidence", "consistency with the research problem", "academic writing and presentation",
-    ],
+    1: ["title accuracy and scope", "background progression and evidence", "research problem and gap", "purpose, objectives, questions and hypotheses", "significance and contribution", "scope and limitations", "definitions and chapter organisation", "terminology consistency", "academic writing and citations"],
+    2: ["conceptual definitions and construct boundaries", "theory selection and application", "critical empirical synthesis", "objective-driven organisation", "contradictions and limitations in prior studies", "research gap", "hypothesis development and conceptual framework", "source quality, recency and citation accuracy", "academic writing"],
+    3: ["research philosophy and design fit", "study setting, population and sampling", "sample-size justification", "instrument development and measurement", "validity, reliability or qualitative trustworthiness", "data collection", "data preparation and analysis mapped to objectives", "model specification and assumptions", "ethics and reproducibility", "academic writing and methodological consistency"],
+    4: ["data quality and preliminary analysis", "objective-by-objective presentation", "accuracy of tables and figures", "statistical or qualitative interpretation", "hypothesis decisions", "effect sizes and uncertainty", "discussion against theory and prior studies", "unexpected findings and alternative explanations", "consistency with Chapter Three", "academic writing and reporting standards"],
+    5: ["summary by objectives", "conclusions supported by findings", "theoretical, practical and policy implications", "recommendations traceable to findings", "contribution to knowledge", "limitations and future research", "absence of new evidence", "consistency with the research problem", "academic writing and presentation"],
 }
 
 KEY_ALIGNMENT_TERMS = (
@@ -89,27 +64,18 @@ def _payload(paragraph: Dict[str, Any]) -> Dict[str, Any]:
         "is_heading": bool(paragraph.get("is_heading")),
         "source_filename": paragraph.get("source_filename", ""),
         "document_role": paragraph.get("document_role", "current"),
-        "document_index": paragraph.get("document_index", 0),
     }
 
 
 def _evidence(paragraph: Dict[str, Any]) -> Dict[str, Any]:
-    p = _payload(paragraph)
+    value = _payload(paragraph)
     return {
-        "text": p["text"][:1200],
-        "page": p["page"],
-        "paragraph": p["paragraph"],
-        "page_paragraph": paragraph.get("page_paragraph"),
-        "heading": p["heading"],
-        "chapter_number": p["chapter_number"],
-        "is_heading": p["is_heading"],
-        "source_filename": p["source_filename"],
-        "document_role": p["document_role"],
-        "document_index": p["document_index"],
-        "paragraph_id": p["id"],
-        "matched_terms": [],
-        "adequacy_terms": [],
-        "rank_score": 1,
+        "text": value["text"][:1200], "page": value["page"], "paragraph": value["paragraph"],
+        "page_paragraph": paragraph.get("page_paragraph"), "heading": value["heading"],
+        "chapter_number": value["chapter_number"], "is_heading": value["is_heading"],
+        "source_filename": value["source_filename"], "document_role": value["document_role"],
+        "document_index": paragraph.get("document_index", 0), "paragraph_id": value["id"],
+        "matched_terms": [], "adequacy_terms": [], "rank_score": 1,
     }
 
 
@@ -145,7 +111,6 @@ def _split_group(group: Dict[str, Any], max_chars: int) -> List[Dict[str, Any]]:
         if current and total + size > max_chars:
             chunks.append({"heading": group["heading"], "part": part, "paragraphs": current})
             part += 1
-            # One-paragraph overlap preserves local continuity.
             current = current[-1:]
             total = sum(len(clean_text(p.get("text", ""))) + 120 for p in current)
         current.append(paragraph)
@@ -161,9 +126,7 @@ def _guide_expectations(review: Dict[str, Any], heading: str) -> List[str]:
     for row in review.get("results") or []:
         row_headings = [_normalise_heading(v) for v in row.get("headings") or []]
         row_section = _normalise_heading(row.get("section", ""))
-        if any(h in target or target in h for h in row_headings if h != "Untitled section") or (
-            row_section != "Untitled section" and (row_section in target or target in row_section)
-        ):
+        if any(h in target or target in h for h in row_headings if h != "Untitled section") or (row_section != "Untitled section" and (row_section in target or target in row_section)):
             selected.append(clean_text(row.get("item", "")))
     return list(dict.fromkeys(x for x in selected if x))[:16]
 
@@ -181,32 +144,12 @@ def _chapter_dimensions(review: Dict[str, Any]) -> List[str]:
     return CHAPTER_DIMENSIONS.get(selected, ["academic coherence", "evidence", "critical analysis", "academic writing"])
 
 
-def _alignment_audit_paragraphs(runtime: Dict[str, Any], limit_chars: int) -> List[Dict[str, Any]]:
-    paragraphs = list(runtime.get("context_paragraphs") or []) + list(runtime.get("current_paragraphs") or [])
-    selected: List[Dict[str, Any]] = []
-    total = 0
-    for paragraph in paragraphs:
-        combined = normalised((paragraph.get("heading") or "") + " " + (paragraph.get("text") or ""))
-        if not any(term in combined for term in KEY_ALIGNMENT_TERMS):
-            continue
-        size = len(clean_text(paragraph.get("text", ""))) + 120
-        if selected and total + size > limit_chars:
-            break
-        selected.append(paragraph)
-        total += size
-    return selected
-
-
-def _whole_chapter_audit_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit_chars: int) -> List[Dict[str, Any]]:
+def _selected_audit_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit_chars: int) -> List[Dict[str, Any]]:
     selected: List[Dict[str, Any]] = []
     total = 0
     for index, paragraph in enumerate(paragraphs):
         combined = normalised((paragraph.get("heading") or "") + " " + (paragraph.get("text") or ""))
-        include = (
-            index < 4
-            or bool(paragraph.get("is_heading"))
-            or any(term in combined for term in KEY_ALIGNMENT_TERMS)
-        )
+        include = index < 4 or bool(paragraph.get("is_heading")) or any(term in combined for term in KEY_ALIGNMENT_TERMS)
         if not include:
             continue
         size = len(clean_text(paragraph.get("text", ""))) + 120
@@ -217,15 +160,28 @@ def _whole_chapter_audit_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit_
     return selected
 
 
-def _section_prompt(
-    review: Dict[str, Any],
-    section: Dict[str, Any],
-    document_map: Dict[str, Any],
-    *,
-    is_alignment_audit: bool = False,
-) -> str:
+def _batch(values: Sequence[Any], size: int) -> List[List[Any]]:
+    return [list(values[i:i + max(1, size)]) for i in range(0, len(values), max(1, size))]
+
+
+def _section_key(section: Dict[str, Any], index: int) -> str:
+    return f"S{index + 1}:{clean_text(section.get('heading', 'Untitled section'))[:80]}:{section.get('part', 1)}"
+
+
+def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]]) -> str:
     summary = review.get("summary") or {}
-    heading = clean_text(section.get("heading", "Untitled section"))
+    sections = []
+    for section in batch:
+        sections.append({
+            "section_key": section["section_key"],
+            "heading": clean_text(section.get("heading", "Untitled section")),
+            "part": section.get("part", 1),
+            "cross_chapter_audit": bool(section.get("alignment_audit")),
+            "revision_audit": bool(section.get("revision_audit")),
+            "internal_guidance_only_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
+            "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
+            "extra_context": section.get("extra_context") or {},
+        })
     packet = {
         "review_context": {
             "academic_level": summary.get("academic_level"),
@@ -233,14 +189,40 @@ def _section_prompt(
             "document_label": summary.get("document_label"),
             "chapter_under_review": summary.get("selected_chapter"),
             "review_stage": summary.get("submission_stage"),
-            "section": heading,
-            "section_part": section.get("part", 1),
-            "cross_chapter_audit": is_alignment_audit,
         },
-        "document_map": document_map or {},
         "chapter_review_dimensions": _chapter_dimensions(review),
-        "internal_guidance_only_do_not_name_or_number": _guide_expectations(review, heading),
-        "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
+        "instruction": "Return one review for every supplied section_key. Do not omit a section.",
+        "sections": sections,
+    }
+    return json.dumps(packet, ensure_ascii=False)
+
+
+def _verification_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], depth: str) -> str:
+    summary = review.get("summary") or {}
+    proposals = []
+    paragraphs: Dict[str, Dict[str, Any]] = {}
+    for section_review in batch:
+        proposals.append({
+            "section_key": section_review["section_key"],
+            "section_name": section_review["heading"],
+            "section_score": section_review["section_score"],
+            "section_assessment": section_review["section_assessment"],
+            "issues": section_review["issues"],
+        })
+        for paragraph in section_review["source_section"].get("paragraphs") or []:
+            paragraphs[_pid(paragraph)] = _payload(paragraph)
+    packet = {
+        "review_context": {
+            "academic_level": summary.get("academic_level"),
+            "research_approach": summary.get("research_approach"),
+            "review_depth": depth,
+        },
+        "source_paragraphs": list(paragraphs.values()),
+        "proposed_reviews": proposals,
+        "instruction": (
+            "Verify the proposed issues, correct unsupported or misplaced findings, and add important missed issues. "
+            "For Standard Review, focus on material academic weaknesses. For Advanced Review, also examine doctoral-level originality, theoretical contribution, methodological defensibility, alternative explanations, and contribution to knowledge."
+        ),
     }
     return json.dumps(packet, ensure_ascii=False)
 
@@ -252,26 +234,15 @@ def _valid_issue(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         return None
     parsed["evidence_paragraph_ids"] = [pid for pid in parsed["evidence_paragraph_ids"] if pid in paragraph_index]
     quote = clean_text(parsed.get("problematic_quote", ""))
-    if quote:
-        matching_ids = [
-            pid for pid in parsed["evidence_paragraph_ids"]
-            if quote in clean_text(paragraph_index[pid].get("text", ""))
-        ]
-        if not matching_ids:
-            # Preserve the issue, but avoid colouring unrelated text.
-            parsed["problematic_quote"] = ""
+    if quote and not any(quote in clean_text(paragraph_index[pid].get("text", "")) for pid in parsed["evidence_paragraph_ids"]):
+        parsed["problematic_quote"] = ""
     if not parsed["evidence_paragraph_ids"]:
         parsed["confidence"] = min(float(parsed["confidence"]), 0.55)
     return parsed
 
 
 def _issue_signature(issue: Dict[str, Any]) -> str:
-    base = "|".join([
-        normalised(issue.get("category", "")),
-        normalised(issue.get("section", "")),
-        normalised(issue.get("problematic_quote", ""))[:180],
-        normalised(issue.get("issue_title", "")),
-    ])
+    base = "|".join([normalised(issue.get("category", "")), normalised(issue.get("section", "")), normalised(issue.get("problematic_quote", ""))[:180], normalised(issue.get("issue_title", ""))])
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
@@ -282,11 +253,7 @@ def _deduplicate_issues(issues: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
         existing = output.get(key)
         if not existing or SEVERITY_ORDER.get(issue.get("severity", "minor"), 9) < SEVERITY_ORDER.get(existing.get("severity", "minor"), 9):
             output[key] = issue
-    return sorted(output.values(), key=lambda x: (
-        SEVERITY_ORDER.get(x.get("severity", "minor"), 9),
-        normalised(x.get("section", "")),
-        normalised(x.get("issue_title", "")),
-    ))
+    return sorted(output.values(), key=lambda x: (SEVERITY_ORDER.get(x.get("severity", "minor"), 9), normalised(x.get("section", "")), normalised(x.get("issue_title", ""))))
 
 
 def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -295,65 +262,44 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
     evidence = [_evidence(paragraph_index[pid]) for pid in issue.get("evidence_paragraph_ids", []) if pid in paragraph_index]
     assessment = clean_text(issue.get("assessment", ""))
     consequence = clean_text(issue.get("academic_consequence", ""))
-    comment = assessment
-    if consequence:
-        comment = f"{assessment} Academic implication: {consequence}"
+    comment = assessment + (f" Academic implication: {consequence}" if consequence else "")
     section = clean_text(issue.get("section", "")) or "Chapter-wide review"
     return {
-        "review_type": "academic_finding",
-        "finding_id": issue.get("finding_id", ""),
-        "category": issue.get("category", "other"),
-        "section": section,
-        "item": clean_text(issue.get("issue_title", "Academic issue")),
-        "status": status,
-        "status_label": label,
-        "severity": severity,
-        "confidence": round(float(issue.get("confidence") or 0), 2),
-        "evidence": evidence,
-        "comment": comment,
-        "required_action": clean_text(issue.get("required_action", "")),
-        "problematic_quote": clean_text(issue.get("problematic_quote", "")),
-        "headings": [section],
+        "review_type": "academic_finding", "finding_id": issue.get("finding_id", ""),
+        "category": issue.get("category", "other"), "section": section,
+        "item": clean_text(issue.get("issue_title", "Academic issue")), "status": status,
+        "status_label": label, "severity": severity, "confidence": round(float(issue.get("confidence") or 0), 2),
+        "evidence": evidence, "comment": comment, "required_action": clean_text(issue.get("required_action", "")),
+        "problematic_quote": clean_text(issue.get("problematic_quote", "")), "headings": [section],
     }
 
 
 def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
     uncached = max(0, usage.input_tokens - usage.cached_input_tokens)
-    if usage.provider == "deepseek" and usage.model == config.deepseek_extract_model:
-        p_in, p_cache, p_out = config.deepseek_flash_input_price, config.deepseek_flash_cached_input_price, config.deepseek_flash_output_price
-    elif usage.provider == "deepseek":
-        p_in, p_cache, p_out = config.deepseek_pro_input_price, config.deepseek_pro_cached_input_price, config.deepseek_pro_output_price
-    elif usage.model == config.openai_premium_model:
-        p_in, p_cache, p_out = config.openai_premium_input_price, config.openai_premium_cached_input_price, config.openai_premium_output_price
+    if usage.model == config.openai_mini_model:
+        p_in, p_cache, p_out = config.openai_mini_input_price, config.openai_mini_cached_input_price, config.openai_mini_output_price
+    elif usage.model == config.openai_advanced_model:
+        p_in, p_cache, p_out = config.openai_advanced_input_price, config.openai_advanced_cached_input_price, config.openai_advanced_output_price
     else:
-        p_in, p_cache, p_out = config.openai_verify_input_price, config.openai_verify_cached_input_price, config.openai_verify_output_price
+        p_in, p_cache, p_out = config.openai_review_input_price, config.openai_review_cached_input_price, config.openai_review_output_price
     cost = uncached / 1_000_000 * p_in + usage.cached_input_tokens / 1_000_000 * p_cache + usage.output_tokens / 1_000_000 * p_out
     return usage.model_copy(update={"estimated_cost_usd": round(cost, 6)})
 
 
 async def _run_limited(coroutines: Sequence[Any], limit: int) -> List[Any]:
     semaphore = asyncio.Semaphore(max(1, limit))
-
     async def runner(coro):
         async with semaphore:
             return await coro
-
     return await asyncio.gather(*(runner(coro) for coro in coroutines), return_exceptions=True)
 
 
-def _verification_prompt(
-    review: Dict[str, Any],
-    section: Dict[str, Any],
-    primary: Dict[str, Any],
-    document_map: Dict[str, Any],
-) -> str:
-    packet = json.loads(_section_prompt(review, section, document_map, is_alignment_audit=bool(section.get("alignment_audit"))))
-    packet["proposed_section_review"] = primary
-    packet["verification_instruction"] = (
-        "Verify every proposed issue. Return one verification for each finding_id. "
-        "Also return any high-impact issue missed by the primary reviewer."
-    )
-    return json.dumps(packet, ensure_ascii=False)
+async def _notify(callback: Any, progress: int, message: str) -> None:
+    if callback is None:
+        return
+    result = callback(progress, message)
+    if inspect.isawaitable(result):
+        await result
 
 
 def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -367,8 +313,7 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
             continue
         source = by_id[finding_id]
         source.update({
-            "severity": value.get("severity", source.get("severity")),
-            "confidence": value.get("confidence", source.get("confidence")),
+            "severity": value.get("severity", source.get("severity")), "confidence": value.get("confidence", source.get("confidence")),
             "evidence_paragraph_ids": value.get("evidence_paragraph_ids", source.get("evidence_paragraph_ids")),
             "problematic_quote": value.get("problematic_quote", source.get("problematic_quote")),
             "assessment": value.get("assessment", source.get("assessment")),
@@ -381,27 +326,17 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
 
 
 def _academic_score(section_reviews: Sequence[Dict[str, Any]], issues: Sequence[Dict[str, Any]]) -> float:
-    weighted_total = 0.0
-    weight_sum = 0.0
-    for section in section_reviews:
-        weight = max(1, int(section.get("paragraph_count") or 1))
-        weighted_total += float(section.get("section_score") or 0) * weight
-        weight_sum += weight
+    weighted_total = sum(float(section.get("section_score") or 0) * max(1, int(section.get("paragraph_count") or 1)) for section in section_reviews)
+    weight_sum = sum(max(1, int(section.get("paragraph_count") or 1)) for section in section_reviews)
     score = weighted_total / weight_sum if weight_sum else 0.0
     counts = defaultdict(int)
     for issue in issues:
         counts[issue.get("severity", "minor")] += 1
-    # Severity acts as a defensibility gate rather than an unlimited arithmetic penalty.
-    if counts["critical"]:
-        score = min(score, 54.0)
-    elif counts["major"] >= 5:
-        score = min(score, 60.0)
-    elif counts["major"] >= 3:
-        score = min(score, 68.0)
-    elif counts["major"]:
-        score = min(score, 78.0)
-    elif counts["moderate"] >= 6:
-        score = min(score, 82.0)
+    if counts["critical"]: score = min(score, 54.0)
+    elif counts["major"] >= 5: score = min(score, 60.0)
+    elif counts["major"] >= 3: score = min(score, 68.0)
+    elif counts["major"]: score = min(score, 78.0)
+    elif counts["moderate"] >= 6: score = min(score, 82.0)
     return round(max(0.0, score), 1)
 
 
@@ -409,316 +344,187 @@ def _readiness(score: float, issues: Sequence[Dict[str, Any]], incomplete: bool)
     critical = sum(1 for issue in issues if issue.get("severity") == "critical")
     major = sum(1 for issue in issues if issue.get("severity") == "major")
     if incomplete:
-        return "Review incomplete", "One or more sections could not be reviewed completely. Do not treat this output as a final academic assessment."
-    if critical:
-        return "Substantial revision required", f"The chapter contains {critical} critical academic issue(s) that must be resolved before supervisor approval."
-    if score >= 85 and major == 0:
-        return "Ready after minor refinement", "The chapter is academically sound overall, with targeted refinements still required."
-    if score >= 70 and major <= 2:
-        return "Revision required", "The chapter has a workable foundation but requires focused academic revision before approval."
-    if score >= 55:
-        return "Major revision required", "Several important weaknesses affect the chapter's academic adequacy, coherence, or defensibility."
+        return "Review completed with a limitation", "Most sections were reviewed, but one review batch could not be independently verified. The available findings remain usable, while the affected section should receive manual confirmation."
+    if critical: return "Substantial revision required", f"The chapter contains {critical} critical academic issue(s) that must be resolved before supervisor approval."
+    if score >= 85 and major == 0: return "Ready after minor refinement", "The chapter is academically sound overall, with targeted refinements still required."
+    if score >= 70 and major <= 2: return "Revision required", "The chapter has a workable foundation but requires focused academic revision before approval."
+    if score >= 55: return "Major revision required", "Several important weaknesses affect the chapter's academic adequacy, coherence, or defensibility."
     return "Substantial redevelopment required", "The chapter requires extensive academic redevelopment before it is ready for supervisor approval."
 
 
 def _overall_assessment(score: float, issues: Sequence[Dict[str, Any]], strengths: Sequence[Dict[str, Any]]) -> str:
     counts = defaultdict(int)
-    for issue in issues:
-        counts[issue.get("severity", "minor")] += 1
-    if counts["critical"]:
-        opening = "The chapter has a recognisable study focus, but critical academic weaknesses currently prevent approval."
-    elif counts["major"]:
-        opening = "The chapter provides a useful foundation, but major revisions are needed to achieve a defensible academic standard."
-    elif counts["moderate"]:
-        opening = "The chapter is broadly developed, with several areas requiring clearer justification, evidence, and scholarly refinement."
-    else:
-        opening = "The chapter is academically coherent overall and requires mainly targeted refinement."
-    return (
-        f"{opening} The review identified {counts['critical']} critical, {counts['major']} major, "
-        f"{counts['moderate']} moderate, and {counts['minor']} minor issue(s), alongside {len(strengths)} documented strength(s). "
-        f"The academic review score is {score}%."
-    )
+    for issue in issues: counts[issue.get("severity", "minor")] += 1
+    opening = "The chapter is academically coherent overall and requires mainly targeted refinement."
+    if counts["critical"]: opening = "The chapter has a recognisable study focus, but critical academic weaknesses currently prevent approval."
+    elif counts["major"]: opening = "The chapter provides a useful foundation, but major revisions are needed to achieve a defensible academic standard."
+    elif counts["moderate"]: opening = "The chapter is broadly developed, with several areas requiring clearer justification, evidence, and scholarly refinement."
+    return f"{opening} The review identified {counts['critical']} critical, {counts['major']} major, {counts['moderate']} moderate, and {counts['minor']} minor issue(s), alongside {len(strengths)} documented strength(s). The academic review score is {score}%."
 
 
 async def enrich_review_with_academic_ai(
-    review: Dict[str, Any],
-    runtime: Dict[str, Any],
-    *,
-    requested_mode: str = "auto",
-    config: Optional[HybridAIConfig] = None,
+    review: Dict[str, Any], runtime: Dict[str, Any], *, requested_mode: str = "standard",
+    config: Optional[HybridAIConfig] = None, progress_callback: Any = None,
 ) -> Dict[str, Any]:
     config = config or HybridAIConfig.from_env()
-    mode = config.resolve_mode(requested_mode)
-    if mode == "local":
-        raise AIConfigurationError(
-            "The complete academic review requires an AI review provider. Configure the server API keys and redeploy."
-        )
-
-    deepseek = DeepSeekProvider(config) if config.deepseek_configured else None
-    openai = OpenAIProvider(config) if config.openai_configured else None
-    primary_provider = "deepseek" if deepseek is not None else "openai"
+    academic_level = str((review.get("summary") or {}).get("academic_level") or "")
+    depth = config.resolve_mode(requested_mode, academic_level)
+    openai = OpenAIProvider(config)
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
     original = list(runtime.get("original_paragraphs") or [])
+    supervisor_comments = list(runtime.get("supervisor_comments") or [])
     all_paragraphs = current + context + original
     paragraph_index = {_pid(p): p for p in all_paragraphs}
 
-    document_map = review.get("ai_document_map") or (review.get("ai_review") or {}).get("document_map") or {}
-    usage_records: List[AIUsageRecord] = []
-    existing_usage = (review.get("ai_review") or {}).get("usage") or []
-
     groups = _section_groups(current)
-    max_section_chars = max(9000, min(22000, config.max_context_chars_per_rule * 2))
+    max_section_chars = max(8000, min(18000, config.max_context_chars_per_rule * 2))
     sections: List[Dict[str, Any]] = []
     for group in groups:
         sections.extend(_split_group(group, max_section_chars))
 
-    whole_audit = _whole_chapter_audit_paragraphs(current, max(config.max_map_input_chars, 30000))
+    whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
     if whole_audit:
-        sections.append({
-            "heading": "Whole-chapter coherence and consistency audit",
-            "part": 1,
-            "paragraphs": whole_audit,
-            "alignment_audit": False,
-        })
-
+        sections.append({"heading": "Whole-chapter coherence and consistency audit", "part": 1, "paragraphs": whole_audit})
     if context:
-        audit_paragraphs = _alignment_audit_paragraphs(runtime, max(config.max_map_input_chars, 30000))
-        if audit_paragraphs:
+        combined = _selected_audit_paragraphs(context + current, max(config.max_map_input_chars, 30000))
+        if combined:
+            sections.append({"heading": "Cross-chapter coherence and alignment", "part": 1, "paragraphs": combined, "alignment_audit": True})
+    if supervisor_comments:
+        revision_paragraphs = _selected_audit_paragraphs(original + current, max(config.max_map_input_chars, 30000))
+        if revision_paragraphs:
             sections.append({
-                "heading": "Cross-chapter coherence and alignment",
-                "part": 1,
-                "paragraphs": audit_paragraphs,
-                "alignment_audit": True,
+                "heading": "Supervisor comment compliance audit", "part": 1, "paragraphs": revision_paragraphs,
+                "revision_audit": True,
+                "extra_context": {"supervisor_comments": supervisor_comments},
             })
 
-    async def primary_call(section: Dict[str, Any]) -> ProviderResult:
-        prompt = _section_prompt(
-            review,
-            section,
-            document_map,
-            is_alignment_audit=bool(section.get("alignment_audit")),
-        )
-        if primary_provider == "deepseek":
-            return await deepseek.complete_json(
-                model=config.deepseek_review_model,
-                system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
-                user_prompt=prompt,
-                schema_model=AcademicSectionReview,
-                purpose="complete_academic_section_review",
-                thinking=True,
-            )
+    for index, section in enumerate(sections):
+        section["section_key"] = _section_key(section, index)
+
+    primary_model = config.openai_mini_model if depth == "standard" else config.openai_review_model
+    primary_effort = config.openai_mini_reasoning_effort if depth == "standard" else config.openai_review_reasoning_effort
+    primary_tokens = config.mini_max_output_tokens if depth == "standard" else config.review_max_output_tokens
+    section_batches = _batch(sections, config.section_batch_size)
+
+    await _notify(progress_callback, 35, "Reviewing chapter sections")
+
+    async def primary_call(batch: Sequence[Dict[str, Any]], model: str, effort: str, purpose: str, tokens: int) -> ProviderResult:
         return await openai.complete_json(
-            model=config.openai_verify_model,
-            system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
-            user_prompt=prompt,
-            schema_model=AcademicSectionReview,
-            purpose="complete_academic_section_review",
-            reasoning_effort=config.openai_reasoning_effort,
+            model=model, system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
+            user_prompt=_batch_prompt(review, batch, supervisor_comments),
+            schema_model=AcademicReviewBatch, purpose=purpose,
+            reasoning_effort=effort, max_output_tokens=tokens,
         )
 
-    primary_results = await _run_limited([primary_call(section) for section in sections], config.max_parallel_calls)
-    result_provider_by_index = {index: primary_provider for index in range(len(sections))}
-    error_details: Dict[int, List[str]] = {}
+    primary_results = await _run_limited(
+        [primary_call(batch, primary_model, primary_effort, "batched_academic_review", primary_tokens) for batch in section_batches],
+        config.max_parallel_calls,
+    )
 
-    for index, result in enumerate(primary_results):
+    usage_records: List[AIUsageRecord] = []
+    section_reviews: List[Dict[str, Any]] = []
+    failed_batches: List[int] = []
+
+    def consume_batch(batch: Sequence[Dict[str, Any]], result: ProviderResult) -> None:
+        usage_records.append(_usage_cost(result.usage, config))
+        by_key = {str(item.get("section_key")): item for item in result.data.get("reviews", [])}
+        for section in batch:
+            data = by_key.get(section["section_key"])
+            if not data:
+                continue
+            valid_issues = [valid for item in data.get("issues") or [] if (valid := _valid_issue(item, paragraph_index))]
+            valid_strengths = []
+            for strength in data.get("strengths") or []:
+                ids = [pid for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
+                if ids:
+                    row = dict(strength); row["evidence_paragraph_ids"] = ids; valid_strengths.append(row)
+            section_reviews.append({
+                "section_key": section["section_key"], "heading": clean_text(section.get("heading", "Untitled section")),
+                "part": section.get("part", 1), "paragraph_count": len(section.get("paragraphs") or []),
+                "section_score": float(data.get("section_score") or 0),
+                "section_assessment": clean_text(data.get("section_assessment", "")),
+                "coverage_warning": clean_text(data.get("coverage_warning", "")),
+                "strengths": valid_strengths, "issues": valid_issues, "source_section": section,
+            })
+
+    for idx, (batch, result) in enumerate(zip(section_batches, primary_results)):
         if isinstance(result, Exception):
-            error_details[index] = [f"{primary_provider}: {result}"]
-            logger.error(
-                "Primary academic review failed for section %s using %s: %s",
-                clean_text(sections[index].get("heading", "Untitled section")),
-                primary_provider,
-                result,
-            )
+            failed_batches.append(idx)
+        else:
+            consume_batch(batch, result)
 
-    failed_indexes = [index for index, result in enumerate(primary_results) if isinstance(result, Exception)]
-    fallback_provider = None
-    if config.provider_failover and failed_indexes:
-        if primary_provider == "deepseek" and openai is not None:
-            fallback_provider = "openai"
-        elif primary_provider == "openai" and deepseek is not None:
-            fallback_provider = "deepseek"
-
-    if fallback_provider:
-        async def fallback_call(index: int) -> ProviderResult:
-            section = sections[index]
-            prompt = _section_prompt(
-                review,
-                section,
-                document_map,
-                is_alignment_audit=bool(section.get("alignment_audit")),
-            )
-            if fallback_provider == "openai":
-                return await openai.complete_json(
-                    model=config.openai_verify_model,
-                    system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
-                    user_prompt=prompt,
-                    schema_model=AcademicSectionReview,
-                    purpose="academic_section_failover",
-                    reasoning_effort=config.openai_reasoning_effort,
-                )
-            return await deepseek.complete_json(
-                model=config.deepseek_review_model,
-                system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
-                user_prompt=prompt,
-                schema_model=AcademicSectionReview,
-                purpose="academic_section_failover",
-                thinking=True,
-            )
-
-        fallback_results = await _run_limited(
-            [fallback_call(index) for index in failed_indexes],
+    # Failed mini batches are retried as individual sections with GPT-5.4.
+    if failed_batches:
+        retry_sections = [section for idx in failed_batches for section in section_batches[idx]]
+        retry_results = await _run_limited(
+            [primary_call([section], config.openai_review_model, config.openai_review_reasoning_effort, "section_review_recovery", config.review_max_output_tokens) for section in retry_sections],
             config.max_parallel_calls,
         )
-        for index, fallback_result in zip(failed_indexes, fallback_results):
-            if isinstance(fallback_result, Exception):
-                error_details.setdefault(index, []).append(f"{fallback_provider}: {fallback_result}")
-                logger.error(
-                    "Fallback academic review failed for section %s using %s: %s",
-                    clean_text(sections[index].get("heading", "Untitled section")),
-                    fallback_provider,
-                    fallback_result,
-                )
-            else:
-                primary_results[index] = fallback_result
-                result_provider_by_index[index] = fallback_provider
-                logger.info(
-                    "Academic review failover succeeded for section %s using %s",
-                    clean_text(sections[index].get("heading", "Untitled section")),
-                    fallback_provider,
-                )
+        for section, result in zip(retry_sections, retry_results):
+            if not isinstance(result, Exception):
+                consume_batch([section], result)
 
-    section_reviews: List[Dict[str, Any]] = []
-    failed_sections: List[str] = []
+    if not section_reviews:
+        raise AIProviderError("The expert review service could not produce a valid review. Please try again after a few minutes.")
 
-    for index, (section, result) in enumerate(zip(sections, primary_results)):
+    await _notify(progress_callback, 68, "Checking the review for missed or misplaced issues")
+
+    # One higher-quality verification stage. GPT-5.5 is used only for Advanced Review.
+    verification_model = config.openai_review_model if depth == "standard" else config.openai_advanced_model
+    verification_effort = config.openai_review_reasoning_effort if depth == "standard" else config.openai_advanced_reasoning_effort
+    verification_tokens = config.review_max_output_tokens if depth == "standard" else config.advanced_max_output_tokens
+    verification_batches = _batch(section_reviews, config.verification_batch_size)
+
+    async def verify_call(batch: Sequence[Dict[str, Any]]) -> ProviderResult:
+        return await openai.complete_json(
+            model=verification_model, system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
+            user_prompt=_verification_prompt(review, batch, depth),
+            schema_model=AcademicVerificationBatch, purpose=f"{depth}_quality_control",
+            reasoning_effort=verification_effort, max_output_tokens=verification_tokens,
+        )
+
+    verify_results = await _run_limited([verify_call(batch) for batch in verification_batches], config.max_parallel_calls)
+    verification_failed = False
+    for batch, result in zip(verification_batches, verify_results):
         if isinstance(result, Exception):
-            heading = clean_text(section.get("heading", "Untitled section"))
-            details = " | ".join(error_details.get(index, [str(result)]))
-            failed_sections.append(f"{heading}: {details}")
+            verification_failed = True
+            for section_review in batch:
+                section_review["coverage_warning"] = (section_review.get("coverage_warning", "") + " Independent quality control was unavailable for this section.").strip()
             continue
         usage_records.append(_usage_cost(result.usage, config))
-        data = result.data
-        valid_issues = []
-        for issue in data.get("issues") or []:
-            valid = _valid_issue(issue, paragraph_index)
+        all_primary = [issue for section_review in batch for issue in section_review["issues"]]
+        merged = _apply_verification(all_primary, result.data)
+        merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for item in merged:
+            valid = _valid_issue(item, paragraph_index)
             if valid:
-                valid_issues.append(valid)
-        valid_strengths = []
-        for strength in data.get("strengths") or []:
-            ids = [pid for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
-            if ids:
-                strength = dict(strength)
-                strength["evidence_paragraph_ids"] = ids
-                valid_strengths.append(strength)
-        section_reviews.append({
-            "section_key": f'{clean_text(section.get("heading", ""))}::{section.get("part", 1)}',
-            "heading": clean_text(section.get("heading", "Untitled section")),
-            "part": section.get("part", 1),
-            "paragraph_count": len(section.get("paragraphs") or []),
-            "section_score": float(data.get("section_score") or 0),
-            "section_assessment": clean_text(data.get("section_assessment", "")),
-            "coverage_warning": clean_text(data.get("coverage_warning", "")),
-            "strengths": valid_strengths,
-            "issues": valid_issues,
-            "source_section": section,
-            "review_provider": result_provider_by_index.get(index, primary_provider),
-        })
+                merged_by_section[normalised(valid.get("section", ""))].append(valid)
+        # Redistribute by section name where possible; otherwise attach to first batch section.
+        for section_review in batch:
+            key = normalised(section_review["heading"])
+            section_review["issues"] = merged_by_section.pop(key, [])
+        leftovers = [item for values in merged_by_section.values() for item in values]
+        if leftovers and batch:
+            batch[0]["issues"].extend(leftovers)
 
-    if failed_sections and config.strict_failure:
-        raise AIProviderError(
-            "The expert review could not complete every section after provider failover. "
-            + " Failed section(s): " + " || ".join(failed_sections[:6])
-        )
-    if not section_reviews:
-        raise AIProviderError(
-            "No section could be reviewed by the configured providers. "
-            + " || ".join(failed_sections[:6])
-        )
-
-    # OpenAI verifies high-impact or uncertain DeepSeek findings, without repeating every low-risk section.
-    if openai is not None:
-        verify_targets = []
-        for section_review in section_reviews:
-            if section_review.get("review_provider") != "deepseek":
-                continue
-            issues = section_review["issues"]
-            should_verify = mode == "premium" or any(
-                issue.get("severity") in {"critical", "major"}
-                or float(issue.get("confidence") or 0) < config.confidence_threshold
-                for issue in issues
-            )
-            if should_verify and issues:
-                verify_targets.append(section_review)
-
-        async def verify_call(section_review: Dict[str, Any]) -> ProviderResult:
-            prompt = _verification_prompt(
-                review,
-                section_review["source_section"],
-                {
-                    "section_name": section_review["heading"],
-                    "section_score": section_review["section_score"],
-                    "section_assessment": section_review["section_assessment"],
-                    "strengths": section_review["strengths"],
-                    "issues": section_review["issues"],
-                    "coverage_warning": section_review["coverage_warning"],
-                },
-                document_map,
-            )
-            model = config.openai_premium_model if mode == "premium" else config.openai_verify_model
-            return await openai.complete_json(
-                model=model,
-                system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                user_prompt=prompt,
-                schema_model=AcademicVerificationBatch,
-                purpose="academic_finding_verification",
-                reasoning_effort="high" if mode == "premium" else config.openai_reasoning_effort,
-            )
-
-        verified_results = await _run_limited(
-            [verify_call(section_review) for section_review in verify_targets],
-            config.max_parallel_calls,
-        )
-        for section_review, result in zip(verify_targets, verified_results):
-            if isinstance(result, Exception):
-                if config.strict_failure:
-                    raise AIProviderError(f'Quality-control review failed for {section_review["heading"]}: {result}')
-                section_review["coverage_warning"] = (
-                    section_review.get("coverage_warning", "") + " Independent verification was unavailable."
-                ).strip()
-                continue
-            usage_records.append(_usage_cost(result.usage, config))
-            merged = _apply_verification(section_review["issues"], result.data)
-            section_review["issues"] = [
-                valid for item in merged if (valid := _valid_issue(item, paragraph_index))
-            ]
-
-    all_issues = _deduplicate_issues(
-        issue for section_review in section_reviews for issue in section_review["issues"]
-    )
+    all_issues = _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
     strengths = []
-    seen_strengths = set()
+    seen = set()
     for section_review in section_reviews:
         for strength in section_review["strengths"]:
             key = hashlib.sha256(normalised(strength.get("observation", "")).encode("utf-8")).hexdigest()
-            if key in seen_strengths:
-                continue
-            seen_strengths.add(key)
+            if key in seen: continue
+            seen.add(key)
             evidence = [_evidence(paragraph_index[pid]) for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
-            strengths.append({
-                "category": strength.get("category", "other"),
-                "section": clean_text(strength.get("section", "")),
-                "observation": clean_text(strength.get("observation", "")),
-                "evidence": evidence,
-            })
+            strengths.append({"category": strength.get("category", "other"), "section": clean_text(strength.get("section", "")), "observation": clean_text(strength.get("observation", "")), "evidence": evidence})
 
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
+    incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)
-    incomplete = bool(failed_sections) or any(bool(section.get("coverage_warning")) for section in section_reviews)
     readiness_label, readiness_meaning = _readiness(score, all_issues, incomplete)
 
-    # Retain alignment and revision as distinct dimensions, but make the academic review the dominant score.
     summary = review.get("summary") or {}
     alignment_value = summary.get("alignment_score")
     revision_value = summary.get("revision_score")
@@ -732,61 +538,30 @@ async def enrich_review_with_academic_ai(
         overall = score
 
     counts = defaultdict(int)
-    for issue in all_issues:
-        counts[issue.get("severity", "minor")] += 1
-
-    priority = [
-        {
-            "section": row.get("section", ""),
-            "severity": row.get("severity", "moderate"),
-            "status": row.get("status_label", "Revision required"),
-            "action": row.get("required_action", ""),
-            "issue": row.get("item", ""),
-        }
-        for row in finding_rows[:15]
-    ]
-    # Add unresolved supervisor comments after academic issues.
+    for issue in all_issues: counts[issue.get("severity", "minor")] += 1
+    priority = [{"section": row.get("section", ""), "severity": row.get("severity", "moderate"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": row.get("item", "")} for row in finding_rows[:15]]
     for row in review.get("revision_results") or []:
         if row.get("status") in {"partly_meets_requirement", "does_not_meet_requirement", "manual_review_required"}:
-            priority.append({
-                "section": row.get("section", "Supervisor comment follow-up"),
-                "severity": row.get("severity", "major"),
-                "status": row.get("status_label", "Revision required"),
-                "action": row.get("required_action", ""),
-                "issue": "Earlier supervisor comment",
-            })
+            priority.append({"section": row.get("section", "Supervisor comment follow-up"), "severity": row.get("severity", "major"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": "Earlier supervisor comment"})
     priority = sorted(priority, key=lambda x: SEVERITY_ORDER.get(x.get("severity", "minor"), 9))[:15]
 
     summary.update({
-        "academic_review_score": score,
-        "overall_score": overall,
-        "readiness_label": readiness_label,
-        "readiness_meaning": readiness_meaning,
-        "academic_review_complete": not incomplete,
-        "academic_sections_reviewed": len(section_reviews),
-        "critical_issues": counts["critical"],
-        "major_issues": counts["major"],
-        "moderate_issues": counts["moderate"],
-        "minor_issues": counts["minor"],
+        "review_depth": depth, "academic_review_score": score, "overall_score": overall,
+        "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
+        "academic_review_complete": not incomplete, "academic_sections_reviewed": len(section_reviews),
+        "critical_issues": counts["critical"], "major_issues": counts["major"],
+        "moderate_issues": counts["moderate"], "minor_issues": counts["minor"],
         "strengths_identified": len(strengths),
     })
     review["academic_findings"] = finding_rows
     review["academic_strengths"] = strengths
-    review["academic_section_reviews"] = [
-        {k: v for k, v in section.items() if k not in {"source_section", "issues", "strengths"}}
-        for section in section_reviews
-    ]
+    review["academic_section_reviews"] = [{k: v for k, v in section.items() if k not in {"source_section", "issues", "strengths"}} for section in section_reviews]
     review["overall_academic_assessment"] = _overall_assessment(score, all_issues, strengths)
     review["priority_actions"] = priority
-
-    ai_review = review.setdefault("ai_review", {})
-    all_usage = list(existing_usage)
-    all_usage.extend(record.model_dump() for record in usage_records)
-    ai_review.update({
-        "academic_review_enabled": True,
+    review["ai_review"] = {
+        "review_depth": depth, "usage": [record.model_dump() for record in usage_records],
+        "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
-        "failed_sections": failed_sections,
-        "usage": all_usage,
-        "estimated_cost_usd": round(sum(float(x.get("estimated_cost_usd", 0)) for x in all_usage), 6),
-    })
+    }
+    await _notify(progress_callback, 86, "Preparing the annotated review")
     return review
