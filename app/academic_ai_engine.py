@@ -270,6 +270,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "item": clean_text(issue.get("issue_title", "Academic issue")), "status": status,
         "status_label": label, "severity": severity, "confidence": round(float(issue.get("confidence") or 0), 2),
         "evidence": evidence, "comment": comment, "required_action": clean_text(issue.get("required_action", "")),
+        "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
         "problematic_quote": clean_text(issue.get("problematic_quote", "")), "headings": [section],
     }
 
@@ -319,6 +320,7 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
             "assessment": value.get("assessment", source.get("assessment")),
             "academic_consequence": value.get("academic_consequence", source.get("academic_consequence")),
             "required_action": value.get("required_action", source.get("required_action")),
+            "illustrative_guidance": value.get("illustrative_guidance", source.get("illustrative_guidance", "")),
         })
     values = list(by_id.values())
     values.extend(verification.get("missed_issues") or [])
@@ -352,14 +354,44 @@ def _readiness(score: float, issues: Sequence[Dict[str, Any]], incomplete: bool)
     return "Substantial redevelopment required", "The chapter requires extensive academic redevelopment before it is ready for supervisor approval."
 
 
-def _overall_assessment(score: float, issues: Sequence[Dict[str, Any]], strengths: Sequence[Dict[str, Any]]) -> str:
+def _overall_assessment(
+    score: float,
+    issues: Sequence[Dict[str, Any]],
+    strengths: Sequence[Dict[str, Any]],
+    section_reviews: Sequence[Dict[str, Any]],
+) -> str:
     counts = defaultdict(int)
-    for issue in issues: counts[issue.get("severity", "minor")] += 1
-    opening = "The chapter is academically coherent overall and requires mainly targeted refinement."
-    if counts["critical"]: opening = "The chapter has a recognisable study focus, but critical academic weaknesses currently prevent approval."
-    elif counts["major"]: opening = "The chapter provides a useful foundation, but major revisions are needed to achieve a defensible academic standard."
-    elif counts["moderate"]: opening = "The chapter is broadly developed, with several areas requiring clearer justification, evidence, and scholarly refinement."
-    return f"{opening} The review identified {counts['critical']} critical, {counts['major']} major, {counts['moderate']} moderate, and {counts['minor']} minor issue(s), alongside {len(strengths)} documented strength(s). The academic review score is {score}%."
+    for issue in issues:
+        counts[issue.get("severity", "minor")] += 1
+
+    contextual = ""
+    for section in section_reviews:
+        heading = normalised(section.get("heading", ""))
+        if "whole chapter coherence" in heading or "whole chapter" in heading:
+            contextual = clean_text(section.get("section_assessment", ""))
+            if contextual:
+                break
+    if not contextual:
+        candidates = [
+            clean_text(section.get("section_assessment", ""))
+            for section in section_reviews
+            if clean_text(section.get("section_assessment", ""))
+            and "audit" not in normalised(section.get("heading", ""))
+        ]
+        contextual = " ".join(candidates[:2])
+
+    judgement = "The chapter is academically coherent overall and requires mainly targeted refinement."
+    if counts["critical"]:
+        judgement = "Critical weaknesses currently prevent approval and should be addressed before attention shifts to language and formatting."
+    elif counts["major"]:
+        judgement = "The chapter has a workable foundation, but major revisions are needed before it reaches a defensible academic standard."
+    elif counts["moderate"]:
+        judgement = "The chapter is broadly developed, but clearer justification, evidence and scholarly refinement are still required."
+
+    parts = [contextual, judgement]
+    if strengths:
+        parts.append(f"The review also identifies {len(strengths)} strength(s) that should be retained during revision.")
+    return " ".join(part for part in parts if part).strip()
 
 
 async def enrich_review_with_academic_ai(
@@ -539,11 +571,26 @@ async def enrich_review_with_academic_ai(
 
     counts = defaultdict(int)
     for issue in all_issues: counts[issue.get("severity", "minor")] += 1
-    priority = [{"section": row.get("section", ""), "severity": row.get("severity", "moderate"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": row.get("item", "")} for row in finding_rows[:15]]
+    priority_candidates = [
+        {"section": row.get("section", ""), "severity": row.get("severity", "moderate"),
+         "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""),
+         "issue": row.get("item", "")}
+        for row in finding_rows
+    ]
     for row in review.get("revision_results") or []:
         if row.get("status") in {"partly_meets_requirement", "does_not_meet_requirement", "manual_review_required"}:
-            priority.append({"section": row.get("section", "Supervisor comment follow-up"), "severity": row.get("severity", "major"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": "Earlier supervisor comment"})
-    priority = sorted(priority, key=lambda x: SEVERITY_ORDER.get(x.get("severity", "minor"), 9))[:15]
+            priority_candidates.append({"section": row.get("section", "Supervisor comment follow-up"), "severity": row.get("severity", "major"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": "Earlier supervisor comment"})
+    priority_candidates = sorted(priority_candidates, key=lambda x: SEVERITY_ORDER.get(x.get("severity", "minor"), 9))
+    priority = []
+    seen_priority = set()
+    for item in priority_candidates:
+        signature = (normalised(item.get("section", "")), normalised(item.get("action", ""))[:180])
+        if not signature[1] or signature in seen_priority:
+            continue
+        seen_priority.add(signature)
+        priority.append(item)
+        if len(priority) >= 10:
+            break
 
     summary.update({
         "review_depth": depth, "academic_review_score": score, "overall_score": overall,
@@ -556,7 +603,7 @@ async def enrich_review_with_academic_ai(
     review["academic_findings"] = finding_rows
     review["academic_strengths"] = strengths
     review["academic_section_reviews"] = [{k: v for k, v in section.items() if k not in {"source_section", "issues", "strengths"}} for section in section_reviews]
-    review["overall_academic_assessment"] = _overall_assessment(score, all_issues, strengths)
+    review["overall_academic_assessment"] = _overall_assessment(score, all_issues, strengths, section_reviews)
     review["priority_actions"] = priority
     review["ai_review"] = {
         "review_depth": depth, "usage": [record.model_dump() for record in usage_records],

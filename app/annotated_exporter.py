@@ -92,17 +92,51 @@ def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str =
     return start, end
 
 
-def _concise_comment(row: Dict[str, Any]) -> str:
-    action = clean_text(row.get("required_action", ""))
-    assessment = clean_text(row.get("comment", ""))
-    if row.get("review_type") == "supervisor_comment":
-        if not action:
-            action = "Revise the chapter so the earlier supervisor comment is fully and visibly addressed."
-        return f"[Supervisor comment follow-up: {action}]"
+def _sanitise_guidance(value: str) -> str:
+    text = clean_text(value)
+    patterns = [
+        r"^(?:retain|keep) this finding and\s+",
+        r"^require (?:the student to )?",
+        r"^ask the student to\s+",
+        r"^the student should\s+",
+    ]
+    for pattern in patterns:
+        text = re.sub(pattern, "", text, flags=re.I)
+    text = re.sub(r"^retain this point and\s+", "", text, flags=re.I)
+    if text:
+        text = text[0].upper() + text[1:]
+    return text.rstrip()
+
+
+def _comment_body(row: Dict[str, Any]) -> str:
+    action = _sanitise_guidance(row.get("required_action", ""))
+    assessment = _sanitise_guidance(row.get("comment", ""))
     if not action:
         action = assessment or "Revise this passage to address the identified academic weakness."
-    return f"[Supervisor comment: {action}]"
+    example = _sanitise_guidance(row.get("illustrative_guidance", ""))
+    example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
+    body = action
+    if example:
+        body += f" Example: {example}"
+    return body
 
+
+def _format_comment_group(comments: Iterable[str]) -> str:
+    unique = []
+    seen = set()
+    for value in comments:
+        text = clean_text(value).strip("[] ").rstrip(" ;.")
+        key = normalised(text)
+        if not text or not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(text)
+    if not unique:
+        return ""
+    if len(unique) == 1:
+        return f"[Supervisor comment: {unique[0]}]"
+    numbered = "; ".join(f"{index}. {text}" for index, text in enumerate(unique, start=1))
+    return f"[Supervisor comments: {numbered}]"
 
 def _replace_run_with_parts(run, before: str, marked: str, after: str):
     parent = run._r.getparent()
@@ -157,6 +191,24 @@ def _mark_span_and_insert_comment(paragraph: Paragraph, start: int, end: int, co
     return False
 
 
+def _merge_nearby_span_groups(
+    span_groups: Dict[Tuple[int, int], List[str]],
+    max_gap: int = 24,
+) -> List[Tuple[Tuple[int, int], List[str]]]:
+    ordered = sorted(span_groups.items(), key=lambda item: item[0][0])
+    merged: List[Tuple[Tuple[int, int], List[str]]] = []
+    for (start, end), comments in ordered:
+        if not merged:
+            merged.append(((start, end), list(comments)))
+            continue
+        (previous_start, previous_end), previous_comments = merged[-1]
+        if start <= previous_end + max_gap:
+            merged[-1] = ((previous_start, max(previous_end, end)), previous_comments + list(comments))
+        else:
+            merged.append(((start, end), list(comments)))
+    return merged
+
+
 def _paragraph_number_map(document) -> Dict[int, Paragraph]:
     output: Dict[int, Paragraph] = {}
     counter = 0
@@ -196,14 +248,12 @@ def _insert_green_comment_after(paragraph: Paragraph, comments: List[str]) -> Pa
     new_p = OxmlElement("w:p")
     paragraph._p.addnext(new_p)
     new_para = Paragraph(new_p, paragraph._parent)
-    for index, comment in enumerate(comments):
-        run = new_para.add_run(comment)
-        run.font.color.rgb = None
-        run._r.get_or_add_rPr()
-        _set_run_colour(run._r, COMMENT_GREEN)
-        run.italic = True
-        if index < len(comments) - 1:
-            run.add_break()
+    grouped = _format_comment_group(comments)
+    run = new_para.add_run(grouped)
+    run.font.color.rgb = None
+    run._r.get_or_add_rPr()
+    _set_run_colour(run._r, COMMENT_GREEN)
+    run.italic = True
     return new_para
 
 
@@ -213,8 +263,27 @@ def _append_review_notes(document, comments: List[str]) -> None:
     heading = document.add_paragraph()
     heading.style = document.styles["Heading 1"] if "Heading 1" in document.styles else heading.style
     heading.add_run("SUPERVISOR REVIEW NOTES")
-    _insert_green_comment_after(heading, comments)
+    anchor = heading
+    unique = list(dict.fromkeys(clean_text(value) for value in comments if clean_text(value)))
+    for start in range(0, len(unique), 5):
+        anchor = _insert_green_comment_after(anchor, unique[start:start + 5])
 
+
+
+def _remove_trailing_empty_paragraphs(document, keep: int = 1) -> None:
+    trailing = []
+    for paragraph in reversed(document.paragraphs):
+        if clean_text(paragraph.text):
+            break
+        ppr = paragraph._p.find(qn("w:pPr"))
+        has_section_properties = ppr is not None and ppr.find(qn("w:sectPr")) is not None
+        if "w:type=\"page\"" in paragraph._p.xml or has_section_properties:
+            break
+        trailing.append(paragraph)
+    for paragraph in trailing[keep:]:
+        parent = paragraph._p.getparent()
+        if parent is not None:
+            parent.remove(paragraph._p)
 
 def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     document = Document(io.BytesIO(source_bytes))
@@ -229,7 +298,7 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        comment = _concise_comment(row)
+        comment = _comment_body(row)
         evidence = [
             item for item in (row.get("evidence") or [])
             if not item.get("is_heading") and item.get("document_role", "current") == "current"
@@ -256,10 +325,11 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         paragraph = paragraph_map.get(paragraph_number)
         if paragraph is None:
             continue
-        # Work backwards so newly inserted comments do not alter earlier character offsets.
-        for (start, end), comments in sorted(span_groups.items(), key=lambda item: item[0][0], reverse=True):
-            unique_comments = list(dict.fromkeys(comments))
-            combined = " ".join(unique_comments)
+        # Merge overlapping or immediately adjacent findings, then work backwards so
+        # inserted comments do not alter earlier character offsets.
+        merged_groups = _merge_nearby_span_groups(span_groups)
+        for (start, end), comments in reversed(merged_groups):
+            combined = _format_comment_group(comments)
             _mark_span_and_insert_comment(paragraph, start, end, combined)
 
     # Missing requirements have no source text to colour. Place the green instruction
@@ -273,6 +343,7 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
             fallback_comments.extend(unique_comments)
 
     _append_review_notes(document, list(dict.fromkeys(fallback_comments)))
+    _remove_trailing_empty_paragraphs(document)
 
     output = io.BytesIO()
     document.save(output)

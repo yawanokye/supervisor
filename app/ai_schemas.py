@@ -90,6 +90,7 @@ class AcademicIssue(StrictModel):
     assessment: str
     academic_consequence: str
     required_action: str
+    illustrative_guidance: str = ""
 
 
 class AcademicSectionReview(StrictModel):
@@ -119,6 +120,7 @@ class AcademicIssueVerification(StrictModel):
     assessment: str
     academic_consequence: str
     required_action: str
+    illustrative_guidance: str = ""
 
 
 class AcademicVerificationBatch(StrictModel):

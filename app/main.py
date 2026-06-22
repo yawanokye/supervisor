@@ -28,7 +28,7 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.7.0",
+    version="0.8.0",
     description="Fast, complete academic review for thesis chapters, proposals, revisions, and complete theses.",
 )
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
@@ -70,7 +70,7 @@ async def home(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "0.7.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "0.8.0"}
 
 
 @app.exception_handler(Exception)

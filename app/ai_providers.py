@@ -166,6 +166,7 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
                 "assessment": str(item.get("assessment") or item.get("expert_assessment") or item.get("explanation") or "").strip(),
                 "academic_consequence": str(item.get("academic_consequence") or item.get("consequence") or item.get("implication") or "").strip(),
                 "required_action": str(item.get("required_action") or item.get("action") or item.get("recommendation") or "").strip(),
+                "illustrative_guidance": str(item.get("illustrative_guidance") or item.get("example") or item.get("illustrative_example") or "").strip(),
             })
         value = {
             "section_name": section_name,
@@ -181,8 +182,21 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
     elif name == "AcademicVerificationBatch":
         if isinstance(value.get("verification"), dict):
             value = dict(value["verification"])
-        value.setdefault("verifications", [])
-        value.setdefault("missed_issues", [])
+        verifications = []
+        for item in _list(value.get("verifications")):
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row.setdefault("illustrative_guidance", str(row.get("example") or row.get("illustrative_example") or "").strip())
+            verifications.append(row)
+        missed = []
+        for item in _list(value.get("missed_issues")):
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row.setdefault("illustrative_guidance", str(row.get("example") or row.get("illustrative_example") or "").strip())
+            missed.append(row)
+        value = {"verifications": verifications, "missed_issues": missed}
 
     elif name == "DecisionBatch":
         value.setdefault("decisions", [])
