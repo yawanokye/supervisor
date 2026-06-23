@@ -1,6 +1,6 @@
-# ProjectReady AI Supervisor Assistant MVP 0.8
+# ProjectReady AI Supervisor Assistant MVP 0.9
 
-ProjectReady AI Supervisor Assistant conducts a complete academic review of thesis chapters, research proposals, revised chapters, and complete theses.
+ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced review of thesis chapters, research proposals, revised chapters, and complete theses.
 
 ## Review philosophy
 
@@ -20,12 +20,12 @@ The main review is a section-by-section academic assessment covering:
 - academic writing, terminology, grammar, and presentation
 - supervisor-comment compliance for revised chapters
 
-## Model routing
+## Review levels
 
-- DeepSeek performs the primary section-by-section academic review where configured.
-- OpenAI independently verifies high-impact and uncertain findings where configured.
+- **Light Review:** GPT-5.4 mini performs one concise pass. It identifies common research flaws, obvious alignment problems, unsupported claims, recurring writing issues, and source or research-integrity warning signs that require verification. It is not a forensic misconduct assessment and does not replace a complete academic review.
+- **Standard Review:** GPT-5.4 mini performs the section review, then GPT-5.4 checks important findings and omissions.
+- **Advanced Review:** GPT-5.4 performs the main review, then GPT-5.5 conducts the advanced audit. GPT-5.5 is called only when Advanced Review is selected.
 - Python extracts the document, validates paragraph evidence, scores the review, and produces the annotated Word file.
-- The app does not silently present a local keyword scan as a complete expert review. At least one AI review provider must be configured.
 
 ## Annotated Word output
 
@@ -65,20 +65,16 @@ Health check:
 Python is pinned to 3.12.11 through `.python-version` and `render.yaml`.
 
 
-## Provider failover
+## Version 0.9 model routing
 
-The academic-review layer retries empty or schema-invalid DeepSeek JSON and automatically sends only unresolved sections to OpenAI when both providers are configured. Exact provider errors are recorded in the Render logs.
-
-
-## Version 0.8 model routing
-
-- Standard Review: GPT-5.4 mini performs batched section review, then GPT-5.4 checks the findings and identifies important omissions.
-- Advanced Review: GPT-5.4 performs the main review, then GPT-5.5 conducts the advanced audit. GPT-5.5 is never called unless Advanced Review is selected.
+- Light Review: GPT-5.4 mini only, larger section batches, no second-model verification, and a concise report capped at the most useful findings.
+- Standard Review: GPT-5.4 mini plus GPT-5.4 quality control.
+- Advanced Review: GPT-5.4 plus GPT-5.5 advanced audit.
 - DeepSeek is disabled and no DeepSeek key is required.
-- Review requests run as background jobs and the browser polls for progress. This avoids long HTTP requests and HTML timeout pages being parsed as JSON.
+- Review requests run as background jobs and the browser polls for progress.
 
 The in-memory job store is suitable for one Render instance. Before horizontal scaling, replace it with Redis and a worker queue.
-## Version 0.8 report improvements
+## Report and annotation improvements
 
 - Produces a concise human-supervisor report instead of repeating the same findings in tables and narrative sections.
 - Consolidates related findings that point to the same passage.

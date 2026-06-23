@@ -13,3 +13,14 @@ Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 Health check: `/health`
 
 After replacing an earlier deployment, use **Clear build cache & deploy**. Remove all DeepSeek environment variables because they are no longer used.
+
+
+## Light Review settings
+
+```env
+AI_LIGHT_SECTION_BATCH_SIZE=4
+AI_LIGHT_MAX_FINDINGS=12
+AI_LIGHT_MAX_OUTPUT_TOKENS=4200
+```
+
+Light Review uses GPT-5.4 mini only and does not run the independent GPT-5.4 or GPT-5.5 verification stage.
