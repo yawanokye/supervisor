@@ -1,14 +1,26 @@
 # Changelog
 
+## 1.0.0
+
+- Changed Light, Standard and Advanced Review so each level reviews every detected section and subsection.
+- Reframed the three levels by academic benchmark rather than document coverage:
+  - Light: Bachelor’s or non-research Master’s standard
+  - Standard: Research Master’s or MPhil standard
+  - Advanced: Professional Doctorate or PhD standard
+- Removed the global Light Review limit of 12 findings.
+- Removed the rule that automatically downgraded every critical Light Review finding.
+- Added proportional severity guidance so Light Review remains less demanding while still identifying a missing core element or serious contradiction.
+- Added a whole-chapter coherence audit to Light Review.
+- Added a coverage contract requiring one substantive response for every section key.
+- Added automatic individual retry for any section omitted from a valid batch response.
+- Prevented report export when any section or subsection remains unreviewed.
+- Added the review benchmark and number of sections reviewed to the Word report.
+- Restructured the report to include every section and subsection, while showing detailed review points only where revision is necessary.
+- Preserved context-aware examples and practical guidance across all three review levels.
+- Kept the existing model routing: GPT-5.4 mini for Light, GPT-5.4 mini plus GPT-5.4 for Standard, and GPT-5.4 plus GPT-5.5 for Advanced.
+
 ## 0.9.0
 
 - Added Light Review alongside Standard and Advanced Review.
-- Light Review uses GPT-5.4 mini only and skips the second-model verification stage.
-- Added a dedicated light-review prompt focused on common research flaws, obvious inconsistencies, unsupported claims, citation or source-verification concerns, recurring writing problems, and basic alignment.
-- Added safeguards against presenting warning signs as proof of fraud, plagiarism, fabrication, falsification, or other misconduct.
-- Limited Light Review to two material issues per section and a configurable maximum of 12 findings.
-- Prevented critical-severity findings in Light Review. Obvious core omissions may be marked major, while most findings remain moderate or minor.
-- Added concise, context-aware guidance and short examples where helpful.
-- Added a shorter Light Review report with a clear scope notice.
-- Added three review-depth options to the student interface.
-- Preserved Standard routing through GPT-5.4 mini and GPT-5.4, and Advanced routing through GPT-5.4 and GPT-5.5.
+- Added safeguards for source-verification and research-integrity warning signs.
+- Added context-aware guidance and grouped annotations.
