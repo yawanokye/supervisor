@@ -370,7 +370,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("ProjectReady AI Supervisor Assistant")
+    footer_run = footer.add_run("")
     footer_run.italic = True
     footer_run.font.size = Pt(8)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
