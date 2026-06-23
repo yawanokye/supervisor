@@ -43,6 +43,44 @@ KEY_ALIGNMENT_TERMS = (
 )
 
 
+REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
+    "light": {
+        "label": "Light Review",
+        "benchmark": "Bachelor’s dissertation or non-research Master’s project",
+        "focus": (
+            "Complete section-by-section and subsection-by-subsection review at a foundational academic standard. "
+            "Emphasise correct structure, basic coherence, clear concepts, credible evidence, alignment, essential methodology, "
+            "defensible interpretation, research-integrity checks and readable scholarly presentation."
+        ),
+        "normal_issue_limit_per_section": 3,
+    },
+    "standard": {
+        "label": "Standard Review",
+        "benchmark": "Research Master’s or MPhil dissertation",
+        "focus": (
+            "Complete section-by-section and subsection-by-subsection review at a research Master’s standard. "
+            "Require critical synthesis, defensible theoretical grounding, explicit methodological justification, "
+            "objective-method-result alignment and a clear contribution appropriate to MPhil-level research."
+        ),
+        "normal_issue_limit_per_section": 5,
+    },
+    "advanced": {
+        "label": "Advanced Review",
+        "benchmark": "Professional Doctorate or PhD thesis",
+        "focus": (
+            "Complete section-by-section and subsection-by-subsection review at doctoral standard. "
+            "Apply rigorous scrutiny to originality, theoretical and methodological contribution, assumptions, robustness, "
+            "alternative explanations, scholarly positioning and contribution to knowledge."
+        ),
+        "normal_issue_limit_per_section": 7,
+    },
+}
+
+
+def _review_profile(depth: str) -> Dict[str, Any]:
+    return REVIEW_LEVEL_PROFILES.get(depth, REVIEW_LEVEL_PROFILES["standard"])
+
+
 def _pid(paragraph: Dict[str, Any]) -> str:
     role = paragraph.get("document_role", "current")
     number = int(paragraph.get("paragraph") or 0)
@@ -170,6 +208,7 @@ def _section_key(section: Dict[str, Any], index: int) -> str:
 
 def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]], depth: str = "standard") -> str:
     summary = review.get("summary") or {}
+    profile = _review_profile(depth)
     sections = []
     for section in batch:
         sections.append({
@@ -184,18 +223,28 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
         })
     packet = {
         "review_context": {
-            "academic_level": summary.get("academic_level"),
+            "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "document_label": summary.get("document_label"),
             "chapter_under_review": summary.get("selected_chapter"),
             "review_stage": summary.get("submission_stage"),
             "review_depth": depth,
+            "review_level_label": profile["label"],
+            "review_benchmark": profile["benchmark"],
+            "depth_expectation": profile["focus"],
         },
         "chapter_review_dimensions": _chapter_dimensions(review),
+        "coverage_contract": {
+            "review_every_section_and_subsection": True,
+            "return_exactly_one_review_for_each_section_key": True,
+            "section_assessment_required_even_when_no_issue_is_found": True,
+            "strengths_should_be_reported_where_deserved": True,
+            "normal_issue_limit_per_section": profile["normal_issue_limit_per_section"],
+        },
         "instruction": (
-            "Return one concise review for every supplied section_key. Identify no more than two material issues per section and do not use critical severity."
-            if depth == "light" else
-            "Return one review for every supplied section_key. Do not omit a section."
+            "Review every supplied section and subsection at the stated benchmark. Return exactly one review for every section_key. "
+            "Do not omit short or apparently adequate sections. A section may have zero issues only after a substantive assessment, "
+            "and its section_assessment must explain the judgement. Provide context-aware examples or guidance where this will help the student."
         ),
         "sections": sections,
     }
@@ -204,6 +253,7 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
 
 def _verification_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], depth: str) -> str:
     summary = review.get("summary") or {}
+    profile = _review_profile(depth)
     proposals = []
     paragraphs: Dict[str, Dict[str, Any]] = {}
     for section_review in batch:
@@ -218,15 +268,19 @@ def _verification_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]]
             paragraphs[_pid(paragraph)] = _payload(paragraph)
     packet = {
         "review_context": {
-            "academic_level": summary.get("academic_level"),
+            "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
+            "review_benchmark": profile["benchmark"],
+            "depth_expectation": profile["focus"],
         },
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
-            "Verify the proposed issues, correct unsupported or misplaced findings, and add important missed issues. "
-            "For Standard Review, focus on material academic weaknesses. For Advanced Review, also examine doctoral-level originality, theoretical contribution, methodological defensibility, alternative explanations, and contribution to knowledge."
+            "Verify the proposed issues at the stated benchmark, correct unsupported or misplaced findings, consolidate repetition, "
+            "and add important missed issues. Confirm that every supplied section and subsection received a substantive assessment. "
+            "For Standard Review, apply Research Master’s/MPhil expectations. For Advanced Review, apply doctoral expectations to originality, "
+            "theoretical contribution, methodological defensibility, robustness, alternative explanations and contribution to knowledge."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -299,17 +353,18 @@ def _limit_light_issues(issues: Sequence[Dict[str, Any]], max_findings: int) -> 
 
 
 def _light_readiness(score: float, issues: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
+    critical = sum(1 for issue in issues if issue.get("severity") == "critical")
     major = sum(1 for issue in issues if issue.get("severity") == "major")
     moderate = sum(1 for issue in issues if issue.get("severity") == "moderate")
-    if major >= 3 or score < 60:
-        label = "Important corrections identified"
+    if critical or major >= 3 or score < 60:
+        label = "Foundational revision required"
     elif major or moderate:
-        label = "Targeted corrections identified"
+        label = "Targeted revision required"
     else:
-        label = "No major common issue identified"
+        label = "Meets the foundational review standard with minor refinement"
     meaning = (
-        "This light review highlights common research flaws, obvious inconsistencies, source-verification concerns and practical improvements. "
-        "It is a screening review and does not replace the fuller scrutiny provided by Standard or Advanced Review."
+        "Every detected section and subsection was reviewed against the standard expected of a Bachelor’s dissertation or non-research Master’s project. "
+        "The guidance addresses structure, coherence, evidence, alignment, essential methodology, interpretation, research-integrity warning signs and academic presentation at that level."
     )
     return label, meaning
 
@@ -460,7 +515,7 @@ async def enrich_review_with_academic_ai(
         sections.extend(_split_group(group, max_section_chars))
 
     whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
-    if whole_audit and depth != "light":
+    if whole_audit:
         sections.append({"heading": "Whole-chapter coherence and consistency audit", "part": 1, "paragraphs": whole_audit})
     if context:
         combined = _selected_audit_paragraphs(context + current, max(config.max_map_input_chars, 30000))
@@ -545,10 +600,10 @@ async def enrich_review_with_academic_ai(
         else:
             consume_batch(batch, result)
 
-    # Failed batches are retried as individual sections. Light Review stays on the mini model;
-    # Standard and Advanced use GPT-5.4 for recovery.
-    if failed_batches:
-        retry_sections = [section for idx in failed_batches for section in section_batches[idx]]
+    # Retry every missing section individually. This includes sections omitted from an otherwise valid batch response.
+    reviewed_keys = {row["section_key"] for row in section_reviews}
+    retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
+    if retry_sections:
         recovery_model = config.openai_mini_model if depth == "light" else config.openai_review_model
         recovery_effort = config.openai_mini_reasoning_effort if depth == "light" else config.openai_review_reasoning_effort
         recovery_tokens = config.light_max_output_tokens if depth == "light" else config.review_max_output_tokens
@@ -560,8 +615,14 @@ async def enrich_review_with_academic_ai(
             if not isinstance(result, Exception):
                 consume_batch([section], result)
 
-    if not section_reviews:
-        raise AIProviderError("The expert review service could not produce a valid review. Please try again after a few minutes.")
+    reviewed_keys = {row["section_key"] for row in section_reviews}
+    still_missing = [section for section in sections if section["section_key"] not in reviewed_keys]
+    if still_missing:
+        names = ", ".join(clean_text(section.get("heading", "Untitled section")) for section in still_missing[:5])
+        raise AIProviderError(
+            "The expert review could not complete every section and subsection. "
+            f"Unreviewed section(s): {names}. Please try again."
+        )
 
     verification_failed = False
     if depth == "light":
@@ -606,8 +667,6 @@ async def enrich_review_with_academic_ai(
                 batch[0]["issues"].extend(leftovers)
 
     all_issues = _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
-    if depth == "light":
-        all_issues = _limit_light_issues(all_issues, config.light_max_findings)
     strengths = []
     seen = set()
     for section_review in section_reviews:
@@ -619,7 +678,7 @@ async def enrich_review_with_academic_ai(
             strengths.append({"category": strength.get("category", "other"), "section": clean_text(strength.get("section", "")), "observation": clean_text(strength.get("observation", "")), "evidence": evidence})
 
     if depth == "light":
-        strengths = strengths[:4]
+        strengths = strengths[:6]
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
     incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)
@@ -659,13 +718,26 @@ async def enrich_review_with_academic_ai(
             continue
         seen_priority.add(signature)
         priority.append(item)
-        if len(priority) >= (6 if depth == "light" else 10):
+        priority_limit = 8 if depth == "light" else (10 if depth == "standard" else 12)
+        if len(priority) >= priority_limit:
             break
 
+    profile = _review_profile(depth)
+    actual_section_names = {
+        normalised(section.get("heading", ""))
+        for section in section_reviews
+        if normalised(section.get("heading", ""))
+        and not any(term in normalised(section.get("heading", "")) for term in (
+            "whole chapter coherence", "cross chapter coherence", "cross chapter alignment", "supervisor comment compliance audit"
+        ))
+    }
     summary.update({
-        "review_depth": depth, "academic_review_score": score, "overall_score": overall,
+        "review_depth": depth, "review_benchmark": profile["benchmark"],
+        "academic_review_score": score, "overall_score": overall,
         "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
-        "academic_review_complete": not incomplete, "academic_sections_reviewed": len(section_reviews),
+        "academic_review_complete": not incomplete,
+        "academic_sections_reviewed": len(actual_section_names),
+        "academic_review_units_completed": len(section_reviews),
         "critical_issues": counts["critical"], "major_issues": counts["major"],
         "moderate_issues": counts["moderate"], "minor_issues": counts["minor"],
         "strengths_identified": len(strengths),
@@ -684,12 +756,13 @@ async def enrich_review_with_academic_ai(
         contextual_summary = " ".join(contextual_parts[:2])
         review["overall_academic_assessment"] = (
             (contextual_summary + " " if contextual_summary else "")
-            + "The light review identifies the most visible research, alignment, source-verification and writing concerns and provides practical guidance for correction. "
-            + "It is a concise screening rather than a full judgement on submission readiness or research misconduct."
+            + "Every detected section and subsection was assessed at the foundational standard expected of a Bachelor’s dissertation or non-research Master’s project. "
+            + "The review provides context-aware guidance and examples where these are needed to support revision."
         ).strip()
     review["priority_actions"] = priority
     review["ai_review"] = {
-        "review_depth": depth, "usage": [record.model_dump() for record in usage_records],
+        "review_depth": depth, "review_benchmark": profile["benchmark"],
+        "usage": [record.model_dump() for record in usage_records],
         "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
     }

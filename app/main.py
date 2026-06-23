@@ -28,8 +28,8 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.9.0",
-    description="Light, standard and advanced academic review for thesis chapters, proposals, revisions, and complete theses.",
+    version="1.0.0",
+    description="Complete section-by-section Light, Standard and Advanced academic review for theses, dissertations, proposals and revisions.",
 )
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -70,7 +70,7 @@ async def home(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "0.9.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.0.0"}
 
 
 @app.exception_handler(Exception)

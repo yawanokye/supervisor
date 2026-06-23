@@ -64,7 +64,7 @@ def is_heading(text: str, style_name: str = "") -> bool:
         return False
     if "heading" in (style_name or "").lower() or "title" in (style_name or "").lower():
         return True
-    if re.match(r"^(chapter\s+)?(one|two|three|four|five|1|2|3|4|5)\b", low) and len(raw.split()) <= 14:
+    if detect_chapter_number(raw) is not None and len(raw.split()) <= 14:
         return True
     if re.match(r"^\d+(\.\d+){0,3}\s+\S+", raw) and len(raw.split()) <= 18:
         return True
@@ -79,6 +79,13 @@ def is_heading(text: str, style_name: str = "") -> bool:
                       "design", "population", "sampling", "instrument", "validity", "reliability", "analysis", "ethics", "results",
                       "findings", "discussion", "conclusion", "recommendations", "references", "appendix"}
     words = set(low.split())
+    # Avoid treating short declarative sentences as headings merely because they contain words
+    # such as objective, significance, result or conclusion.
+    if low.startswith(("the ", "this ", "these ", "those ", "it ", "they ", "we ", "our ")):
+        return False
+    sentence_verbs = {"is", "are", "was", "were", "will", "would", "should", "requires", "require", "includes", "include", "comprises", "comprise", "deals", "aims", "seeks"}
+    if words & sentence_verbs:
+        return False
     return len(raw.split()) <= 10 and bool(words & heading_tokens) and not raw.endswith((".", ",", ";", ":"))
 
 def detect_chapter_number(text: str) -> Optional[int]:
@@ -86,7 +93,17 @@ def detect_chapter_number(text: str) -> Optional[int]:
     explicit = re.match(r"^chapter\s+(one|two|three|four|five|1|2|3|4|5|i|ii|iii|iv|v)\b", low)
     mapping = {"one":1,"1":1,"i":1,"two":2,"2":2,"ii":2,"three":3,"3":3,"iii":3,"four":4,"4":4,"iv":4,"five":5,"5":5,"v":5}
     if explicit:
-        return mapping.get(explicit.group(1))
+        number = mapping.get(explicit.group(1))
+        remainder = low[explicit.end():].strip(" .:-–—")
+        if not remainder:
+            return number
+        if remainder.startswith(("is ", "deals ", "being ", "will ", "comprises ", "is devoted ", "is concerned ", "is mainly ")):
+            return None
+        if number and any(title in remainder for title in CHAPTER_TITLE_MAP[number]):
+            return number
+        if clean_text(text).isupper() and number:
+            return number
+        return None
     numbered = re.match(r"^([1-5])(?:\.0)?\s+(.+)$", low)
     if numbered:
         candidate = int(numbered.group(1))

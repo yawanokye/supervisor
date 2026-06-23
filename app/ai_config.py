@@ -62,7 +62,6 @@ class HybridAIConfig:
     max_parallel_calls: int
     section_batch_size: int
     light_section_batch_size: int
-    light_max_findings: int
     verification_batch_size: int
     strict_failure: bool
     structured_output_retries: int
@@ -118,13 +117,12 @@ class HybridAIConfig:
             mini_max_output_tokens=_env_int("AI_MINI_MAX_OUTPUT_TOKENS", 6500),
             review_max_output_tokens=_env_int("AI_REVIEW_MAX_OUTPUT_TOKENS", 8000),
             advanced_max_output_tokens=_env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000),
-            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 4200),
+            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 6500),
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 100),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 3),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 3),
-            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 4),
-            light_max_findings=_env_int("AI_LIGHT_MAX_FINDINGS", 12),
+            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 3),
             verification_batch_size=_env_int("AI_VERIFICATION_BATCH_SIZE", 3),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 1, 0),
