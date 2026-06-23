@@ -28,8 +28,8 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="0.8.0",
-    description="Fast, complete academic review for thesis chapters, proposals, revisions, and complete theses.",
+    version="0.9.0",
+    description="Light, standard and advanced academic review for thesis chapters, proposals, revisions, and complete theses.",
 )
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -70,7 +70,7 @@ async def home(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "0.8.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "0.9.0"}
 
 
 @app.exception_handler(Exception)
@@ -159,8 +159,8 @@ async def create_review(
     previous_files: Optional[List[UploadFile]] = File(None), supervisor_comment_files: Optional[List[UploadFile]] = File(None),
     supervisor_comments_text: str = Form(""), original_file: Optional[UploadFile] = File(None),
 ):
-    if review_depth not in {"standard", "advanced"}:
-        raise HTTPException(status_code=400, detail="Choose Standard Review or Advanced Review.")
+    if review_depth not in {"light", "standard", "advanced"}:
+        raise HTTPException(status_code=400, detail="Choose Light Review, Standard Review or Advanced Review.")
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
 

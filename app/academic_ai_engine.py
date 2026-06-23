@@ -9,7 +9,7 @@ from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ai_config import AIConfigurationError, HybridAIConfig
-from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT
+from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT, LIGHT_REVIEW_SYSTEM_PROMPT
 from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
 from .ai_schemas import (
     AIUsageRecord,
@@ -168,7 +168,7 @@ def _section_key(section: Dict[str, Any], index: int) -> str:
     return f"S{index + 1}:{clean_text(section.get('heading', 'Untitled section'))[:80]}:{section.get('part', 1)}"
 
 
-def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]]) -> str:
+def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]], depth: str = "standard") -> str:
     summary = review.get("summary") or {}
     sections = []
     for section in batch:
@@ -189,9 +189,14 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
             "document_label": summary.get("document_label"),
             "chapter_under_review": summary.get("selected_chapter"),
             "review_stage": summary.get("submission_stage"),
+            "review_depth": depth,
         },
         "chapter_review_dimensions": _chapter_dimensions(review),
-        "instruction": "Return one review for every supplied section_key. Do not omit a section.",
+        "instruction": (
+            "Return one concise review for every supplied section_key. Identify no more than two material issues per section and do not use critical severity."
+            if depth == "light" else
+            "Return one review for every supplied section_key. Do not omit a section."
+        ),
         "sections": sections,
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -273,6 +278,40 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
         "problematic_quote": clean_text(issue.get("problematic_quote", "")), "headings": [section],
     }
+
+
+
+def _limit_light_issues(issues: Sequence[Dict[str, Any]], max_findings: int) -> List[Dict[str, Any]]:
+    """Keep a light review concise and non-forensic."""
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for raw in issues:
+        issue = dict(raw)
+        if issue.get("severity") == "critical":
+            issue["severity"] = "major"
+        grouped[normalised(issue.get("section", "Chapter-wide review"))].append(issue)
+
+    selected: List[Dict[str, Any]] = []
+    for values in grouped.values():
+        values.sort(key=lambda item: (SEVERITY_ORDER.get(item.get("severity", "minor"), 9), -float(item.get("confidence") or 0)))
+        selected.extend(values[:2])
+    selected.sort(key=lambda item: (SEVERITY_ORDER.get(item.get("severity", "minor"), 9), -float(item.get("confidence") or 0)))
+    return selected[:max(1, max_findings)]
+
+
+def _light_readiness(score: float, issues: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
+    major = sum(1 for issue in issues if issue.get("severity") == "major")
+    moderate = sum(1 for issue in issues if issue.get("severity") == "moderate")
+    if major >= 3 or score < 60:
+        label = "Important corrections identified"
+    elif major or moderate:
+        label = "Targeted corrections identified"
+    else:
+        label = "No major common issue identified"
+    meaning = (
+        "This light review highlights common research flaws, obvious inconsistencies, source-verification concerns and practical improvements. "
+        "It is a screening review and does not replace the fuller scrutiny provided by Standard or Advanced Review."
+    )
+    return label, meaning
 
 
 def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
@@ -411,13 +450,17 @@ async def enrich_review_with_academic_ai(
     paragraph_index = {_pid(p): p for p in all_paragraphs}
 
     groups = _section_groups(current)
-    max_section_chars = max(8000, min(18000, config.max_context_chars_per_rule * 2))
+    max_section_chars = (
+        max(12000, min(22000, config.max_context_chars_per_rule * 2))
+        if depth == "light" else
+        max(8000, min(18000, config.max_context_chars_per_rule * 2))
+    )
     sections: List[Dict[str, Any]] = []
     for group in groups:
         sections.extend(_split_group(group, max_section_chars))
 
     whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
-    if whole_audit:
+    if whole_audit and depth != "light":
         sections.append({"heading": "Whole-chapter coherence and consistency audit", "part": 1, "paragraphs": whole_audit})
     if context:
         combined = _selected_audit_paragraphs(context + current, max(config.max_map_input_chars, 30000))
@@ -435,17 +478,32 @@ async def enrich_review_with_academic_ai(
     for index, section in enumerate(sections):
         section["section_key"] = _section_key(section, index)
 
-    primary_model = config.openai_mini_model if depth == "standard" else config.openai_review_model
-    primary_effort = config.openai_mini_reasoning_effort if depth == "standard" else config.openai_review_reasoning_effort
-    primary_tokens = config.mini_max_output_tokens if depth == "standard" else config.review_max_output_tokens
-    section_batches = _batch(sections, config.section_batch_size)
+    if depth == "light":
+        primary_model = config.openai_mini_model
+        primary_effort = config.openai_mini_reasoning_effort
+        primary_tokens = config.light_max_output_tokens
+        primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
+        batch_size = config.light_section_batch_size
+    elif depth == "standard":
+        primary_model = config.openai_mini_model
+        primary_effort = config.openai_mini_reasoning_effort
+        primary_tokens = config.mini_max_output_tokens
+        primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
+        batch_size = config.section_batch_size
+    else:
+        primary_model = config.openai_review_model
+        primary_effort = config.openai_review_reasoning_effort
+        primary_tokens = config.review_max_output_tokens
+        primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
+        batch_size = config.section_batch_size
+    section_batches = _batch(sections, batch_size)
 
     await _notify(progress_callback, 35, "Reviewing chapter sections")
 
     async def primary_call(batch: Sequence[Dict[str, Any]], model: str, effort: str, purpose: str, tokens: int) -> ProviderResult:
         return await openai.complete_json(
-            model=model, system_prompt=ACADEMIC_REVIEW_SYSTEM_PROMPT,
-            user_prompt=_batch_prompt(review, batch, supervisor_comments),
+            model=model, system_prompt=primary_system_prompt,
+            user_prompt=_batch_prompt(review, batch, supervisor_comments, depth),
             schema_model=AcademicReviewBatch, purpose=purpose,
             reasoning_effort=effort, max_output_tokens=tokens,
         )
@@ -487,11 +545,15 @@ async def enrich_review_with_academic_ai(
         else:
             consume_batch(batch, result)
 
-    # Failed mini batches are retried as individual sections with GPT-5.4.
+    # Failed batches are retried as individual sections. Light Review stays on the mini model;
+    # Standard and Advanced use GPT-5.4 for recovery.
     if failed_batches:
         retry_sections = [section for idx in failed_batches for section in section_batches[idx]]
+        recovery_model = config.openai_mini_model if depth == "light" else config.openai_review_model
+        recovery_effort = config.openai_mini_reasoning_effort if depth == "light" else config.openai_review_reasoning_effort
+        recovery_tokens = config.light_max_output_tokens if depth == "light" else config.review_max_output_tokens
         retry_results = await _run_limited(
-            [primary_call([section], config.openai_review_model, config.openai_review_reasoning_effort, "section_review_recovery", config.review_max_output_tokens) for section in retry_sections],
+            [primary_call([section], recovery_model, recovery_effort, "section_review_recovery", recovery_tokens) for section in retry_sections],
             config.max_parallel_calls,
         )
         for section, result in zip(retry_sections, retry_results):
@@ -501,47 +563,51 @@ async def enrich_review_with_academic_ai(
     if not section_reviews:
         raise AIProviderError("The expert review service could not produce a valid review. Please try again after a few minutes.")
 
-    await _notify(progress_callback, 68, "Checking the review for missed or misplaced issues")
-
-    # One higher-quality verification stage. GPT-5.5 is used only for Advanced Review.
-    verification_model = config.openai_review_model if depth == "standard" else config.openai_advanced_model
-    verification_effort = config.openai_review_reasoning_effort if depth == "standard" else config.openai_advanced_reasoning_effort
-    verification_tokens = config.review_max_output_tokens if depth == "standard" else config.advanced_max_output_tokens
-    verification_batches = _batch(section_reviews, config.verification_batch_size)
-
-    async def verify_call(batch: Sequence[Dict[str, Any]]) -> ProviderResult:
-        return await openai.complete_json(
-            model=verification_model, system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-            user_prompt=_verification_prompt(review, batch, depth),
-            schema_model=AcademicVerificationBatch, purpose=f"{depth}_quality_control",
-            reasoning_effort=verification_effort, max_output_tokens=verification_tokens,
-        )
-
-    verify_results = await _run_limited([verify_call(batch) for batch in verification_batches], config.max_parallel_calls)
     verification_failed = False
-    for batch, result in zip(verification_batches, verify_results):
-        if isinstance(result, Exception):
-            verification_failed = True
+    if depth == "light":
+        await _notify(progress_callback, 68, "Consolidating the light review and guidance")
+    else:
+        await _notify(progress_callback, 68, "Checking the review for missed or misplaced issues")
+
+        # Standard uses GPT-5.4 quality control. GPT-5.5 is used only for Advanced Review.
+        verification_model = config.openai_review_model if depth == "standard" else config.openai_advanced_model
+        verification_effort = config.openai_review_reasoning_effort if depth == "standard" else config.openai_advanced_reasoning_effort
+        verification_tokens = config.review_max_output_tokens if depth == "standard" else config.advanced_max_output_tokens
+        verification_batches = _batch(section_reviews, config.verification_batch_size)
+
+        async def verify_call(batch: Sequence[Dict[str, Any]]) -> ProviderResult:
+            return await openai.complete_json(
+                model=verification_model, system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
+                user_prompt=_verification_prompt(review, batch, depth),
+                schema_model=AcademicVerificationBatch, purpose=f"{depth}_quality_control",
+                reasoning_effort=verification_effort, max_output_tokens=verification_tokens,
+            )
+
+        verify_results = await _run_limited([verify_call(batch) for batch in verification_batches], config.max_parallel_calls)
+        for batch, result in zip(verification_batches, verify_results):
+            if isinstance(result, Exception):
+                verification_failed = True
+                for section_review in batch:
+                    section_review["coverage_warning"] = (section_review.get("coverage_warning", "") + " Independent quality control was unavailable for this section.").strip()
+                continue
+            usage_records.append(_usage_cost(result.usage, config))
+            all_primary = [issue for section_review in batch for issue in section_review["issues"]]
+            merged = _apply_verification(all_primary, result.data)
+            merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for item in merged:
+                valid = _valid_issue(item, paragraph_index)
+                if valid:
+                    merged_by_section[normalised(valid.get("section", ""))].append(valid)
             for section_review in batch:
-                section_review["coverage_warning"] = (section_review.get("coverage_warning", "") + " Independent quality control was unavailable for this section.").strip()
-            continue
-        usage_records.append(_usage_cost(result.usage, config))
-        all_primary = [issue for section_review in batch for issue in section_review["issues"]]
-        merged = _apply_verification(all_primary, result.data)
-        merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for item in merged:
-            valid = _valid_issue(item, paragraph_index)
-            if valid:
-                merged_by_section[normalised(valid.get("section", ""))].append(valid)
-        # Redistribute by section name where possible; otherwise attach to first batch section.
-        for section_review in batch:
-            key = normalised(section_review["heading"])
-            section_review["issues"] = merged_by_section.pop(key, [])
-        leftovers = [item for values in merged_by_section.values() for item in values]
-        if leftovers and batch:
-            batch[0]["issues"].extend(leftovers)
+                key = normalised(section_review["heading"])
+                section_review["issues"] = merged_by_section.pop(key, [])
+            leftovers = [item for values in merged_by_section.values() for item in values]
+            if leftovers and batch:
+                batch[0]["issues"].extend(leftovers)
 
     all_issues = _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
+    if depth == "light":
+        all_issues = _limit_light_issues(all_issues, config.light_max_findings)
     strengths = []
     seen = set()
     for section_review in section_reviews:
@@ -552,10 +618,14 @@ async def enrich_review_with_academic_ai(
             evidence = [_evidence(paragraph_index[pid]) for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
             strengths.append({"category": strength.get("category", "other"), "section": clean_text(strength.get("section", "")), "observation": clean_text(strength.get("observation", "")), "evidence": evidence})
 
+    if depth == "light":
+        strengths = strengths[:4]
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
     incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)
-    readiness_label, readiness_meaning = _readiness(score, all_issues, incomplete)
+    readiness_label, readiness_meaning = (
+        _light_readiness(score, all_issues) if depth == "light" else _readiness(score, all_issues, incomplete)
+    )
 
     summary = review.get("summary") or {}
     alignment_value = summary.get("alignment_score")
@@ -589,7 +659,7 @@ async def enrich_review_with_academic_ai(
             continue
         seen_priority.add(signature)
         priority.append(item)
-        if len(priority) >= 10:
+        if len(priority) >= (6 if depth == "light" else 10):
             break
 
     summary.update({
@@ -604,6 +674,19 @@ async def enrich_review_with_academic_ai(
     review["academic_strengths"] = strengths
     review["academic_section_reviews"] = [{k: v for k, v in section.items() if k not in {"source_section", "issues", "strengths"}} for section in section_reviews]
     review["overall_academic_assessment"] = _overall_assessment(score, all_issues, strengths, section_reviews)
+    if depth == "light":
+        contextual_parts = [
+            clean_text(section.get("section_assessment", ""))
+            for section in section_reviews
+            if clean_text(section.get("section_assessment", ""))
+            and "audit" not in normalised(section.get("heading", ""))
+        ]
+        contextual_summary = " ".join(contextual_parts[:2])
+        review["overall_academic_assessment"] = (
+            (contextual_summary + " " if contextual_summary else "")
+            + "The light review identifies the most visible research, alignment, source-verification and writing concerns and provides practical guidance for correction. "
+            + "It is a concise screening rather than a full judgement on submission readiness or research misconduct."
+        ).strip()
     review["priority_actions"] = priority
     review["ai_review"] = {
         "review_depth": depth, "usage": [record.model_dump() for record in usage_records],

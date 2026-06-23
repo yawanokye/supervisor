@@ -56,10 +56,13 @@ class HybridAIConfig:
     mini_max_output_tokens: int
     review_max_output_tokens: int
     advanced_max_output_tokens: int
+    light_max_output_tokens: int
     timeout_seconds: int
     max_retries: int
     max_parallel_calls: int
     section_batch_size: int
+    light_section_batch_size: int
+    light_max_findings: int
     verification_batch_size: int
     strict_failure: bool
     structured_output_retries: int
@@ -115,10 +118,13 @@ class HybridAIConfig:
             mini_max_output_tokens=_env_int("AI_MINI_MAX_OUTPUT_TOKENS", 6500),
             review_max_output_tokens=_env_int("AI_REVIEW_MAX_OUTPUT_TOKENS", 8000),
             advanced_max_output_tokens=_env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000),
+            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 4200),
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 100),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 3),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 3),
+            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 4),
+            light_max_findings=_env_int("AI_LIGHT_MAX_FINDINGS", 12),
             verification_batch_size=_env_int("AI_VERIFICATION_BATCH_SIZE", 3),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 1, 0),
@@ -162,8 +168,8 @@ class HybridAIConfig:
             "premium": "advanced",
         }
         requested = aliases.get(requested, requested)
-        if requested not in {"standard", "advanced"}:
-            raise AIConfigurationError("Choose Standard Review or Advanced Review.")
+        if requested not in {"light", "standard", "advanced"}:
+            raise AIConfigurationError("Choose Light Review, Standard Review or Advanced Review.")
         if not self.openai_configured:
             raise AIConfigurationError("The expert review service is not configured. Add OPENAI_API_KEY on the server.")
         return requested
@@ -172,5 +178,5 @@ class HybridAIConfig:
         return {
             "enabled": self.enabled,
             "configured": self.openai_configured,
-            "review_depths": ["standard", "advanced"],
+            "review_depths": ["light", "standard", "advanced"],
         }

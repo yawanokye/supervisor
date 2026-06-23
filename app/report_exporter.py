@@ -248,11 +248,14 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     section.left_margin = Inches(0.72)
     section.right_margin = Inches(0.72)
 
+    summary = review.get("summary") or {}
+    depth = str(summary.get("review_depth", "standard")).lower()
+    light_review = depth == "light"
+
     title = doc.add_paragraph(style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.add_run("SUPERVISOR’S ACADEMIC REVIEW REPORT")
+    title.add_run("SUPERVISOR’S LIGHT ACADEMIC REVIEW" if light_review else "SUPERVISOR’S ACADEMIC REVIEW REPORT")
 
-    summary = review.get("summary") or {}
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle.paragraph_format.space_after = Pt(12)
@@ -282,7 +285,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         _set_cell_text(cells[0], label, True, BRAND)
         _set_cell_text(cells[1], value)
 
-    doc.add_heading("1. Overall Supervisor Assessment", level=1)
+    doc.add_heading("1. Overall Light Review" if light_review else "1. Overall Supervisor Assessment", level=1)
     overall = _clean(review.get("overall_academic_assessment") or summary.get("readiness_meaning"))
     doc.add_paragraph(overall)
 
@@ -293,22 +296,27 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     _set_cell_shading(judgement_cell, fill)
     judgement_text = (
         f'{summary.get("readiness_label", "Academic review completed")}. '
-        f'The chapter requires attention to {summary.get("critical_issues", 0)} critical, '
-        f'{summary.get("major_issues", 0)} major and {summary.get("moderate_issues", 0)} moderate issue(s).'
+        + (
+            f'This screening identifies {summary.get("major_issues", 0)} major, '
+            f'{summary.get("moderate_issues", 0)} moderate and {summary.get("minor_issues", 0)} minor matter(s) for attention.'
+            if light_review else
+            f'The chapter requires attention to {summary.get("critical_issues", 0)} critical, '
+            f'{summary.get("major_issues", 0)} major and {summary.get("moderate_issues", 0)} moderate issue(s).'
+        )
     )
     _set_cell_text(judgement_cell, judgement_text, True, INK, 10)
 
     strengths = review.get("academic_strengths") or []
     if strengths:
         doc.add_heading("2. Strengths to Retain", level=1)
-        for strength in strengths[:6]:
+        for strength in strengths[:4 if light_review else 6]:
             p = doc.add_paragraph(style="List Bullet")
             p.paragraph_format.space_after = Pt(3)
             section_name = _clean(strength.get("section", "Chapter"))
             p.add_run(section_name + ": ").bold = True
             p.add_run(_clean(strength.get("observation", "")))
 
-    doc.add_heading("3. Priority Corrections Before Resubmission", level=1)
+    doc.add_heading("3. Priority Improvements" if light_review else "3. Priority Corrections Before Resubmission", level=1)
     priorities = review.get("priority_actions") or []
     seen = set()
     kept = []
@@ -318,7 +326,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             continue
         seen.add(signature)
         kept.append(action)
-        if len(kept) >= 8:
+        if len(kept) >= (6 if light_review else 8):
             break
     if kept:
         for index, action in enumerate(kept, start=1):
@@ -333,7 +341,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         doc.add_paragraph("No priority correction was identified.")
 
     findings = review.get("academic_findings") or []
-    doc.add_heading("4. Section-by-Section Review", level=1)
+    doc.add_heading("4. Common Issues and Guidance" if light_review else "4. Section-by-Section Review", level=1)
     summaries = _section_summaries(review)
     section_rows: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
     for row in findings:
@@ -345,7 +353,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         for section_name, rows in section_rows.items():
             doc.add_heading(section_name, level=2)
             section_summary = _matching_summary(section_name, summaries)
-            if section_summary and "whole chapter coherence" not in _normalised(section_name):
+            if section_summary and not light_review and "whole chapter coherence" not in _normalised(section_name):
                 p = doc.add_paragraph(_trim(section_summary, 900))
                 p.paragraph_format.space_after = Pt(5)
             for index, group in enumerate(_group_findings(rows), start=1):
@@ -367,6 +375,14 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     note.add_run(
         "Any examples in this report are illustrative. Adapt them to the actual study design, evidence, institutional requirements and verified sources rather than copying them mechanically."
     )
+    if light_review:
+        scope_note = doc.add_paragraph()
+        scope_note.paragraph_format.space_before = Pt(5)
+        scope_note.add_run("Scope of this review: ").bold = True
+        scope_note.add_run(
+            "This is a concise screening for common research flaws, obvious inconsistencies and matters requiring source or integrity verification. "
+            "It does not provide the depth of a Standard or Advanced Review and should not be treated as proof of research misconduct."
+        )
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
