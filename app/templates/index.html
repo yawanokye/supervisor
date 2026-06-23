@@ -16,26 +16,25 @@
         <small> Extraordinary Supervisor</small>
       </span>
     </a>
-    <span class="beta">MVP 0.7</span>
+    <span class="beta">MVP 0.9</span>
   </header>
 
   <main class="page-shell">
     <section class="hero">
       <div>
-        <p class="eyebrow">Complete academic thesis review</p>
+        <p class="eyebrow">Academic thesis review and guidance</p>
         <h1>Meet your academic advisor for your research work</h1>
         <p class="hero-copy">
-          Professor is an experienced thesis supervsior for all academic levels.
+          Professor provides structured, context-aware thesis review and guidance for all academic levels.
         </p>
         <div class="trust-row">
-          <span>Expert academic review</span>
+          <span>Light, Standard and Advanced review</span>
           <span>Initial and revised chapters</span>
           <span>Supervisor-comment follow-up</span>
           <span>Previous-chapter alignment</span>
           <span>Complete section-by-section review</span>
           <span>Detailed comments in Word output</span>
         </div>
-      </div>
       </div>
     </section>
 
@@ -74,11 +73,13 @@
           
           <div class="field" id="reviewDepthField">
             <span>Review depth</span>
-            <div class="segmented">
+            <div class="segmented three-option">
+              <label><input type="radio" name="review_depth" value="light"><span>Light review</span></label>
               <label><input type="radio" name="review_depth" value="standard" checked><span>Standard review</span></label>
               <label><input type="radio" name="review_depth" value="advanced"><span>Advanced review</span></label>
             </div>
-            <p class="field-help" id="reviewDepthHelp">Standard review is faster and suitable for bachelor’s, master’s and most chapter reviews.</p>
+            <p class="field-help" id="reviewDepthHelp">Standard review provides a thorough academic assessment and is suitable for bachelor’s, master’s and most chapter reviews.</p>
+            <div class="light-note hidden" id="lightReviewNote">Light Review screens common research flaws, obvious inconsistencies, unsupported claims, citation or integrity warning signs, and recurring writing problems. It provides practical guidance but is not a full academic examination. Warning signs are raised for verification and are not treated as proof of misconduct.</div>
             <div class="doctoral-note hidden" id="doctoralNote">Advanced review is recommended for professional doctorate and PhD work requiring deeper scrutiny of originality, theory, methodology and contribution to knowledge.</div>
           </div>
 
