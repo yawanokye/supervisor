@@ -39,11 +39,11 @@ function updateDepthGuidance() {
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
   lightReviewNote.classList.toggle("hidden", depth !== "light");
   if (depth === "light") {
-    reviewDepthHelp.textContent = "Light review is a faster, concise screening for common research flaws and practical corrections.";
+    reviewDepthHelp.textContent = "Light Review examines every section and subsection at Bachelor’s or non-research Master’s level, with practical guidance and examples where needed.";
   } else if (depth === "advanced") {
-    reviewDepthHelp.textContent = "Advanced review applies deeper scrutiny of theory, methodology, originality and contribution, and may take longer.";
+    reviewDepthHelp.textContent = "Advanced Review examines every section and subsection at Professional Doctorate or PhD level, with rigorous scrutiny of originality, theory, methodology and contribution to knowledge.";
   } else {
-    reviewDepthHelp.textContent = "Standard review provides a thorough academic assessment and is suitable for bachelor’s, master’s and most chapter reviews.";
+    reviewDepthHelp.textContent = "Standard Review examines every section and subsection at Research Master’s or MPhil level, with stronger critical synthesis and methodological scrutiny.";
   }
 }
 academicLevelSelect.addEventListener("change", updateDepthGuidance);
