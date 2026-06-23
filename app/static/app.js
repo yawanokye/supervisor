@@ -28,6 +28,7 @@ let showAll = false;
 const academicLevelSelect = form.querySelector('select[name="academic_level"]');
 const doctoralNote = document.getElementById("doctoralNote");
 const reviewDepthHelp = document.getElementById("reviewDepthHelp");
+const lightReviewNote = document.getElementById("lightReviewNote");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
@@ -36,9 +37,14 @@ function updateDepthGuidance() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(academicLevelSelect.value);
   doctoralNote.classList.toggle("hidden", !doctoral);
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
-  reviewDepthHelp.textContent = depth === "advanced"
-    ? "Advanced review applies an additional high-level audit and may take longer."
-    : "Standard review is faster and suitable for bachelor’s, master’s and most chapter reviews.";
+  lightReviewNote.classList.toggle("hidden", depth !== "light");
+  if (depth === "light") {
+    reviewDepthHelp.textContent = "Light review is a faster, concise screening for common research flaws and practical corrections.";
+  } else if (depth === "advanced") {
+    reviewDepthHelp.textContent = "Advanced review applies deeper scrutiny of theory, methodology, originality and contribution, and may take longer.";
+  } else {
+    reviewDepthHelp.textContent = "Standard review provides a thorough academic assessment and is suitable for bachelor’s, master’s and most chapter reviews.";
+  }
 }
 academicLevelSelect.addEventListener("change", updateDepthGuidance);
 form.querySelectorAll('input[name="review_depth"]').forEach(input => input.addEventListener("change", updateDepthGuidance));
