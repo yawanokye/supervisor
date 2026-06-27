@@ -25,6 +25,7 @@ const showAllButton = document.getElementById("showAllButton");
 
 let currentReview = null;
 let showAll = false;
+const ACTIVE_REVIEW_JOB_KEY = "ai-professor-active-review-job";
 const academicLevelSelect = form.querySelector('select[name="academic_level"]');
 const doctoralNote = document.getElementById("doctoralNote");
 const reviewDepthHelp = document.getElementById("reviewDepthHelp");
@@ -374,25 +375,76 @@ function updateProgress(job) {
   loadingMessage.textContent = job.message || "Reviewing the document";
 }
 
-async function waitForReview(pollUrl) {
-  const started = Date.now();
+async function fetchCompletedReview(job) {
+  if (job.review && typeof job.review === "object") return job.review;
+  const resultUrl = job.result_url || (job.review_id ? `/api/review/${encodeURIComponent(job.review_id)}` : "");
+  if (!resultUrl) throw new Error("The review finished, but the result location was not returned.");
+  const response = await fetch(resultUrl, { headers: { "Accept": "application/json" } });
+  return await readJsonSafely(response);
+}
+
+async function waitForReview(pollUrl, options = {}) {
+  const started = Number(options.startedAt || Date.now());
+  const maximumWait = 2 * 60 * 60 * 1000;
   let temporaryFailures = 0;
-  while (Date.now() - started < 30 * 60 * 1000) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  let pollDelay = 2500;
+
+  while (Date.now() - started < maximumWait) {
+    await new Promise(resolve => setTimeout(resolve, pollDelay));
     try {
-      const response = await fetch(pollUrl, { headers: { "Accept": "application/json" } });
+      const response = await fetch(pollUrl, {
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
+      });
+
+      if ([401, 403, 404].includes(response.status)) {
+        const payload = await readJsonSafely(response);
+        throw new Error(payload.detail || "The review job is no longer available.");
+      }
+
       const job = await readJsonSafely(response);
       temporaryFailures = 0;
+      pollDelay = Date.now() - started > 30 * 60 * 1000 ? 10000 : 2500;
       updateProgress(job);
-      if (job.status === "completed") return job.review;
-      if (job.status === "failed") throw new Error(job.error || "The review could not be completed.");
+
+      localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify({
+        pollUrl,
+        jobId: job.job_id || options.jobId || "",
+        startedAt: started,
+        filename: options.filename || ""
+      }));
+
+      if (job.status === "completed") {
+        const review = await fetchCompletedReview(job);
+        localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        return review;
+      }
+      if (job.status === "failed") {
+        localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        throw new Error(job.error || "The review could not be completed.");
+      }
+
+      if (Date.now() - started > 30 * 60 * 1000) {
+        loadingMessage.textContent =
+          "The review is still processing. You may leave this page and return later. The portal will reconnect to the active review automatically.";
+      }
     } catch (error) {
       temporaryFailures += 1;
-      if (temporaryFailures >= 5) throw error;
-      loadingMessage.textContent = "The connection was interrupted. Reconnecting to the review job…";
+      pollDelay = Math.min(15000, 2500 + temporaryFailures * 1500);
+
+      if (temporaryFailures >= 12) {
+        loadingMessage.textContent =
+          "The portal cannot currently reach the review service. It will keep trying automatically.";
+      } else {
+        loadingMessage.textContent =
+          "The connection was interrupted. Reconnecting to the review job…";
+      }
     }
   }
-  throw new Error("The review is still taking longer than expected. Please retry or check the service status.");
+
+  throw new Error(
+    "The review has not completed within two hours. The job has been saved in your review history. Check the portal later or contact the administrator."
+  );
 }
 
 form.addEventListener("submit", async event => {
@@ -422,7 +474,14 @@ form.addEventListener("submit", async event => {
     const response = await fetch("/api/review", { method: "POST", body, headers: { "Accept": "application/json" } });
     const queued = await readJsonSafely(response);
     updateProgress(queued);
-    const review = await waitForReview(queued.poll_url);
+    const activeJob = {
+      pollUrl: queued.poll_url,
+      jobId: queued.job_id,
+      startedAt: Date.now(),
+      filename: fileInput.files[0]?.name || ""
+    };
+    localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify(activeJob));
+    const review = await waitForReview(queued.poll_url, activeJob);
     renderReview(review);
     loadingState.classList.add("hidden"); resultsState.classList.remove("hidden");
   } catch (error) {
@@ -438,4 +497,46 @@ showAllButton.addEventListener("click", () => {
   applyFilter();
 });
 
+
+async function resumeActiveReviewJob() {
+  const raw = localStorage.getItem(ACTIVE_REVIEW_JOB_KEY);
+  if (!raw) return;
+
+  let activeJob = null;
+  try {
+    activeJob = JSON.parse(raw);
+  } catch (_) {
+    localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+    return;
+  }
+
+  if (!activeJob?.pollUrl) {
+    localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+    return;
+  }
+
+  emptyState.classList.add("hidden");
+  resultsState.classList.add("hidden");
+  loadingState.classList.remove("hidden");
+  progressBar.style.width = "4%";
+  progressText.textContent = "4%";
+  loadingMessage.textContent = activeJob.filename
+    ? `Reconnecting to the review of ${activeJob.filename}…`
+    : "Reconnecting to the active review…";
+
+  try {
+    const review = await waitForReview(activeJob.pollUrl, activeJob);
+    renderReview(review);
+    loadingState.classList.add("hidden");
+    resultsState.classList.remove("hidden");
+  } catch (error) {
+    loadingState.classList.add("hidden");
+    emptyState.classList.remove("hidden");
+    localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+    showFormError(error.message);
+  }
+}
+
 updateUploadWorkflow();
+
+resumeActiveReviewJob();
