@@ -42,3 +42,49 @@ REVIEW_STORAGE_DIR=/var/data/reviews
 ```
 
 For durable annotated documents and reports, attach a Render persistent disk mounted at `/var/data`. Without a persistent disk, lecturer accounts remain in PostgreSQL but generated files stored on the service filesystem may disappear after a redeploy.
+
+## Review file storage
+
+The application starts with temporary storage by default:
+
+```text
+REVIEW_STORAGE_DIR=/tmp/projectready-supervisor/reviews
+REVIEW_STORAGE_FALLBACK_DIR=/tmp/projectready-supervisor/reviews
+```
+
+This prevents startup failure when no persistent disk is attached. Files in
+`/tmp` are temporary and can be removed when Render restarts or redeploys the
+service.
+
+For durable review reports and annotated documents:
+
+1. Use a paid Render service.
+2. Open the service's **Disks** page.
+3. Add a persistent disk with mount path `/var/data`.
+4. Set:
+
+```text
+REVIEW_STORAGE_DIR=/var/data/reviews
+REVIEW_STORAGE_FALLBACK_DIR=/tmp/projectready-supervisor/reviews
+```
+
+The application tests the configured directory at startup. If the persistent
+path is unavailable, it logs a warning and uses the temporary fallback instead
+of stopping the service.
+
+## AI provider variables
+
+Configure both providers when all three review levels will be offered:
+
+```text
+DEEPSEEK_API_KEY=...
+DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
+DEEPSEEK_THINKING_ENABLED=true
+DEEPSEEK_REASONING_EFFORT=high
+
+OPENAI_API_KEY=...
+OPENAI_REVIEW_MODEL=gpt-5.4
+OPENAI_REVIEW_REASONING_EFFORT=high
+```
+
+Light and Standard Review require the DeepSeek key. Advanced Review requires the OpenAI key. Provider names are not displayed in the student or lecturer interface.

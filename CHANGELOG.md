@@ -1,3 +1,13 @@
+## v1.2
+
+- Routed Light Review through DeepSeek V4 Pro.
+- Routed Standard Review through DeepSeek V4 Pro.
+- Routed Advanced Review through GPT-5.4.
+- Removed GPT-5.5 and GPT-5.4 mini from active review routing.
+- Kept complete section and subsection coverage for all review levels.
+- Added DeepSeek JSON-schema reinforcement, structured-output retry, usage tracking, and provider smoke testing.
+- Limited the additional quality-control pass to Advanced Review.
+
 # Changelog
 
 ## 1.0.0

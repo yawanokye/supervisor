@@ -170,3 +170,24 @@ REVIEW_STORAGE_DIR=/var/data/reviews
 Use a managed PostgreSQL database for lecturer accounts and review metadata. SQLite is suitable only for local development. Attach a persistent Render disk and mount it at `/var/data` when completed review downloads must remain available after redeployment.
 
 The first administrator is created automatically when the database is empty. The administrator must change the temporary password at first login.
+
+## Storage behaviour on Render
+
+The default review-file directory is `/tmp/projectready-supervisor/reviews`.
+This keeps the service operational without a disk, but files are temporary.
+
+To retain generated reports across restarts and deploys, attach a Render
+persistent disk at `/var/data` and set
+`REVIEW_STORAGE_DIR=/var/data/reviews`. If that path is unavailable, the app
+falls back safely to `/tmp/projectready-supervisor/reviews`.
+
+## Review-model routing
+
+Provider names remain hidden from lecturers and students.
+
+- **Light Review:** DeepSeek V4 Pro, calibrated to Bachelor’s and non-research Master’s work.
+- **Standard Review:** DeepSeek V4 Pro, calibrated to Research Master’s and MPhil work.
+- **Advanced Review:** GPT-5.4, calibrated to Professional Doctorate and PhD work.
+- Advanced Review can run a second GPT-5.4 quality-control pass when `AI_ADVANCED_QUALITY_CONTROL=true`.
+
+Every review level still assesses every detected section and subsection. The difference is the academic benchmark, depth of criticism, and level of guidance.
