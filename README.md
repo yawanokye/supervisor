@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant 1.1
+# ProjectReady AI Supervisor Assistant 1.4
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
@@ -29,7 +29,7 @@ The review covers, where relevant:
 - Reviews every section and subsection.
 - Applies the standard expected of a Bachelor’s dissertation or non-research Master’s project.
 - Focuses on correct structure, basic coherence, clear concepts, credible evidence, alignment, essential methodology, defensible interpretation, common research flaws, source-verification concerns and scholarly presentation.
-- Uses GPT-5.4 mini.
+- Uses DeepSeek V4 Pro in thinking mode.
 - Provides practical, topic-aware guidance and short examples where these will help the student.
 
 ### Standard Review
@@ -37,14 +37,14 @@ The review covers, where relevant:
 - Reviews every section and subsection.
 - Applies the standard expected of a Research Master’s or MPhil dissertation.
 - Requires stronger critical synthesis, defensible theoretical grounding, explicit methodological justification, objective-method-result alignment and a clear research contribution.
-- Uses GPT-5.4 mini for the section review and GPT-5.4 for quality control.
+- Uses DeepSeek V4 Pro in thinking mode with a Research Master’s/MPhil review prompt.
 
 ### Advanced Review
 
 - Reviews every section and subsection.
 - Applies the standard expected of a Professional Doctorate or PhD thesis.
 - Examines originality, theoretical and methodological contribution, assumptions, robustness, alternative explanations, scholarly positioning and contribution to knowledge.
-- Uses GPT-5.4 for the main review and GPT-5.5 for the advanced audit.
+- Uses DeepSeek V4 Pro with maximum reasoning and an independent DeepSeek second-pass audit.
 
 Python extracts the document, validates paragraph evidence, checks review coverage, scores the review and produces the annotated Word file.
 
@@ -77,10 +77,10 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 ## Model routing
 
-- Light Review: GPT-5.4 mini
-- Standard Review: GPT-5.4 mini plus GPT-5.4 quality control
-- Advanced Review: GPT-5.4 plus GPT-5.5 advanced audit
-- DeepSeek is disabled and no DeepSeek key is required.
+- Light Review: DeepSeek V4 Pro with high reasoning, calibrated to Bachelor’s and non-research Master’s work.
+- Standard Review: DeepSeek V4 Pro with high reasoning, calibrated to Research Master’s and MPhil work.
+- Advanced Review: DeepSeek V4 Pro with maximum reasoning and an independent second-pass audit, calibrated to Professional Doctorate and PhD work.
+- OpenAI is not required for active review routing.
 - Review requests run as background jobs and the browser polls for progress.
 
 ## Run locally
@@ -183,14 +183,24 @@ falls back safely to `/tmp/projectready-supervisor/reviews`.
 
 ## Review-model routing
 
-Provider names remain hidden from lecturers and students.
+Provider names remain hidden from supervisors and students.
 
-- **Light Review:** DeepSeek V4 Pro, calibrated to Bachelor’s and non-research Master’s work.
-- **Standard Review:** DeepSeek V4 Pro, calibrated to Research Master’s and MPhil work.
-- **Advanced Review:** GPT-5.4, calibrated to Professional Doctorate and PhD work.
-- Advanced Review can run a second GPT-5.4 quality-control pass when `AI_ADVANCED_QUALITY_CONTROL=true`.
+- **Light Review:** DeepSeek V4 Pro in thinking mode, calibrated to Bachelor’s and non-research Master’s work.
+- **Standard Review:** DeepSeek V4 Pro in thinking mode, calibrated to Research Master’s and MPhil work.
+- **Advanced Review:** DeepSeek V4 Pro with maximum reasoning and an independent DeepSeek second-pass audit, calibrated to Professional Doctorate and PhD work.
 
-Every review level still assesses every detected section and subsection. The difference is the academic benchmark, depth of criticism, and level of guidance.
+Every level reviews every detected section and subsection. The difference is the academic benchmark, depth of scrutiny, reasoning effort and level of guidance.
+
+The internal academic guide is adapted from the supplied thesis self-evaluation framework. It is used only to support coverage and is never shown as checklist codes in the report.
+
+### Accuracy safeguards
+
+- A study-context lock is built from the uploaded document before review.
+- Examples cannot introduce a country, region, organisation, population or sector absent from the source.
+- Unknown contextual details use neutral placeholders.
+- New author-year citations, statistics and percentages are rejected unless they appear in the uploaded source.
+- Repetitive language and citation comments are consolidated.
+- Missing content is distinguished from weakly developed content.
 
 ## Institutional access interface
 

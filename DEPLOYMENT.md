@@ -2,7 +2,7 @@
 
 ## Environment variables
 
-Set `OPENAI_API_KEY`. The default models are `gpt-5.4-mini`, `gpt-5.4`, and `gpt-5.5`. GPT-5.5 is used only when Advanced Review is selected.
+Set `DEEPSEEK_API_KEY`. Light, Standard and Advanced Review use DeepSeek, with maximum reasoning and an independent second pass for Advanced Review.
 
 ## Commands
 
@@ -12,18 +12,22 @@ Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 Health check: `/health`
 
-After replacing an earlier deployment, use **Clear build cache & deploy**. Remove all DeepSeek environment variables because they are no longer used.
+After replacing an earlier deployment, use **Clear build cache & deploy**. Remove obsolete OpenAI-only routing variables if they are no longer needed.
 
 
-## Light Review settings
+## Review-depth settings
 
 ```env
 AI_LIGHT_SECTION_BATCH_SIZE=4
-AI_LIGHT_MAX_FINDINGS=12
-AI_LIGHT_MAX_OUTPUT_TOKENS=4200
+AI_SECTION_BATCH_SIZE=3
+AI_ADVANCED_SECTION_BATCH_SIZE=2
+AI_LIGHT_MAX_OUTPUT_TOKENS=6000
+AI_STANDARD_MAX_OUTPUT_TOKENS=7500
+AI_ADVANCED_MAX_OUTPUT_TOKENS=10000
+AI_ADVANCED_SECOND_PASS=true
 ```
 
-Light Review uses GPT-5.4 mini only and does not run the independent GPT-5.4 or GPT-5.5 verification stage.
+All three review levels use DeepSeek. Light and Standard Review use one primary pass at their respective academic benchmarks. Advanced Review uses maximum reasoning and an independent second-pass audit.
 
 ## Institutional portal deployment
 
@@ -74,20 +78,22 @@ of stopping the service.
 
 ## AI provider variables
 
-Configure both providers when all three review levels will be offered:
+One DeepSeek API key enables all three review levels:
 
 ```text
 DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
+DEEPSEEK_ADVANCED_MODEL=deepseek-v4-pro
 DEEPSEEK_THINKING_ENABLED=true
 DEEPSEEK_REASONING_EFFORT=high
-
-OPENAI_API_KEY=...
-OPENAI_REVIEW_MODEL=gpt-5.4
-OPENAI_REVIEW_REASONING_EFFORT=high
+DEEPSEEK_ADVANCED_REASONING_EFFORT=max
+AI_ADVANCED_SECOND_PASS=true
+AI_ADVANCED_SECTION_BATCH_SIZE=2
+AI_VERIFICATION_BATCH_SIZE=2
 ```
 
-Light and Standard Review require the DeepSeek key. Advanced Review requires the OpenAI key. Provider names are not displayed in the student or lecturer interface.
+Advanced Review performs a separate DeepSeek quality-control pass. OpenAI is no longer required for active review routing. Provider names are not displayed in the supervisor or student interface.
 
 ## Long-running review jobs
 

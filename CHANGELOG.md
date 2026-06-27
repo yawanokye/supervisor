@@ -1,3 +1,16 @@
+## v1.4.0
+
+- Routed Advanced Review through DeepSeek V4 Pro with maximum reasoning.
+- Added an independent DeepSeek second-pass audit for doctoral reviews.
+- Removed OpenAI as a requirement for active review routing.
+- Added an internal academic review guide adapted from the supplied thesis self-evaluation framework without exposing checklist codes.
+- Added a document-derived context lock to prevent foreign countries, settings, organisations and populations from leaking into examples.
+- Added safeguards against invented citations, reports, statistics and percentages.
+- Distinguished missing sections from weakly developed sections and made unconfirmed methodological advice conditional.
+- Consolidated repetitive academic-writing, terminology and source-verification findings.
+- Reworked the supervisor report to show recognised study context, concise priorities, a dedicated evidence-verification section and less repetitive section reviews.
+- Shortened annotated-document comments while preserving actionable guidance.
+
 ## v1.3.2
 
 - Replaced heading-based AI section keys with short stable identifiers.
