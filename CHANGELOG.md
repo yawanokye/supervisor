@@ -1,3 +1,12 @@
+## v1.3
+
+- Replaced separate-looking login screens with one unified institutional access page.
+- Added top-level Supervisor and Admin tabs similar to the Kanokwere role switcher.
+- Preserved separate secure login routes and role permissions.
+- Redesigned the login page with a responsive institutional hero and compact sign-in card.
+- Changed public-facing “Lecturer” labels to “Supervisor” while retaining the internal database role for compatibility.
+- Improved mobile and tablet responsiveness.
+
 ## v1.2
 
 - Routed Light Review through DeepSeek V4 Pro.

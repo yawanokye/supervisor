@@ -191,3 +191,12 @@ Provider names remain hidden from lecturers and students.
 - Advanced Review can run a second GPT-5.4 quality-control pass when `AI_ADVANCED_QUALITY_CONTROL=true`.
 
 Every review level still assesses every detected section and subsection. The difference is the academic benchmark, depth of criticism, and level of guidance.
+
+## Institutional access interface
+
+The shared access interface has two tabs:
+
+- `/login` opens the Supervisor tab.
+- `/admin/login` opens the Admin tab.
+
+The tabs change the active portal and form action without combining the permission systems. Supervisor and administrator authentication remain separately enforced by the backend.
