@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Lecturer Portal | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
+  <title>Supervisor Portal | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header class="topbar portal-topbar">
-    <a class="brand" href="/portal"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Lecturer Portal</small></span></a>
+    <a class="brand" href="/portal"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Supervisor Portal</small></span></a>
     <nav class="portal-nav">
       <a class="nav-link active" href="/portal">Dashboard</a>
       <a class="nav-link" href="/review">New review</a>
@@ -18,7 +18,7 @@
   <main class="portal-shell">
     {% if flash %}<div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>{% endif %}
     <section class="portal-welcome">
-      <div><p class="eyebrow">Lecturer workspace</p><h1>Welcome, {{ user.full_name }}</h1><p>{{ user.department or 'Academic supervision portal' }}</p></div>
+      <div><p class="eyebrow">Supervisor workspace</p><h1>Welcome, {{ user.full_name }}</h1><p>{{ user.department or 'Academic supervision portal' }}</p></div>
       <a class="primary-link-button" href="/review">Start a new review</a>
     </section>
 

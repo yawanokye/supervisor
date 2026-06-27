@@ -3,51 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ 'Administrator Login' if portal_type == 'admin' else 'Lecturer Login' }} | AI Professor</title>
+  <title>{{ 'Administrator Access' if portal_type == 'admin' else 'Supervisor Access' }} | AI Professor</title>
+  <meta name="description" content="Secure institutional access for academic supervisors and administrators.">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body class="auth-body">
-  <main class="auth-shell">
-    <section class="auth-brand-panel">
-      <a class="brand brand-light" href="/">
-        <span class="brand-mark">PR</span>
-        <span><strong>AI Professor</strong><small>Extraordinary Supervisor</small></span>
+<body class="access-body">
+  <header class="access-header">
+    <a class="access-brand" href="/login" aria-label="AI Professor home">
+      <span class="access-brand-mark">PR</span>
+      <span class="access-brand-copy">
+        <strong>AI Professor</strong>
+        <small>Extraordinary Supervisor</small>
+      </span>
+    </a>
+
+    <nav class="access-role-tabs" aria-label="Choose portal">
+      <a href="/login"
+         class="access-role-tab {{ 'active' if portal_type != 'admin' else '' }}"
+         {% if portal_type != 'admin' %}aria-current="page"{% endif %}>
+        Supervisor
       </a>
-      <div class="auth-brand-copy">
-        <p class="eyebrow light-eyebrow">Institutional supervision portal</p>
-        <h1>Structured academic review for every stage of research.</h1>
-        <p>Lecturers can review chapters, proposals, complete theses and revised submissions from one secure workspace.</p>
-      </div>
-      <div class="auth-feature-list">
-        <span>Complete section-by-section review</span>
-        <span>Cross-chapter alignment</span>
-        <span>Annotated Word output</span>
-        <span>Revision follow-up</span>
-      </div>
-    </section>
+      <a href="/admin/login"
+         class="access-role-tab {{ 'active' if portal_type == 'admin' else '' }}"
+         {% if portal_type == 'admin' %}aria-current="page"{% endif %}>
+        Admin
+      </a>
+    </nav>
+  </header>
 
-    <section class="auth-form-panel">
-      <div class="auth-form-card">
-        <div class="auth-heading">
-          <p class="eyebrow">{{ 'Administration' if portal_type == 'admin' else 'Lecturer portal' }}</p>
-          <h2>{{ 'Administrator sign in' if portal_type == 'admin' else 'Welcome back' }}</h2>
-          <p>{{ 'Manage lecturer accounts and institutional review activity.' if portal_type == 'admin' else 'Sign in with the account created by your administrator.' }}</p>
+  <main class="access-main">
+    <section class="access-hero">
+      <div class="access-intro">
+        <p class="access-kicker">Institutional academic supervision</p>
+        <h1>Expert review support for every stage of research.</h1>
+        <p class="access-lead">
+          Review proposals, thesis chapters, complete dissertations and revised submissions
+          from one secure institutional workspace.
+        </p>
+
+        <div class="access-capabilities" aria-label="Platform capabilities">
+          <article>
+            <strong>Complete</strong>
+            <span>section and subsection review</span>
+          </article>
+          <article>
+            <strong>Aligned</strong>
+            <span>cross-chapter academic checks</span>
+          </article>
+          <article>
+            <strong>Actionable</strong>
+            <span>annotated Word guidance</span>
+          </article>
         </div>
 
-        {% if flash %}<div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>{% endif %}
-
-        <form method="post" action="{{ '/admin/login' if portal_type == 'admin' else '/login' }}" class="auth-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required autofocus></label>
-          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
-          <button class="primary-button" type="submit">Sign in</button>
-        </form>
-
-        <div class="auth-links">
-          {% if portal_type != 'admin' %}<a href="/forgot-password">Reset password with recovery PIN</a>{% endif %}
-          <a href="{{ '/login' if portal_type == 'admin' else '/admin/login' }}">{{ 'Lecturer login' if portal_type == 'admin' else 'Administrator login' }}</a>
+        <div class="access-assurance">
+          <h2>Purpose-built for academic supervision</h2>
+          <ul>
+            <li>Review depth calibrated to the student’s academic level.</li>
+            <li>Context-aware comments with practical guidance and examples.</li>
+            <li>Revision follow-up against earlier supervisor comments.</li>
+          </ul>
         </div>
       </div>
+
+      <aside class="access-login-wrap">
+        <section class="access-login-card">
+          <div class="access-login-heading">
+            <span class="access-login-icon">{{ 'A' if portal_type == 'admin' else 'S' }}</span>
+            <div>
+              <p class="access-card-kicker">
+                {{ 'Administration portal' if portal_type == 'admin' else 'Supervisor portal' }}
+              </p>
+              <h2>{{ 'Administrator sign in' if portal_type == 'admin' else 'Welcome back' }}</h2>
+            </div>
+          </div>
+
+          <p class="access-card-copy">
+            {% if portal_type == 'admin' %}
+              Manage supervisor accounts, access controls and institutional review activity.
+            {% else %}
+              Sign in with the account created by your institutional administrator.
+            {% endif %}
+          </p>
+
+          {% if flash %}
+            <div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>
+          {% endif %}
+
+          <form method="post"
+                action="{{ '/admin/login' if portal_type == 'admin' else '/login' }}"
+                class="access-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <label class="access-field">
+              <span>Username</span>
+              <input type="text"
+                     name="username"
+                     autocomplete="username"
+                     placeholder="{{ 'Administrator username' if portal_type == 'admin' else 'Supervisor username' }}"
+                     required
+                     autofocus>
+            </label>
+
+            <label class="access-field">
+              <span>Password</span>
+              <input type="password"
+                     name="password"
+                     autocomplete="current-password"
+                     placeholder="Enter your password"
+                     required>
+            </label>
+
+            <button class="access-submit" type="submit">
+              Sign in to {{ 'administration' if portal_type == 'admin' else 'supervision portal' }}
+            </button>
+          </form>
+
+          <div class="access-help">
+            {% if portal_type != 'admin' %}
+              <a href="/forgot-password">Reset password with recovery PIN</a>
+            {% else %}
+              <span>Administrator credentials are configured securely by the institution.</span>
+            {% endif %}
+          </div>
+        </section>
+
+        <p class="access-security-note">
+          Secure institutional access. Accounts are role-controlled and review records remain
+          restricted to authorised users.
+        </p>
+      </aside>
     </section>
   </main>
 </body>
