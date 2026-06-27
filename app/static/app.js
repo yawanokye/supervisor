@@ -398,8 +398,16 @@ async function waitForReview(pollUrl, options = {}) {
       });
 
       if ([401, 403, 404].includes(response.status)) {
-        const payload = await readJsonSafely(response);
-        throw new Error(payload.detail || "The review job is no longer available.");
+        let message = "The review job is no longer available.";
+        try {
+          const payload = await readJsonSafely(response);
+          message = payload.detail || payload.error || message;
+        } catch (_) {
+          // Keep the clear terminal message above.
+        }
+        const terminalError = new Error(message);
+        terminalError.terminal = true;
+        throw terminalError;
       }
 
       const job = await readJsonSafely(response);
@@ -421,7 +429,11 @@ async function waitForReview(pollUrl, options = {}) {
       }
       if (job.status === "failed") {
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
-        throw new Error(job.error || "The review could not be completed.");
+        const terminalError = new Error(
+          job.error || job.message || "The review could not be completed."
+        );
+        terminalError.terminal = true;
+        throw terminalError;
       }
 
       if (Date.now() - started > 30 * 60 * 1000) {
@@ -429,6 +441,10 @@ async function waitForReview(pollUrl, options = {}) {
           "The review is still processing. You may leave this page and return later. The portal will reconnect to the active review automatically.";
       }
     } catch (error) {
+      if (error && error.terminal) {
+        throw error;
+      }
+
       temporaryFailures += 1;
       pollDelay = Math.min(15000, 2500 + temporaryFailures * 1500);
 
