@@ -48,6 +48,7 @@ class HybridAIConfig:
     deepseek_advanced_model: str
     deepseek_reasoning_effort: str
     deepseek_advanced_reasoning_effort: str
+    deepseek_advanced_primary_reasoning_effort: str
     deepseek_thinking_enabled: bool
 
     openai_api_key: str
@@ -69,6 +70,11 @@ class HybridAIConfig:
     light_section_batch_size: int
     advanced_section_batch_size: int
     verification_batch_size: int
+    recovery_batch_size: int
+    max_recovery_batches: int
+    max_short_section_fallbacks: int
+    advanced_audit_max_findings: int
+    advanced_audit_max_output_tokens: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
@@ -110,8 +116,8 @@ class HybridAIConfig:
         review_model = os.getenv("DEEPSEEK_REVIEW_MODEL", "deepseek-v4-pro").strip()
         advanced_model = os.getenv("DEEPSEEK_ADVANCED_MODEL", review_model).strip()
         openai_model = os.getenv("OPENAI_REVIEW_MODEL", "gpt-5.4").strip()
-        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 7500)
-        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 10000)
+        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 5200)
+        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 6800)
         openai_effort = os.getenv("OPENAI_REVIEW_REASONING_EFFORT", "high").strip().lower()
 
         return cls(
@@ -122,6 +128,9 @@ class HybridAIConfig:
             deepseek_advanced_model=advanced_model,
             deepseek_reasoning_effort=os.getenv("DEEPSEEK_REASONING_EFFORT", "high").strip().lower(),
             deepseek_advanced_reasoning_effort=os.getenv("DEEPSEEK_ADVANCED_REASONING_EFFORT", "max").strip().lower(),
+            deepseek_advanced_primary_reasoning_effort=os.getenv(
+                "DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT", "high"
+            ).strip().lower(),
             deepseek_thinking_enabled=_env_bool("DEEPSEEK_THINKING_ENABLED", True),
 
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
@@ -133,18 +142,23 @@ class HybridAIConfig:
             max_context_chars_per_rule=_env_int("AI_MAX_CONTEXT_CHARS_PER_RULE", 9000),
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
             max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 8000),
-            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 6000),
+            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 3800),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 180),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 3),
-            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 3),
-            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 4),
-            advanced_section_batch_size=_env_int("AI_ADVANCED_SECTION_BATCH_SIZE", 2),
-            verification_batch_size=_env_int("AI_VERIFICATION_BATCH_SIZE", 2),
+            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
+            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 6),
+            advanced_section_batch_size=_env_int("AI_ADVANCED_SECTION_BATCH_SIZE", 4),
+            verification_batch_size=_env_int("AI_VERIFICATION_BATCH_SIZE", 24),
+            recovery_batch_size=_env_int("AI_RECOVERY_BATCH_SIZE", 6),
+            max_recovery_batches=_env_int("AI_MAX_RECOVERY_BATCHES", 2),
+            max_short_section_fallbacks=_env_int("AI_MAX_SHORT_SECTION_FALLBACKS", 2, 0),
+            advanced_audit_max_findings=_env_int("AI_ADVANCED_AUDIT_MAX_FINDINGS", 24),
+            advanced_audit_max_output_tokens=_env_int("AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 4800),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
-            structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 1, 0),
+            structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 0, 0),
             advanced_quality_control=_env_bool("AI_ADVANCED_SECOND_PASS", True),
 
             deepseek_pro_input_price=_env_float("PRICE_DEEPSEEK_PRO_INPUT", 0.435),

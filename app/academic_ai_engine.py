@@ -54,7 +54,7 @@ REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
             "Emphasise correct structure, basic coherence, clear concepts, credible evidence, alignment, essential methodology, "
             "defensible interpretation, research-integrity checks and readable scholarly presentation."
         ),
-        "normal_issue_limit_per_section": 3,
+        "normal_issue_limit_per_section": 2,
     },
     "standard": {
         "label": "Standard Review",
@@ -64,7 +64,7 @@ REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
             "Require critical synthesis, defensible theoretical grounding, explicit methodological justification, "
             "objective-method-result alignment and a clear contribution appropriate to MPhil-level research."
         ),
-        "normal_issue_limit_per_section": 5,
+        "normal_issue_limit_per_section": 4,
     },
     "advanced": {
         "label": "Advanced Review",
@@ -74,7 +74,7 @@ REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
             "Apply rigorous scrutiny to originality, theoretical and methodological contribution, assumptions, robustness, "
             "alternative explanations, scholarly positioning and contribution to knowledge."
         ),
-        "normal_issue_limit_per_section": 7,
+        "normal_issue_limit_per_section": 5,
     },
 }
 
@@ -311,6 +311,110 @@ def _verification_prompt(
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "For Advanced Review, apply doctoral expectations to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution to knowledge."
+        ),
+    }
+    return json.dumps(packet, ensure_ascii=False)
+
+
+def _compact_advanced_audit_prompt(
+    review: Dict[str, Any],
+    section_reviews: Sequence[Dict[str, Any]],
+    context_lock: Dict[str, Any],
+    paragraph_index: Dict[str, Dict[str, Any]],
+    audit_paragraphs: Sequence[Dict[str, Any]],
+    max_findings: int,
+    max_source_chars: int,
+) -> str:
+    """Build one compact doctoral audit instead of re-reviewing every batch.
+
+    The audit receives all section assessments, only the highest-priority
+    findings, and a focused evidence packet. This keeps doctoral quality
+    control while avoiding another full set of section-by-section API calls.
+    """
+    summary = review.get("summary") or {}
+
+    all_issues = [
+        issue
+        for section_review in section_reviews
+        for issue in section_review.get("issues") or []
+    ]
+    all_issues.sort(
+        key=lambda item: (
+            SEVERITY_ORDER.get(item.get("severity", "minor"), 9),
+            0 if item.get("source_verification_required") else 1,
+            float(item.get("confidence") or 0.0),
+        )
+    )
+    selected_issues = all_issues[:max(1, max_findings)]
+    selected_ids = {
+        pid
+        for issue in selected_issues
+        for pid in issue.get("evidence_paragraph_ids") or []
+        if pid in paragraph_index
+    }
+
+    source_rows: List[Dict[str, Any]] = []
+    seen_ids = set()
+    total_chars = 0
+
+    def add_paragraph(paragraph: Dict[str, Any]) -> None:
+        nonlocal total_chars
+        pid = _pid(paragraph)
+        if pid in seen_ids:
+            return
+        payload = _payload(paragraph)
+        size = len(payload.get("text", "")) + 120
+        if source_rows and total_chars + size > max_source_chars:
+            return
+        source_rows.append(payload)
+        seen_ids.add(pid)
+        total_chars += size
+
+    for pid in selected_ids:
+        paragraph = paragraph_index.get(pid)
+        if paragraph:
+            add_paragraph(paragraph)
+
+    for paragraph in audit_paragraphs:
+        add_paragraph(paragraph)
+
+    selected_findings_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for issue in selected_issues:
+        selected_findings_by_section[normalised(issue.get("section", ""))].append(issue)
+
+    proposals = []
+    for section_review in section_reviews:
+        proposals.append({
+            "section_key": section_review["section_key"],
+            "section_name": section_review["heading"],
+            "section_score": section_review["section_score"],
+            "section_assessment": section_review["section_assessment"],
+            "priority_issues": selected_findings_by_section.get(
+                normalised(section_review["heading"]), []
+            ),
+        })
+
+    packet = {
+        "review_context": {
+            "declared_academic_level": summary.get("academic_level"),
+            "research_approach": summary.get("research_approach"),
+            "review_depth": "advanced",
+            "review_benchmark": REVIEW_LEVEL_PROFILES["advanced"]["benchmark"],
+        },
+        "study_context_lock": {
+            key: value for key, value in context_lock.items()
+            if key != "source_text_normalised"
+        },
+        "section_assessments": proposals,
+        "focused_source_paragraphs": source_rows,
+        "instruction": (
+            "Conduct one compact doctoral quality audit. Verify the supplied "
+            "priority findings, remove unsupported or repetitive findings, "
+            "correct severity and evidence, and add only genuinely critical or "
+            "major issues missed by the primary review. Do not re-review every "
+            "minor wording point. Check originality, theory, methodological "
+            "defensibility, coherence, robustness, alternative explanations and "
+            "contribution to knowledge. Use only the confirmed study context."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -647,7 +751,7 @@ async def enrich_review_with_academic_ai(
     else:
         provider = deepseek
         primary_model = config.deepseek_advanced_model
-        primary_effort = config.deepseek_advanced_reasoning_effort
+        primary_effort = config.deepseek_advanced_primary_reasoning_effort
         primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.advanced_section_batch_size
@@ -661,16 +765,55 @@ async def enrich_review_with_academic_ai(
 
     await _notify(progress_callback, 35, "Reviewing chapter sections")
 
-    async def primary_call(batch: Sequence[Dict[str, Any]], model: str, effort: str, purpose: str, tokens: int) -> ProviderResult:
-        return await provider.complete_json(
-            model=model, system_prompt=primary_system_prompt,
-            user_prompt=_batch_prompt(review, batch, supervisor_comments, context_lock, depth),
-            schema_model=AcademicReviewBatch, purpose=purpose,
-            reasoning_effort=effort, max_output_tokens=tokens,
+    completed_primary_batches = 0
+    progress_lock = asyncio.Lock()
+
+    async def primary_call(
+        batch: Sequence[Dict[str, Any]],
+        model: str,
+        effort: str,
+        purpose: str,
+        tokens: int,
+        *,
+        track_primary_progress: bool = False,
+    ) -> ProviderResult:
+        nonlocal completed_primary_batches
+        result = await provider.complete_json(
+            model=model,
+            system_prompt=primary_system_prompt,
+            user_prompt=_batch_prompt(
+                review, batch, supervisor_comments, context_lock, depth
+            ),
+            schema_model=AcademicReviewBatch,
+            purpose=purpose,
+            reasoning_effort=effort,
+            max_output_tokens=tokens,
         )
+        if track_primary_progress:
+            async with progress_lock:
+                completed_primary_batches += 1
+                progress = 35 + int(
+                    18 * completed_primary_batches / max(1, len(section_batches))
+                )
+                await _notify(
+                    progress_callback,
+                    min(progress, 53),
+                    f"Reviewed section group {completed_primary_batches} of {len(section_batches)}",
+                )
+        return result
 
     primary_results = await _run_limited(
-        [primary_call(batch, primary_model, primary_effort, "batched_academic_review", primary_tokens) for batch in section_batches],
+        [
+            primary_call(
+                batch,
+                primary_model,
+                primary_effort,
+                "batched_academic_review",
+                primary_tokens,
+                track_primary_progress=True,
+            )
+            for batch in section_batches
+        ],
         config.max_parallel_calls,
     )
     await _notify(
@@ -782,7 +925,55 @@ async def enrich_review_with_academic_ai(
         else:
             consume_batch(batch, result)
 
-    # Retry every missing section individually. This includes sections omitted from an otherwise valid batch response.
+    # Retry omitted sections in grouped recovery batches. This prevents one
+    # additional API call for every omitted subsection.
+    reviewed_keys = {row["section_key"] for row in section_reviews}
+    retry_sections = [
+        section for section in sections
+        if section["section_key"] not in reviewed_keys
+    ]
+    if retry_sections:
+        if depth in {"light", "standard"}:
+            recovery_model = config.deepseek_review_model
+            recovery_effort = config.deepseek_reasoning_effort
+            recovery_tokens = (
+                config.light_max_output_tokens
+                if depth == "light"
+                else config.standard_max_output_tokens
+            )
+        else:
+            recovery_model = config.deepseek_advanced_model
+            recovery_effort = config.deepseek_advanced_primary_reasoning_effort
+            recovery_tokens = config.advanced_max_output_tokens
+
+        recovery_batches = _batch(
+            retry_sections,
+            config.recovery_batch_size,
+        )[: config.max_recovery_batches]
+
+        retry_results = await _run_limited(
+            [
+                primary_call(
+                    batch,
+                    recovery_model,
+                    recovery_effort,
+                    "section_review_recovery",
+                    recovery_tokens,
+                )
+                for batch in recovery_batches
+            ],
+            min(config.max_parallel_calls, len(recovery_batches) or 1),
+        )
+        for batch, result in zip(recovery_batches, retry_results):
+            if not isinstance(result, Exception):
+                consume_batch(batch, result)
+
+        await _notify(
+            progress_callback,
+            62,
+            "Completing coverage checks",
+        )
+
     reviewed_keys = {row["section_key"] for row in section_reviews}
     retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
     if retry_sections:
@@ -812,16 +1003,59 @@ async def enrich_review_with_academic_ai(
         )
 
     reviewed_keys = {row["section_key"] for row in section_reviews}
-    still_missing = [section for section in sections if section["section_key"] not in reviewed_keys]
+    still_missing = [
+        section for section in sections
+        if section["section_key"] not in reviewed_keys
+    ]
+    short_missing = [
+        section for section in still_missing
+        if len(section.get("paragraphs") or []) <= 2
+        and sum(
+            len(clean_text(paragraph.get("text", "")))
+            for paragraph in section.get("paragraphs") or []
+        ) <= 1200
+    ]
+
+    if (
+        still_missing
+        and len(still_missing) <= config.max_short_section_fallbacks
+        and len(short_missing) == len(still_missing)
+    ):
+        verification_failed = True
+        for section in still_missing:
+            section_reviews.append({
+                "section_key": section["section_key"],
+                "heading": clean_text(
+                    section.get("heading", "Untitled section")
+                ),
+                "part": section.get("part", 1),
+                "paragraph_count": len(section.get("paragraphs") or []),
+                "section_score": 50.0,
+                "section_assessment": (
+                    "This short section was included in the chapter-wide context, "
+                    "but the provider did not return a separate section assessment. "
+                    "Manual confirmation is recommended."
+                ),
+                "coverage_warning": (
+                    "Separate model output was unavailable for this short section."
+                ),
+                "strengths": [],
+                "issues": [],
+                "source_section": section,
+            })
+        still_missing = []
+
     if still_missing:
-        names = ", ".join(clean_text(section.get("heading", "Untitled section")) for section in still_missing[:5])
+        names = ", ".join(
+            clean_text(section.get("heading", "Untitled section"))
+            for section in still_missing[:5]
+        )
         raise AIProviderError(
-            "The expert review could not complete every section and subsection "
-            "after an automatic individual retry. "
-            f"Unreviewed section(s): {names}. Please retry the review."
+            "The expert review could not complete the following substantive "
+            f"section(s) after grouped recovery: {names}. Please retry the review."
         )
 
-    verification_failed = False
+    verification_failed = locals().get("verification_failed", False)
     if depth in {"light", "standard"}:
         await _notify(
             progress_callback,
@@ -832,54 +1066,39 @@ async def enrich_review_with_academic_ai(
         await _notify(
             progress_callback,
             68,
-            "Conducting the advanced quality-control review",
+            "Conducting one compact doctoral quality audit",
         )
 
-        verification_batches = _batch(
-            section_reviews,
-            config.verification_batch_size,
+        all_primary = [
+            issue
+            for section_review in section_reviews
+            for issue in section_review["issues"]
+        ]
+
+        audit_prompt = _compact_advanced_audit_prompt(
+            review=review,
+            section_reviews=section_reviews,
+            context_lock=context_lock,
+            paragraph_index=paragraph_index,
+            audit_paragraphs=whole_audit,
+            max_findings=config.advanced_audit_max_findings,
+            max_source_chars=max(config.max_map_input_chars, 30000),
         )
 
-        async def verify_call(
-            batch: Sequence[Dict[str, Any]],
-        ) -> ProviderResult:
-            if deepseek is None:
-                raise AIProviderError(
-                    "The advanced review service is not configured."
-                )
-            return await deepseek.complete_json(
+        try:
+            result = await deepseek.complete_json(
                 model=config.deepseek_advanced_model,
                 system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                user_prompt=_verification_prompt(review, batch, depth, context_lock),
+                user_prompt=audit_prompt,
                 schema_model=AcademicVerificationBatch,
-                purpose="advanced_deepseek_second_pass",
+                purpose="advanced_compact_doctoral_audit",
                 reasoning_effort=config.deepseek_advanced_reasoning_effort,
-                max_output_tokens=config.advanced_max_output_tokens,
+                max_output_tokens=config.advanced_audit_max_output_tokens,
             )
-
-        verify_results = await _run_limited(
-            [verify_call(batch) for batch in verification_batches],
-            config.max_parallel_calls,
-        )
-        for batch, result in zip(verification_batches, verify_results):
-            if isinstance(result, Exception):
-                verification_failed = True
-                for section_review in batch:
-                    section_review["coverage_warning"] = (
-                        section_review.get("coverage_warning", "")
-                        + " Advanced quality control was unavailable for this section."
-                    ).strip()
-                continue
-
             usage_records.append(_usage_cost(result.usage, config))
-            all_primary = [
-                issue
-                for section_review in batch
-                for issue in section_review["issues"]
-            ]
             merged = _apply_verification(all_primary, result.data)
-            merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
+            merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for item in merged:
                 valid = _valid_issue(item, paragraph_index, context_lock)
                 if valid:
@@ -887,17 +1106,29 @@ async def enrich_review_with_academic_ai(
                         normalised(valid.get("section", ""))
                     ].append(valid)
 
-            for section_review in batch:
+            for section_review in section_reviews:
                 key = normalised(section_review["heading"])
-                section_review["issues"] = merged_by_section.pop(key, [])
+                section_review["issues"] = merged_by_section.pop(
+                    key,
+                    section_review["issues"],
+                )
 
             leftovers = [
                 item
                 for values in merged_by_section.values()
                 for item in values
             ]
-            if leftovers and batch:
-                batch[0]["issues"].extend(leftovers)
+            if leftovers and section_reviews:
+                section_reviews[0]["issues"].extend(leftovers)
+
+        except Exception:
+            verification_failed = True
+            for section_review in section_reviews:
+                section_review["coverage_warning"] = (
+                    section_review.get("coverage_warning", "")
+                    + " The compact doctoral audit was unavailable; the primary "
+                      "advanced review remains available."
+                ).strip()
 
     all_issues = _consolidate_repetitive_issues(
         _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
@@ -1003,6 +1234,9 @@ async def enrich_review_with_academic_ai(
         "academic_review_complete": not incomplete,
         "active_provider": "deepseek",
         "advanced_second_pass": bool(depth == "advanced" and config.advanced_quality_control),
+        "advanced_audit_mode": "single_compact_audit" if depth == "advanced" else "not_applicable",
+        "api_call_count": len(usage_records),
+        "primary_batch_count": len(section_batches),
         "context_guard_enabled": True,
     }
     await _notify(progress_callback, 86, "Preparing the annotated review")

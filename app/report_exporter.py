@@ -346,211 +346,580 @@ def _add_source_verification_summary(doc: Document, rows: Sequence[Dict[str, Any
             break
     return True
 
+
+CHAPTER_NAMES = {
+    1: "Chapter One",
+    2: "Chapter Two",
+    3: "Chapter Three",
+    4: "Chapter Four",
+    5: "Chapter Five",
+    6: "Chapter Six",
+}
+
+
+def _set_repeat_table_header(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    tbl_header = OxmlElement("w:tblHeader")
+    tbl_header.set(qn("w:val"), "true")
+    tr_pr.append(tbl_header)
+
+
+def _prevent_row_split(row) -> None:
+    tr_pr = row._tr.get_or_add_trPr()
+    cant_split = OxmlElement("w:cantSplit")
+    tr_pr.append(cant_split)
+
+
+def _set_cell_width(cell, width: float) -> None:
+    cell.width = Inches(width)
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_w = tc_pr.find(qn("w:tcW"))
+    if tc_w is None:
+        tc_w = OxmlElement("w:tcW")
+        tc_pr.append(tc_w)
+    tc_w.set(qn("w:w"), str(int(width * 1440)))
+    tc_w.set(qn("w:type"), "dxa")
+
+
+def _compact_sentence(value: Any, limit: int = 260) -> str:
+    text = _clean(value)
+    text = re.sub(r"\bExample\s*:\s*", "", text, flags=re.I)
+    text = re.sub(r"\bIllustrative guidance\s*:\s*", "", text, flags=re.I)
+    return _trim(text, limit)
+
+
+def _compact_overall_assessment(review: Dict[str, Any]) -> str:
+    summary = review.get("summary") or {}
+    raw = _clean(
+        review.get("overall_academic_assessment")
+        or summary.get("readiness_meaning")
+        or ""
+    )
+    if not raw:
+        return "The document has been reviewed at the selected academic benchmark."
+    sentences = re.split(r"(?<=[.!?])\s+", raw)
+    selected: List[str] = []
+    total = 0
+    for sentence in sentences:
+        sentence = _clean(sentence)
+        if not sentence:
+            continue
+        if total + len(sentence) > 650 and selected:
+            break
+        selected.append(sentence)
+        total += len(sentence)
+        if len(selected) >= 4:
+            break
+    return " ".join(selected)
+
+
+def _section_strengths(
+    section_name: str,
+    strengths: Sequence[Dict[str, Any]],
+    assessments: Sequence[str],
+) -> List[str]:
+    target = _normalised(section_name)
+    matched = []
+    for strength in strengths:
+        source = _normalised(strength.get("section", ""))
+        if source == target or (source and target and (source in target or target in source)):
+            observation = _compact_sentence(strength.get("observation", ""), 210)
+            if observation:
+                matched.append(observation)
+
+    if not matched:
+        for assessment in assessments:
+            text = _clean(assessment)
+            positive_parts = [
+                part.strip()
+                for part in re.split(r"(?<=[.!?])\s+", text)
+                if any(
+                    phrase in part.lower()
+                    for phrase in (
+                        "clearly", "appropriate", "relevant", "coherent",
+                        "well", "adequate", "strong", "addresses",
+                        "provides", "establishes", "aligns",
+                    )
+                )
+                and not any(
+                    phrase in part.lower()
+                    for phrase in (
+                        "not clearly", "does not", "lacks", "weak",
+                        "inadequate", "requires", "needs",
+                    )
+                )
+            ]
+            for part in positive_parts:
+                matched.append(_compact_sentence(part, 210))
+                if len(matched) >= 2:
+                    break
+            if matched:
+                break
+
+    return _unique(matched, 2)
+
+
+def _section_corrections(
+    section_name: str,
+    findings: Sequence[Dict[str, Any]],
+    limit: int = 3,
+) -> List[str]:
+    rows = _rows_for_section(section_name, findings)
+    rows = [
+        row for row in rows
+        if row.get("status") not in {"meets_requirement", "not_applicable"}
+    ]
+    rows.sort(
+        key=lambda row: (
+            _severity_rank(row.get("severity", "minor")),
+            0 if _is_source_verification(row) else 1,
+            _normalised(row.get("item", "")),
+        )
+    )
+
+    output: List[str] = []
+    seen = set()
+    for row in rows:
+        action = _compact_sentence(
+            row.get("required_action")
+            or row.get("comment")
+            or row.get("item"),
+            260,
+        )
+        signature = _normalised(action)
+        if not action or not signature or signature in seen:
+            continue
+        seen.add(signature)
+        output.append(action)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _chapter_number_from_rows(
+    section_name: str,
+    findings: Sequence[Dict[str, Any]],
+    default_chapter: int | None,
+) -> int | None:
+    for row in _rows_for_section(section_name, findings):
+        for evidence in row.get("evidence") or []:
+            value = evidence.get("chapter_number")
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+
+    match = re.search(
+        r"\bchapter\s+(one|two|three|four|five|six|\d+)\b",
+        section_name,
+        flags=re.I,
+    )
+    if match:
+        token = match.group(1).lower()
+        words = {
+            "one": 1, "two": 2, "three": 3,
+            "four": 4, "five": 5, "six": 6,
+        }
+        return words.get(token, int(token) if token.isdigit() else None)
+    return default_chapter
+
+
+def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
+    summary = review.get("summary") or {}
+    findings = review.get("academic_findings") or []
+    strengths = review.get("academic_strengths") or []
+    section_rows = [
+        row for row in _ordered_section_reviews(review)
+        if not row.get("synthetic")
+    ]
+
+    detected_chapters = summary.get("current_chapters_detected") or []
+    multi_chapter = len(detected_chapters) > 1 or str(
+        summary.get("review_scope", "")
+    ).lower() in {
+        "complete_thesis", "complete dissertation", "full_thesis",
+        "thesis", "complete",
+    }
+
+    default_chapter = summary.get("selected_chapter") or summary.get("inferred_chapter")
+    try:
+        default_chapter = int(default_chapter) if default_chapter else None
+    except (TypeError, ValueError):
+        default_chapter = None
+
+    raw_units: List[Dict[str, Any]] = []
+    for section in section_rows:
+        heading = section["heading"]
+        chapter_number = _chapter_number_from_rows(
+            heading, findings, default_chapter
+        )
+        raw_units.append({
+            "label": heading,
+            "chapter_number": chapter_number,
+            "strengths": _section_strengths(
+                heading,
+                strengths,
+                section.get("assessments") or [],
+            ),
+            "corrections": _section_corrections(heading, findings, 3),
+            "warnings": _unique(section.get("coverage_warnings") or [], 1),
+            "assessments": section.get("assessments") or [],
+        })
+
+    if not multi_chapter:
+        return raw_units
+
+    grouped: "OrderedDict[int | None, Dict[str, Any]]" = OrderedDict()
+    for unit in raw_units:
+        chapter_number = unit["chapter_number"]
+        group = grouped.setdefault(chapter_number, {
+            "label": CHAPTER_NAMES.get(
+                chapter_number,
+                f"Chapter {chapter_number}" if chapter_number else "Whole Thesis",
+            ),
+            "chapter_number": chapter_number,
+            "strengths": [],
+            "corrections": [],
+            "warnings": [],
+            "assessments": [],
+        })
+        group["strengths"].extend(unit["strengths"])
+        group["corrections"].extend(unit["corrections"])
+        group["warnings"].extend(unit["warnings"])
+        group["assessments"].extend(unit["assessments"])
+
+    output = []
+    for group in grouped.values():
+        group["strengths"] = _unique(group["strengths"], 3)
+        group["corrections"] = _unique(group["corrections"], 5)
+        group["warnings"] = _unique(group["warnings"], 1)
+        output.append(group)
+    return output
+
+
+def _add_cell_list(
+    cell,
+    values: Sequence[str],
+    *,
+    numbered: bool = False,
+    empty_text: str = "",
+    colour: str = INK,
+    size: float = 8.9,
+) -> None:
+    cell.text = ""
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+    cleaned = _unique(values)
+    if not cleaned:
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_after = Pt(0)
+        run = p.add_run(empty_text)
+        run.italic = True
+        run.font.size = Pt(size)
+        run.font.color.rgb = RGBColor.from_string(MUTED)
+        return
+
+    for index, value in enumerate(cleaned, start=1):
+        p = cell.paragraphs[0] if index == 1 else cell.add_paragraph()
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing = 1.0
+        if numbered:
+            lead = p.add_run(f"{index}. ")
+            lead.bold = True
+            lead.font.size = Pt(size)
+            lead.font.color.rgb = RGBColor.from_string(BRAND)
+        run = p.add_run(_compact_sentence(value, 280))
+        run.font.size = Pt(size)
+        run.font.color.rgb = RGBColor.from_string(colour)
+
+
+def _add_compact_follow_up(
+    doc: Document,
+    title: str,
+    rows: Sequence[Dict[str, Any]],
+    limit: int = 4,
+) -> bool:
+    rows = _actionable(rows)
+    if not rows:
+        return False
+    doc.add_heading(title, level=1)
+    added = 0
+    seen = set()
+    for row in sorted(
+        rows,
+        key=lambda item: _severity_rank(item.get("severity", "moderate")),
+    ):
+        action = _compact_sentence(
+            row.get("required_action") or row.get("comment"), 300
+        )
+        signature = _normalised(action)
+        if not signature or signature in seen:
+            continue
+        seen.add(signature)
+        p = doc.add_paragraph(style="List Bullet")
+        p.paragraph_format.space_after = Pt(3)
+        section_name = _clean(row.get("section", "Review"))
+        p.add_run(section_name + ": ").bold = True
+        p.add_run(action)
+        added += 1
+        if added >= limit:
+            break
+    return added > 0
+
 def build_docx_report(review: Dict[str, Any]) -> bytes:
+    """Create a concise human-supervisor summary report.
+
+    Detailed passage-level comments, examples, evidence locations and source
+    verification notes remain in the annotated document. This report presents
+    only the overall judgement, strengths and the main corrections required for
+    each chapter or section.
+    """
     doc = Document()
     _set_document_styles(doc)
+
     section = doc.sections[0]
-    section.top_margin = Inches(0.65)
-    section.bottom_margin = Inches(0.65)
-    section.left_margin = Inches(0.72)
-    section.right_margin = Inches(0.72)
+    section.top_margin = Inches(0.58)
+    section.bottom_margin = Inches(0.58)
+    section.left_margin = Inches(0.62)
+    section.right_margin = Inches(0.62)
 
     summary = review.get("summary") or {}
     depth = str(summary.get("review_depth", "standard")).lower()
-    light_review = depth == "light"
 
     title = doc.add_paragraph(style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.add_run("SUPERVISOR’S ACADEMIC REVIEW REPORT")
+    title.add_run("SUPERVISOR’S SUMMARY REVIEW")
 
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitle.paragraph_format.space_after = Pt(12)
+    subtitle.paragraph_format.space_after = Pt(8)
     run = subtitle.add_run(_clean(summary.get("filename", "Reviewed document")))
     run.bold = True
-    run.font.size = Pt(11)
+    run.font.size = Pt(10.5)
     run.font.color.rgb = RGBColor.from_string(MUTED)
 
-    details = doc.add_table(rows=0, cols=2)
+    # Compact two-pair metadata table.
+    details = doc.add_table(rows=0, cols=4)
     details.style = "Table Grid"
-    details.autofit = True
-    detail_rows = [
-        ("Document", summary.get("document_label", "")),
-        ("Review stage", "Revised submission" if summary.get("revised_mode") else "Initial submission"),
-        ("Academic level", summary.get("academic_level", "")),
-        ("Research approach", summary.get("research_approach", "")),
-        ("Review depth", str(summary.get("review_depth", "standard")).title()),
-        ("Review benchmark", summary.get("review_benchmark", "")),
-        ("Sections and subsections reviewed", summary.get("academic_sections_reviewed", "")),
-        ("Overall judgement", summary.get("readiness_label", "")),
+    details.autofit = False
+    pairs = [
+        (
+            ("Document", summary.get("document_label", "")),
+            ("Academic level", summary.get("academic_level", "")),
+        ),
+        (
+            (
+                "Review stage",
+                "Revised submission"
+                if summary.get("revised_mode")
+                else "Initial submission",
+            ),
+            ("Review depth", str(summary.get("review_depth", "standard")).title()),
+        ),
+        (
+            (
+                "Sections reviewed",
+                summary.get("academic_sections_reviewed", ""),
+            ),
+            ("Overall judgement", summary.get("readiness_label", "")),
+        ),
     ]
-    if summary.get("alignment_score") is not None:
-        detail_rows.append(("Cross-chapter alignment", f'{summary.get("alignment_score")}%'))
-    if summary.get("revision_score") is not None:
-        detail_rows.append(("Response to earlier comments", f'{summary.get("revision_score")}%'))
-    for label, value in detail_rows:
+    for left, right in pairs:
         cells = details.add_row().cells
+        for cell, width in zip(cells, (1.2, 2.35, 1.35, 2.35)):
+            _set_cell_width(cell, width)
         _set_cell_shading(cells[0], SOFT)
-        _set_cell_text(cells[0], label, True, BRAND)
-        _set_cell_text(cells[1], value)
+        _set_cell_text(cells[0], left[0], True, BRAND, 8.5)
+        _set_cell_text(cells[1], left[1], False, INK, 8.5)
+        _set_cell_shading(cells[2], SOFT)
+        _set_cell_text(cells[2], right[0], True, BRAND, 8.5)
+        _set_cell_text(cells[3], right[1], False, INK, 8.5)
 
     context_rows = _context_summary(review)
     if context_rows:
-        context_heading = doc.add_paragraph()
-        context_heading.paragraph_format.space_before = Pt(8)
-        context_heading.paragraph_format.space_after = Pt(3)
-        context_heading.add_run("Study context used for this review").bold = True
-        context_table = doc.add_table(rows=0, cols=2)
-        context_table.style = "Table Grid"
-        for label, value in context_rows:
-            cells = context_table.add_row().cells
-            _set_cell_shading(cells[0], SOFT)
-            _set_cell_text(cells[0], label, True, BRAND, 8.8)
-            _set_cell_text(cells[1], value, False, INK, 8.8)
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(3)
+        p.add_run("Study context used: ").bold = True
+        p.add_run(
+            "; ".join(
+                f"{label}: {_compact_sentence(value, 180)}"
+                for label, value in context_rows
+            )
+        )
 
-    doc.add_heading("1. Overall Supervisor Assessment", level=1)
-    overall = _clean(review.get("overall_academic_assessment") or summary.get("readiness_meaning"))
-    doc.add_paragraph(overall)
+    doc.add_heading("1. Overall Supervisor Comment", level=1)
+    doc.add_paragraph(_compact_overall_assessment(review))
 
-    judgement_table = doc.add_table(rows=1, cols=1)
-    judgement_table.style = "Table Grid"
-    judgement_cell = judgement_table.cell(0, 0)
-    fill = PALE_AMBER if summary.get("critical_issues", 0) or summary.get("major_issues", 0) else PALE_GREEN
-    _set_cell_shading(judgement_cell, fill)
-    judgement_text = (
-        f'{summary.get("readiness_label", "Academic review completed")}. '
-        f'The review identified {summary.get("critical_issues", 0)} critical, '
-        f'{summary.get("major_issues", 0)} major, {summary.get("moderate_issues", 0)} moderate '
-        f'and {summary.get("minor_issues", 0)} minor matter(s) at the selected review benchmark.'
+    judgement = doc.add_table(rows=1, cols=1)
+    judgement.style = "Table Grid"
+    cell = judgement.cell(0, 0)
+    fill = (
+        PALE_AMBER
+        if summary.get("critical_issues", 0) or summary.get("major_issues", 0)
+        else PALE_GREEN
     )
-    _set_cell_text(judgement_cell, judgement_text, True, INK, 10)
+    _set_cell_shading(cell, fill)
+    counts = (
+        f'{summary.get("critical_issues", 0)} critical, '
+        f'{summary.get("major_issues", 0)} major and '
+        f'{summary.get("moderate_issues", 0)} moderate correction(s)'
+    )
+    _set_cell_text(
+        cell,
+        f'{summary.get("readiness_label", "Review completed")}. '
+        f"The main revision workload comprises {counts}.",
+        True,
+        INK,
+        9.3,
+    )
 
+    doc.add_heading("2. Main Strengths", level=1)
     strengths = review.get("academic_strengths") or []
-    doc.add_heading("2. Strengths to Retain", level=1)
-    if strengths:
-        for strength in strengths[:6]:
+    strength_values = _unique(
+        (
+            f'{_clean(item.get("section", "Chapter"))}: '
+            f'{_compact_sentence(item.get("observation", ""), 260)}'
+            for item in strengths
+        ),
+        5,
+    )
+    if strength_values:
+        for value in strength_values:
             p = doc.add_paragraph(style="List Bullet")
             p.paragraph_format.space_after = Pt(3)
-            section_name = _clean(strength.get("section", "Chapter"))
-            p.add_run(section_name + ": ").bold = True
-            p.add_run(_clean(strength.get("observation", "")))
+            p.add_run(value)
     else:
-        doc.add_paragraph("No distinct strength was recorded separately from the section assessments.")
+        doc.add_paragraph(
+            "The document contains the required chapter framework, but the "
+            "substantive strengths should become clearer after the priority "
+            "corrections have been addressed."
+        )
 
-    doc.add_heading("3. Priority Corrections Before Resubmission", level=1)
-    priorities = review.get("priority_actions") or []
+    doc.add_heading("3. Strengths and Key Corrections by Chapter or Section", level=1)
+    intro = doc.add_paragraph(
+        "Only the principal matters are summarised below. Detailed passage-level "
+        "comments, examples and locations are provided in the annotated document."
+    )
+    intro.paragraph_format.space_after = Pt(5)
+
+    units = _summary_units(review)
+    if not units:
+        doc.add_paragraph(
+            "No identifiable chapter or section summary was available."
+        )
+    else:
+        table = doc.add_table(rows=1, cols=3)
+        table.style = "Table Grid"
+        table.autofit = False
+        header = table.rows[0]
+        _set_repeat_table_header(header)
+        for cell, width in zip(header.cells, (1.65, 2.2, 3.85)):
+            _set_cell_width(cell, width)
+            _set_cell_shading(cell, BRAND)
+        _set_cell_text(header.cells[0], "Chapter / Section", True, "FFFFFF", 9)
+        _set_cell_text(header.cells[1], "Strengths", True, "FFFFFF", 9)
+        _set_cell_text(header.cells[2], "Key corrections required", True, "FFFFFF", 9)
+
+        for index, unit in enumerate(units):
+            row = table.add_row()
+            _prevent_row_split(row)
+            for cell, width in zip(row.cells, (1.65, 2.2, 3.85)):
+                _set_cell_width(cell, width)
+            if index % 2:
+                for cell in row.cells:
+                    _set_cell_shading(cell, "F8FAFC")
+
+            _set_cell_text(
+                row.cells[0],
+                unit["label"],
+                True,
+                BRAND,
+                8.8,
+            )
+            _add_cell_list(
+                row.cells[1],
+                unit.get("strengths") or [],
+                empty_text="No separate strength recorded.",
+                size=8.5,
+            )
+
+            corrections = list(unit.get("corrections") or [])
+            corrections.extend(
+                f"Review note: {_compact_sentence(warning, 220)}"
+                for warning in unit.get("warnings") or []
+            )
+            _add_cell_list(
+                row.cells[2],
+                corrections,
+                numbered=True,
+                empty_text=(
+                    "No major correction identified at the selected benchmark."
+                ),
+                size=8.5,
+            )
+
+    next_number = 4
+    if _add_compact_follow_up(
+        doc,
+        f"{next_number}. Cross-Chapter Alignment",
+        review.get("alignment_results") or [],
+        4,
+    ):
+        next_number += 1
+
+    if _add_compact_follow_up(
+        doc,
+        f"{next_number}. Response to Earlier Supervisor Comments",
+        review.get("revision_results") or [],
+        4,
+    ):
+        next_number += 1
+
+    doc.add_heading(f"{next_number}. Supervisor’s Recommendation", level=1)
+    final_guidance = _compact_sentence(
+        summary.get("readiness_meaning", ""),
+        420,
+    )
+    if not final_guidance:
+        final_guidance = (
+            "Address the corrections summarised above and the detailed comments "
+            "in the annotated document before resubmission."
+        )
+    doc.add_paragraph(final_guidance)
+
+    priority_actions = review.get("priority_actions") or []
+    immediate = []
     seen = set()
-    kept = []
-    for action in priorities:
-        signature = (_normalised(action.get("section", "")), _normalised(action.get("action", ""))[:180])
-        if not signature[1] or signature in seen:
+    for action in priority_actions:
+        text = _compact_sentence(action.get("action", ""), 260)
+        signature = _normalised(text)
+        if not text or not signature or signature in seen:
             continue
         seen.add(signature)
-        kept.append(action)
-        priority_limit = 8 if depth == "light" else (10 if depth == "standard" else 12)
-        if len(kept) >= priority_limit:
+        immediate.append(text)
+        if len(immediate) >= 5:
             break
-    if kept:
-        for index, action in enumerate(kept, start=1):
+
+    if immediate:
+        lead = doc.add_paragraph()
+        lead.paragraph_format.space_after = Pt(2)
+        lead.add_run("Immediate revision priorities:").bold = True
+        for index, action in enumerate(immediate, start=1):
             p = doc.add_paragraph()
-            p.paragraph_format.left_indent = Inches(0.22)
+            p.paragraph_format.left_indent = Inches(0.24)
             p.paragraph_format.first_line_indent = Inches(-0.18)
-            p.paragraph_format.space_after = Pt(3)
+            p.paragraph_format.space_after = Pt(2)
             p.add_run(f"{index}. ").bold = True
-            p.add_run(f'{_clean(action.get("section", "Chapter"))}: ').bold = True
-            p.add_run(_clean(action.get("action", "")))
-    else:
-        doc.add_paragraph("No priority correction was identified.")
-
-    findings = review.get("academic_findings") or []
-    next_section = 4
-    if _add_source_verification_summary(doc, findings, next_section):
-        next_section += 1
-
-    doc.add_heading(f"{next_section}. Section-by-Section and Subsection Review", level=1)
-    next_section += 1
-    reviewed_sections = _ordered_section_reviews(review)
-    used_finding_ids = set()
-
-    actual_sections = [row for row in reviewed_sections if not row.get("synthetic")]
-    if not actual_sections:
-        doc.add_paragraph("No identifiable section or subsection was available for review.")
-    else:
-        for section_row in actual_sections:
-            section_name = section_row["heading"]
-            doc.add_heading(section_name, level=2)
-            assessments = section_row.get("assessments") or []
-            if assessments:
-                p = doc.add_paragraph(_trim(" ".join(assessments), 900))
-                p.paragraph_format.space_after = Pt(4)
-            all_rows = _rows_for_section(section_name, findings)
-            for row in all_rows:
-                if row.get("finding_id"):
-                    used_finding_ids.add(row.get("finding_id"))
-            rows = [row for row in all_rows if not _is_source_verification(row)]
-            if rows:
-                for index, group in enumerate(_group_findings(rows), start=1):
-                    _add_review_point(doc, group, index)
-            elif all_rows:
-                p = doc.add_paragraph()
-                p.paragraph_format.space_after = Pt(5)
-                run = p.add_run("Source-verification matters for this section are summarised in the evidence and source-verification section above.")
-                run.italic = True
-                run.font.color.rgb = RGBColor.from_string(MUTED)
-            else:
-                p = doc.add_paragraph()
-                p.paragraph_format.space_after = Pt(5)
-                run = p.add_run("No material revision was identified in this section at the selected review benchmark.")
-                run.italic = True
-                run.font.color.rgb = RGBColor.from_string(MUTED)
-
-            for warning in section_row.get("coverage_warnings") or []:
-                p = doc.add_paragraph()
-                p.paragraph_format.space_after = Pt(4)
-                p.add_run("Review note: ").bold = True
-                p.add_run(warning)
-
-    unmatched = [
-        row for row in findings
-        if (not row.get("finding_id") or row.get("finding_id") not in used_finding_ids)
-        and not _is_source_verification(row)
-    ]
-    if unmatched:
-        doc.add_heading("Whole-Chapter and Additional Observations", level=2)
-        for index, group in enumerate(_group_findings(unmatched), start=1):
-            _add_review_point(doc, group, index)
-
-    if _add_follow_up_section(doc, f"{next_section}. Cross-Chapter Alignment", review.get("alignment_results") or []):
-        next_section += 1
-    if _add_follow_up_section(doc, f"{next_section}. Response to Earlier Supervisor Comments", review.get("revision_results") or []):
-        next_section += 1
-
-    doc.add_heading(f"{next_section}. Final Guidance", level=1)
-    final_guidance = _clean(summary.get("readiness_meaning", ""))
-    if final_guidance:
-        doc.add_paragraph(final_guidance)
-    note = doc.add_paragraph()
-    note.paragraph_format.space_before = Pt(4)
-    note.add_run("Use of examples: ").bold = True
-    note.add_run(
-        "Examples are limited to the context stated in the submitted document. Where the document does not provide a necessary detail, the report uses a neutral placeholder. Replace placeholders only with verified information from the actual study."
-    )
-    scope_note = doc.add_paragraph()
-    scope_note.paragraph_format.space_before = Pt(5)
-    scope_note.add_run("Review benchmark: ").bold = True
-    scope_note.add_run(
-        f'This report reviews every detected section and subsection at the {summary.get("review_benchmark", "selected academic")} standard. '
-        "The difference between Light, Standard and Advanced Review is the level of academic scrutiny, not the parts of the document covered. "
-        "Research-integrity concerns are raised for verification and are not treated as proof of misconduct."
-    )
+            p.add_run(action)
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("")
+    footer_run = footer.add_run("AI Professor | Supervisor summary review")
     footer_run.italic = True
-    footer_run.font.size = Pt(8)
+    footer_run.font.size = Pt(7.5)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
 
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
+

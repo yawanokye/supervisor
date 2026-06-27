@@ -95,9 +95,10 @@ Rules:
 9. Compare objective-question correspondence by meaning and scope, not identical wording.
 10. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
 11. Keep assessment, academic consequence, required action and illustrative guidance distinct.
-12. Normally report no more than five material issues per Standard section and seven per Advanced section.
-13. Use direct, constructive, formal British English addressed to the student.
-14. Return JSON only and do not provide hidden reasoning.
+12. Normally report no more than four material issues per Standard section and five per Advanced section. Consolidate related weaknesses into one finding.
+13. Keep each assessment, consequence and required action concise. Use illustrative guidance only when it materially helps the student.
+14. Use direct, constructive, formal British English addressed to the student.
+15. Return JSON only and do not provide hidden reasoning.
 
 {COMMON_CONTEXT_RULES}"""
 
