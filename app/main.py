@@ -51,7 +51,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
     version="1.1.0",
-    description="Institutional lecturer portal for complete academic review of theses, dissertations, proposals and revisions.",
+    description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
     SessionMiddleware,
@@ -212,7 +212,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.1.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.3.0"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -246,7 +246,7 @@ async def lecturer_login(
     request.session["user_id"] = user.id
     _csrf_token(request)
     if user.must_change_password:
-        _set_flash(request, "Create a private password before using the lecturer portal.", "warning")
+        _set_flash(request, "Create a private password before using the supervisor portal.", "warning")
         return RedirectResponse("/account/password", status_code=303)
     return RedirectResponse("/portal", status_code=303)
 
@@ -451,7 +451,7 @@ async def create_lecturer(
         raise HTTPException(status_code=403, detail="Administrator access is required.")
     full_name = full_name.strip()
     if len(full_name) < 3:
-        _set_flash(request, "Enter the lecturer’s full name.", "error")
+        _set_flash(request, "Enter the supervisor’s full name.", "error")
         return RedirectResponse("/admin", status_code=303)
     preferred = username.strip() or suggest_username(full_name)
     final_username = unique_username(db, preferred)
