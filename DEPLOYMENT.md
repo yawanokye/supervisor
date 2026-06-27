@@ -88,3 +88,13 @@ OPENAI_REVIEW_REASONING_EFFORT=high
 ```
 
 Light and Standard Review require the DeepSeek key. Advanced Review requires the OpenAI key. Provider names are not displayed in the student or lecturer interface.
+
+## Long-running review jobs
+
+The browser now stores the active job identifier locally and reconnects after a page refresh. Polling continues for up to two hours, while the server limits a single expert-review job to 90 minutes by default.
+
+```text
+AI_JOB_MAX_SECONDS=5400
+```
+
+A completed job returns a small polling response containing a result URL. The full review is fetched separately, which prevents oversized polling responses and reduces browser failures.

@@ -1,3 +1,13 @@
+## v1.3.1
+
+- Removed the fixed 30-minute browser failure for active reviews.
+- Added automatic reconnection after page refresh or temporary connection loss.
+- Stored the active review job in browser local storage.
+- Changed polling responses to return a result URL instead of the complete review object.
+- Added a 90-minute server-side maximum job duration with a clear failure message.
+- Added more progress updates during section coverage and recovery.
+- Extended client polling to two hours with slower polling after 30 minutes.
+
 ## v1.3
 
 - Replaced separate-looking login screens with one unified institutional access page.
