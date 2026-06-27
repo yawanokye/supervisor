@@ -24,3 +24,14 @@
 - Added Light Review alongside Standard and Advanced Review.
 - Added safeguards for source-verification and research-integrity warning signs.
 - Added context-aware guidance and grouped annotations.
+
+## 1.1.0
+
+- Added secure administrator login and institutional dashboard.
+- Added administrator-created lecturer accounts with generated temporary passwords and recovery PINs.
+- Added lecturer login, first-login password change, password recovery, suspension and reset workflows.
+- Added lecturer portal with review history, progress, downloads and revised-submission tracking.
+- Added persistent account and review metadata storage through SQLite or PostgreSQL.
+- Added ownership checks for review jobs, results and downloads.
+- Added CSRF protection, signed sessions and login-attempt lockout.
+- Added durable review JSON and annotated-document storage when `REVIEW_STORAGE_DIR` is backed by a persistent disk.

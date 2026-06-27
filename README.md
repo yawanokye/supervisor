@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant MVP 1.0
+# ProjectReady AI Supervisor Assistant 1.1
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
@@ -114,3 +114,59 @@ Health check:
 Python is pinned to 3.12.11 through `.python-version` and `render.yaml`.
 
 The in-memory job store is suitable for one Render instance. Before horizontal scaling, replace it with Redis and a worker queue.
+
+## Institutional administrator and lecturer portals
+
+Version 1.1 adds account-based institutional access.
+
+### Administrator portal
+
+Open:
+
+```text
+/admin/login
+```
+
+The administrator can:
+
+- create lecturer accounts
+- set lecturer name, username, department, email and phone
+- generate a temporary password and six-digit recovery PIN
+- suspend or reactivate accounts
+- reset lecturer login details
+- view institutional review activity
+
+The temporary password and recovery PIN are displayed once after account creation or reset. Lecturers must change the temporary password at first login.
+
+### Lecturer portal
+
+Open:
+
+```text
+/login
+```
+
+Lecturers can:
+
+- submit new chapter, proposal and full-thesis reviews
+- review revised chapters against supervisor comments
+- view review history and status
+- download the supervisor report and annotated document
+- change or recover their password
+
+### Required production environment variables
+
+```env
+DATABASE_URL=postgresql://...
+SESSION_SECRET=use-a-long-random-secret
+COOKIE_SECURE=true
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=use-a-strong-temporary-password
+ADMIN_NAME=System Administrator
+ADMIN_EMAIL=
+REVIEW_STORAGE_DIR=/var/data/reviews
+```
+
+Use a managed PostgreSQL database for lecturer accounts and review metadata. SQLite is suitable only for local development. Attach a persistent Render disk and mount it at `/var/data` when completed review downloads must remain available after redeployment.
+
+The first administrator is created automatically when the database is empty. The administrator must change the temporary password at first login.
