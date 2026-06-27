@@ -1,3 +1,11 @@
+## v1.3.2
+
+- Replaced heading-based AI section keys with short stable identifiers.
+- Added tolerant matching by exact key, compact key, section heading, and single-section retry.
+- Prevented valid title reviews from being rejected when a provider changed the title key.
+- Stopped browser polling immediately when a review job reaches failed status.
+- Preserved safe provider failure details in the lecturer-facing error message.
+
 ## v1.3.1
 
 - Removed the fixed 30-minute browser failure for active reviews.
