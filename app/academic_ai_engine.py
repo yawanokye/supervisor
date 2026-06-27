@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT, LIGHT_REVIEW_SYSTEM_PROMPT
-from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
+from .ai_providers import AIProviderError, DeepSeekProvider, OpenAIProvider, ProviderResult
 from .ai_schemas import (
     AIUsageRecord,
     AcademicIssue,
@@ -371,14 +371,23 @@ def _light_readiness(score: float, issues: Sequence[Dict[str, Any]]) -> Tuple[st
 
 def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
     uncached = max(0, usage.input_tokens - usage.cached_input_tokens)
-    if usage.model == config.openai_mini_model:
-        p_in, p_cache, p_out = config.openai_mini_input_price, config.openai_mini_cached_input_price, config.openai_mini_output_price
-    elif usage.model == config.openai_advanced_model:
-        p_in, p_cache, p_out = config.openai_advanced_input_price, config.openai_advanced_cached_input_price, config.openai_advanced_output_price
+    if usage.provider == "deepseek":
+        p_in = config.deepseek_pro_input_price
+        p_cache = config.deepseek_pro_cached_input_price
+        p_out = config.deepseek_pro_output_price
     else:
-        p_in, p_cache, p_out = config.openai_review_input_price, config.openai_review_cached_input_price, config.openai_review_output_price
-    cost = uncached / 1_000_000 * p_in + usage.cached_input_tokens / 1_000_000 * p_cache + usage.output_tokens / 1_000_000 * p_out
-    return usage.model_copy(update={"estimated_cost_usd": round(cost, 6)})
+        p_in = config.openai_review_input_price
+        p_cache = config.openai_review_cached_input_price
+        p_out = config.openai_review_output_price
+
+    cost = (
+        uncached / 1_000_000 * p_in
+        + usage.cached_input_tokens / 1_000_000 * p_cache
+        + usage.output_tokens / 1_000_000 * p_out
+    )
+    return usage.model_copy(
+        update={"estimated_cost_usd": round(cost, 6)}
+    )
 
 
 async def _run_limited(coroutines: Sequence[Any], limit: int) -> List[Any]:
@@ -495,7 +504,8 @@ async def enrich_review_with_academic_ai(
     config = config or HybridAIConfig.from_env()
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
     depth = config.resolve_mode(requested_mode, academic_level)
-    openai = OpenAIProvider(config)
+    deepseek = DeepSeekProvider(config) if config.deepseek_configured else None
+    openai = OpenAIProvider(config) if config.openai_configured else None
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
@@ -534,29 +544,38 @@ async def enrich_review_with_academic_ai(
         section["section_key"] = _section_key(section, index)
 
     if depth == "light":
-        primary_model = config.openai_mini_model
-        primary_effort = config.openai_mini_reasoning_effort
+        provider = deepseek
+        primary_model = config.deepseek_review_model
+        primary_effort = config.deepseek_reasoning_effort
         primary_tokens = config.light_max_output_tokens
         primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
         batch_size = config.light_section_batch_size
     elif depth == "standard":
-        primary_model = config.openai_mini_model
-        primary_effort = config.openai_mini_reasoning_effort
-        primary_tokens = config.mini_max_output_tokens
+        provider = deepseek
+        primary_model = config.deepseek_review_model
+        primary_effort = config.deepseek_reasoning_effort
+        primary_tokens = config.standard_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
     else:
+        provider = openai
         primary_model = config.openai_review_model
         primary_effort = config.openai_review_reasoning_effort
-        primary_tokens = config.review_max_output_tokens
+        primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
+
+    if provider is None:
+        raise AIProviderError(
+            "The selected review service is not configured on the server."
+        )
+
     section_batches = _batch(sections, batch_size)
 
     await _notify(progress_callback, 35, "Reviewing chapter sections")
 
     async def primary_call(batch: Sequence[Dict[str, Any]], model: str, effort: str, purpose: str, tokens: int) -> ProviderResult:
-        return await openai.complete_json(
+        return await provider.complete_json(
             model=model, system_prompt=primary_system_prompt,
             user_prompt=_batch_prompt(review, batch, supervisor_comments, depth),
             schema_model=AcademicReviewBatch, purpose=purpose,
@@ -604,9 +623,18 @@ async def enrich_review_with_academic_ai(
     reviewed_keys = {row["section_key"] for row in section_reviews}
     retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
     if retry_sections:
-        recovery_model = config.openai_mini_model if depth == "light" else config.openai_review_model
-        recovery_effort = config.openai_mini_reasoning_effort if depth == "light" else config.openai_review_reasoning_effort
-        recovery_tokens = config.light_max_output_tokens if depth == "light" else config.review_max_output_tokens
+        if depth in {"light", "standard"}:
+            recovery_model = config.deepseek_review_model
+            recovery_effort = config.deepseek_reasoning_effort
+            recovery_tokens = (
+                config.light_max_output_tokens
+                if depth == "light"
+                else config.standard_max_output_tokens
+            )
+        else:
+            recovery_model = config.openai_review_model
+            recovery_effort = config.openai_review_reasoning_effort
+            recovery_tokens = config.advanced_max_output_tokens
         retry_results = await _run_limited(
             [primary_call([section], recovery_model, recovery_effort, "section_review_recovery", recovery_tokens) for section in retry_sections],
             config.max_parallel_calls,
@@ -625,44 +653,80 @@ async def enrich_review_with_academic_ai(
         )
 
     verification_failed = False
-    if depth == "light":
-        await _notify(progress_callback, 68, "Consolidating the light review and guidance")
-    else:
-        await _notify(progress_callback, 68, "Checking the review for missed or misplaced issues")
+    if depth in {"light", "standard"}:
+        await _notify(
+            progress_callback,
+            68,
+            "Consolidating the academic review and guidance",
+        )
+    elif config.advanced_quality_control:
+        await _notify(
+            progress_callback,
+            68,
+            "Conducting the advanced quality-control review",
+        )
 
-        # Standard uses GPT-5.4 quality control. GPT-5.5 is used only for Advanced Review.
-        verification_model = config.openai_review_model if depth == "standard" else config.openai_advanced_model
-        verification_effort = config.openai_review_reasoning_effort if depth == "standard" else config.openai_advanced_reasoning_effort
-        verification_tokens = config.review_max_output_tokens if depth == "standard" else config.advanced_max_output_tokens
-        verification_batches = _batch(section_reviews, config.verification_batch_size)
+        verification_batches = _batch(
+            section_reviews,
+            config.verification_batch_size,
+        )
 
-        async def verify_call(batch: Sequence[Dict[str, Any]]) -> ProviderResult:
+        async def verify_call(
+            batch: Sequence[Dict[str, Any]],
+        ) -> ProviderResult:
+            if openai is None:
+                raise AIProviderError(
+                    "The advanced review service is not configured."
+                )
             return await openai.complete_json(
-                model=verification_model, system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
+                model=config.openai_review_model,
+                system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
                 user_prompt=_verification_prompt(review, batch, depth),
-                schema_model=AcademicVerificationBatch, purpose=f"{depth}_quality_control",
-                reasoning_effort=verification_effort, max_output_tokens=verification_tokens,
+                schema_model=AcademicVerificationBatch,
+                purpose="advanced_quality_control",
+                reasoning_effort=config.openai_review_reasoning_effort,
+                max_output_tokens=config.advanced_max_output_tokens,
             )
 
-        verify_results = await _run_limited([verify_call(batch) for batch in verification_batches], config.max_parallel_calls)
+        verify_results = await _run_limited(
+            [verify_call(batch) for batch in verification_batches],
+            config.max_parallel_calls,
+        )
         for batch, result in zip(verification_batches, verify_results):
             if isinstance(result, Exception):
                 verification_failed = True
                 for section_review in batch:
-                    section_review["coverage_warning"] = (section_review.get("coverage_warning", "") + " Independent quality control was unavailable for this section.").strip()
+                    section_review["coverage_warning"] = (
+                        section_review.get("coverage_warning", "")
+                        + " Advanced quality control was unavailable for this section."
+                    ).strip()
                 continue
+
             usage_records.append(_usage_cost(result.usage, config))
-            all_primary = [issue for section_review in batch for issue in section_review["issues"]]
+            all_primary = [
+                issue
+                for section_review in batch
+                for issue in section_review["issues"]
+            ]
             merged = _apply_verification(all_primary, result.data)
             merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
             for item in merged:
                 valid = _valid_issue(item, paragraph_index)
                 if valid:
-                    merged_by_section[normalised(valid.get("section", ""))].append(valid)
+                    merged_by_section[
+                        normalised(valid.get("section", ""))
+                    ].append(valid)
+
             for section_review in batch:
                 key = normalised(section_review["heading"])
                 section_review["issues"] = merged_by_section.pop(key, [])
-            leftovers = [item for values in merged_by_section.values() for item in values]
+
+            leftovers = [
+                item
+                for values in merged_by_section.values()
+                for item in values
+            ]
             if leftovers and batch:
                 batch[0]["issues"].extend(leftovers)
 

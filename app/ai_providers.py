@@ -291,6 +291,157 @@ async def _post_json_with_retry(
     raise AIProviderError(str(last_error or "The provider request failed."))
 
 
+
+def _deepseek_output_text(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") or []
+    if not choices:
+        raise AIProviderError("DeepSeek returned no completion choices.")
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    finish_reason = first.get("finish_reason")
+    message = first.get("message") or {}
+    content = message.get("content")
+
+    if finish_reason == "length":
+        raise AIProviderError(
+            "DeepSeek output was truncated because the output-token limit was reached."
+        )
+    if finish_reason == "insufficient_system_resource":
+        raise AIProviderError(
+            "DeepSeek could not complete the request because provider resources were unavailable."
+        )
+    if not isinstance(content, str) or not content.strip():
+        raise AIProviderError("DeepSeek returned empty JSON content.")
+    return content
+
+
+class DeepSeekProvider:
+    def __init__(self, config: HybridAIConfig):
+        self.config = config
+
+    async def complete_json(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        schema_model: type[BaseModel],
+        purpose: str,
+        reasoning_effort: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> ProviderResult:
+        contract = _json_contract(schema_model)
+        reinforced_system = (
+            system_prompt.rstrip()
+            + "\n\n"
+            + contract
+            + "\nReturn JSON only. Do not use markdown fences."
+        )
+
+        effort = (
+            reasoning_effort
+            or self.config.deepseek_reasoning_effort
+            or "high"
+        ).lower()
+        if effort not in {"high", "max"}:
+            effort = "high"
+
+        body: Dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": reinforced_system},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+            "max_tokens": max_output_tokens or self.config.max_output_tokens,
+            "thinking": {
+                "type": (
+                    "enabled"
+                    if self.config.deepseek_thinking_enabled
+                    else "disabled"
+                ),
+                "reasoning_effort": effort,
+            },
+        }
+
+        last_error: Optional[Exception] = None
+        attempts = max(1, self.config.structured_output_retries + 1)
+
+        for attempt in range(attempts):
+            request_body = dict(body)
+            if attempt:
+                request_body["messages"] = [
+                    request_body["messages"][0],
+                    {
+                        "role": "user",
+                        "content": (
+                            user_prompt
+                            + "\n\nThe previous response was empty, incomplete, or did not "
+                              "match the required schema. Return one complete JSON object "
+                              "matching the schema exactly."
+                        ),
+                    },
+                ]
+
+            try:
+                payload, request_id = await _post_json_with_retry(
+                    url=f"{self.config.deepseek_base_url}/chat/completions",
+                    headers={
+                        "Authorization": (
+                            f"Bearer {self.config.deepseek_api_key}"
+                        ),
+                        "Content-Type": "application/json",
+                    },
+                    payload=request_body,
+                    timeout_seconds=self.config.timeout_seconds,
+                    max_retries=self.config.max_retries,
+                )
+
+                raw = _extract_json_text(_deepseek_output_text(payload))
+                raw = _normalise_model_payload(raw, schema_model)
+                validated = schema_model.model_validate(raw)
+
+                usage_source = payload.get("usage") or {}
+                input_tokens = _usage_value(
+                    usage_source,
+                    "prompt_tokens",
+                    "input_tokens",
+                )
+                output_tokens = _usage_value(
+                    usage_source,
+                    "completion_tokens",
+                    "output_tokens",
+                )
+                cached_tokens = _usage_value(
+                    usage_source,
+                    "prompt_cache_hit_tokens",
+                    "prompt_tokens_details.cached_tokens",
+                )
+
+                usage = AIUsageRecord(
+                    provider="deepseek",
+                    model=model,
+                    purpose=purpose,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_tokens,
+                    output_tokens=output_tokens,
+                    request_id=request_id or payload.get("id", ""),
+                )
+                return ProviderResult(
+                    data=validated.model_dump(),
+                    usage=usage,
+                )
+
+            except (ValidationError, AIProviderError) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    break
+
+        if isinstance(last_error, ValidationError):
+            raise AIProviderError(
+                f"DeepSeek output failed schema validation: {last_error}"
+            ) from last_error
+        raise AIProviderError(str(last_error or "DeepSeek request failed."))
+
 class OpenAIProvider:
     def __init__(self, config: HybridAIConfig):
         self.config = config
