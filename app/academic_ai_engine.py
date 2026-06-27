@@ -203,7 +203,13 @@ def _batch(values: Sequence[Any], size: int) -> List[List[Any]]:
 
 
 def _section_key(section: Dict[str, Any], index: int) -> str:
-    return f"S{index + 1}:{clean_text(section.get('heading', 'Untitled section'))[:80]}:{section.get('part', 1)}"
+    """Return a short, stable identifier that models can reproduce exactly.
+
+    The earlier key embedded the full heading. Long thesis titles were sometimes
+    shortened, capitalised differently, or paraphrased by the model, causing a
+    valid title review to be rejected as an omitted section.
+    """
+    return f"S{index + 1:03d}P{int(section.get('part') or 1):02d}"
 
 
 def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]], depth: str = "standard") -> str:
@@ -598,11 +604,76 @@ async def enrich_review_with_academic_ai(
 
     def consume_batch(batch: Sequence[Dict[str, Any]], result: ProviderResult) -> None:
         usage_records.append(_usage_cost(result.usage, config))
-        by_key = {str(item.get("section_key")): item for item in result.data.get("reviews", [])}
+        returned = [
+            item for item in (result.data.get("reviews") or [])
+            if isinstance(item, dict)
+        ]
+
+        def compact_key(value: Any) -> str:
+            return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+        by_key = {
+            str(item.get("section_key") or "").strip(): item
+            for item in returned
+            if str(item.get("section_key") or "").strip()
+        }
+        by_compact_key = {
+            compact_key(item.get("section_key")): item
+            for item in returned
+            if compact_key(item.get("section_key"))
+        }
+
+        used_ids: set[int] = set()
+
         for section in batch:
             data = by_key.get(section["section_key"])
+            if data is None:
+                data = by_compact_key.get(compact_key(section["section_key"]))
+
+            # Recover a valid response when the provider preserved the section
+            # name but changed or omitted the opaque key.
+            if data is None:
+                target_heading = _normalise_heading(
+                    clean_text(section.get("heading", "Untitled section"))
+                )
+                target_part = int(section.get("part") or 1)
+                heading_matches = []
+                for item in returned:
+                    if id(item) in used_ids:
+                        continue
+                    returned_heading = _normalise_heading(
+                        clean_text(
+                            item.get("section_name")
+                            or item.get("heading")
+                            or ""
+                        )
+                    )
+                    returned_part = int(item.get("part") or target_part)
+                    if (
+                        returned_heading
+                        and returned_heading != "Untitled section"
+                        and (
+                            returned_heading == target_heading
+                            or returned_heading in target_heading
+                            or target_heading in returned_heading
+                        )
+                        and returned_part == target_part
+                    ):
+                        heading_matches.append(item)
+                if len(heading_matches) == 1:
+                    data = heading_matches[0]
+
+            # A single-section retry has no ambiguity. Accept the single valid
+            # review even if the provider altered the section key.
+            if data is None and len(batch) == 1:
+                unused = [item for item in returned if id(item) not in used_ids]
+                if len(unused) == 1:
+                    data = unused[0]
+
             if not data:
                 continue
+
+            used_ids.add(id(data))
             valid_issues = [valid for item in data.get("issues") or [] if (valid := _valid_issue(item, paragraph_index))]
             valid_strengths = []
             for strength in data.get("strengths") or []:
@@ -658,8 +729,9 @@ async def enrich_review_with_academic_ai(
     if still_missing:
         names = ", ".join(clean_text(section.get("heading", "Untitled section")) for section in still_missing[:5])
         raise AIProviderError(
-            "The expert review could not complete every section and subsection. "
-            f"Unreviewed section(s): {names}. Please try again."
+            "The expert review could not complete every section and subsection "
+            "after an automatic individual retry. "
+            f"Unreviewed section(s): {names}. Please retry the review."
         )
 
     verification_failed = False

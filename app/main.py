@@ -213,7 +213,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.3.1"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.3.2"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -663,9 +663,22 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
             error="The review did not finish within the allowed processing window. Please retry with a smaller document or contact the administrator.",
             retryable=True,
         )
-    except AIProviderError:
+    except AIProviderError as exc:
         logger.exception("Expert review provider failure")
-        _job_update(job_id, status="failed", progress=100, message="The expert review service was temporarily unable to finish", error="The expert review could not be completed. Please retry in a few minutes.", retryable=True)
+        detail = clean_text(str(exc))
+        safe_detail = (
+            detail
+            if detail and len(detail) <= 700
+            else "The expert review could not be completed. Please retry in a few minutes."
+        )
+        _job_update(
+            job_id,
+            status="failed",
+            progress=100,
+            message="The expert review could not be completed",
+            error=safe_detail,
+            retryable=True,
+        )
     except Exception:
         logger.exception("Unexpected background review failure")
         _job_update(job_id, status="failed", progress=100, message="Review failed", error="The review could not be completed. Please try again.", retryable=True)
