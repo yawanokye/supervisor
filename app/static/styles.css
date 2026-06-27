@@ -117,3 +117,140 @@ input[type="text"]:focus,input[type="password"]:focus,input[type="email"]:focus,
 .admin-grid{display:grid;grid-template-columns:360px 1fr;gap:24px;align-items:start}.create-account-card{position:sticky;top:100px}.admin-form .field{margin-top:14px}.admin-form .primary-button{margin-top:18px}.count-badge{padding:6px 10px;background:var(--soft);border-radius:999px;font-weight:850;color:var(--muted)}.lecturer-list{display:grid;gap:9px}.lecturer-row{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:13px}.lecturer-avatar{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:#eef2ff;color:var(--brand);font-weight:900}.lecturer-info strong,.lecturer-info span,.lecturer-info small{display:block}.lecturer-info span,.lecturer-info small{color:var(--muted);font-size:.75rem}.lecturer-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.lecturer-actions form{margin:0}.mini-button{border:1px solid var(--line);background:#fff;padding:7px 9px;border-radius:9px;font-size:.71rem;font-weight:800;cursor:pointer}.danger-outline{border-color:#f1b6b0;color:var(--danger)}.success-outline{border-color:#b7e7ce;color:var(--success)}.credentials-banner{display:grid;grid-template-columns:1fr 1.3fr;gap:20px;background:linear-gradient(135deg,#eef2ff,#f9faff);border:1px solid #cfd7ff;border-radius:20px;padding:22px;margin-bottom:24px}.credentials-banner h2{margin:0}.credentials-banner p:last-child{color:var(--muted);margin:6px 0 0}.credential-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.credential-grid>div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.credential-grid span,.credential-grid strong{display:block}.credential-grid span{font-size:.7rem;color:var(--muted)}.credential-grid strong{margin-top:5px;word-break:break-all}.detail-shell{max-width:930px}.review-summary-card h1{font-size:2.2rem;margin:0}.review-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0}.review-summary-grid>div{padding:13px;border-radius:13px;background:var(--soft)}.review-summary-grid span,.review-summary-grid strong{display:block}.review-summary-grid span{font-size:.7rem;color:var(--muted)}.review-summary-grid strong{margin-top:5px}.review-meaning{color:var(--muted)}.link-button.secondary-button{color:#fff}.link-button.ghost-button{color:var(--ink)}
 @media(max-width:980px){.auth-shell{grid-template-columns:1fr}.auth-brand-panel{display:none}.admin-grid{grid-template-columns:1fr}.create-account-card{position:static}.credentials-banner{grid-template-columns:1fr}.portal-stats{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:650px){.portal-topbar{height:auto;padding:12px 14px;align-items:flex-start}.portal-nav{flex-wrap:wrap;justify-content:flex-end}.portal-nav .user-chip{display:none}.portal-shell{padding:28px 14px}.portal-welcome{display:block}.portal-welcome .primary-link-button{margin-top:16px}.portal-stats{grid-template-columns:1fr 1fr}.auth-form-panel{padding:16px}.auth-form-card{padding:24px}.credential-grid,.review-summary-grid{grid-template-columns:1fr}.lecturer-row{grid-template-columns:40px 1fr}.lecturer-actions{grid-column:2;justify-content:flex-start}}
+
+/* v1.3 unified institutional access page */
+.access-body{
+  min-height:100vh;margin:0;
+  background:radial-gradient(circle at 86% 18%,rgba(51,87,213,.10),transparent 30%),
+             linear-gradient(135deg,#fbfcff 0%,#f2f6ff 55%,#eef4ff 100%);
+  color:#14213a;
+}
+.access-header{
+  min-height:92px;padding:14px max(28px,calc((100vw - 1500px)/2));
+  display:flex;align-items:center;justify-content:space-between;gap:28px;
+  background:rgba(255,255,255,.94);border-bottom:1px solid #dfe6f2;
+  box-shadow:0 3px 18px rgba(29,48,87,.035);backdrop-filter:blur(14px);
+}
+.access-brand{display:inline-flex;align-items:center;gap:14px;color:#14213a;text-decoration:none}
+.access-brand-mark{
+  width:54px;height:54px;display:grid;place-items:center;border-radius:17px;
+  background:linear-gradient(145deg,#253da9,#4c68ea);color:#fff;font-size:1.05rem;
+  font-weight:900;letter-spacing:.04em;box-shadow:0 12px 28px rgba(51,87,213,.24)
+}
+.access-brand-copy strong,.access-brand-copy small{display:block}
+.access-brand-copy strong{font-size:1.2rem;line-height:1.2}
+.access-brand-copy small{color:#69778d;font-size:.8rem;margin-top:3px}
+.access-role-tabs{
+  display:grid;grid-template-columns:repeat(2,minmax(126px,1fr));gap:5px;padding:6px;
+  border:1px solid #e1e6ef;border-radius:18px;background:#f1f4f8
+}
+.access-role-tab{
+  display:flex;align-items:center;justify-content:center;min-height:48px;padding:9px 24px;
+  border-radius:13px;color:#647083;text-decoration:none;font-weight:800;
+  transition:background .18s ease,color .18s ease,box-shadow .18s ease
+}
+.access-role-tab:hover{color:#2848be}
+.access-role-tab.active{background:#fff;color:#243fae;box-shadow:0 4px 14px rgba(35,55,97,.10)}
+.access-main{min-height:calc(100vh - 92px);padding:72px max(28px,calc((100vw - 1500px)/2)) 80px}
+.access-hero{
+  display:grid;grid-template-columns:minmax(0,1.35fr) minmax(390px,.65fr);
+  gap:72px;align-items:center
+}
+.access-intro{max-width:900px}
+.access-kicker,.access-card-kicker{
+  margin:0 0 14px;color:#3652ca;font-size:.76rem;font-weight:900;
+  letter-spacing:.13em;text-transform:uppercase
+}
+.access-intro h1{
+  max-width:920px;margin:0;color:#14213a;font-family:Georgia,"Times New Roman",serif;
+  font-size:clamp(3.2rem,6.1vw,6.6rem);font-weight:700;letter-spacing:-.055em;line-height:.98
+}
+.access-lead{
+  max-width:800px;margin:28px 0 0;color:#5d6b80;
+  font-size:clamp(1.05rem,1.55vw,1.35rem);line-height:1.75
+}
+.access-capabilities{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;
+  max-width:780px;margin-top:34px
+}
+.access-capabilities article{
+  min-height:112px;padding:20px;border:1px solid #dfe6f2;border-radius:18px;
+  background:rgba(255,255,255,.78);box-shadow:0 12px 35px rgba(31,49,85,.05)
+}
+.access-capabilities strong,.access-capabilities span{display:block}
+.access-capabilities strong{color:#2946bc;font-size:1.08rem}
+.access-capabilities span{margin-top:7px;color:#69778d;font-size:.83rem;line-height:1.45}
+.access-assurance{
+  max-width:780px;margin-top:30px;padding:24px 28px;border-radius:22px;
+  background:#172b55;color:#fff;box-shadow:0 22px 55px rgba(18,39,84,.16)
+}
+.access-assurance h2{margin:0 0 12px;font-family:Georgia,"Times New Roman",serif;font-size:1.45rem}
+.access-assurance ul{margin:0;padding-left:20px;color:rgba(255,255,255,.82)}
+.access-assurance li+li{margin-top:8px}
+.access-login-wrap{width:100%;max-width:510px;justify-self:end}
+.access-login-card{
+  padding:36px;border:1px solid #dce4ef;border-radius:26px;background:rgba(255,255,255,.97);
+  box-shadow:0 28px 70px rgba(26,44,80,.14)
+}
+.access-login-heading{display:flex;align-items:center;gap:16px}
+.access-login-icon{
+  flex:0 0 52px;width:52px;height:52px;display:grid;place-items:center;border-radius:16px;
+  background:#edf1ff;color:#3150ca;font-size:1.1rem;font-weight:900
+}
+.access-login-heading h2{margin:0;color:#14213a;font-size:1.85rem;letter-spacing:-.025em}
+.access-login-heading .access-card-kicker{margin-bottom:3px}
+.access-card-copy{margin:18px 0 24px;color:#69778d;line-height:1.65}
+.access-form{display:grid;gap:17px}
+.access-field{display:grid;gap:7px}
+.access-field span{color:#26344f;font-size:.84rem;font-weight:800}
+.access-field input{
+  width:100%;min-height:52px;padding:13px 15px;border:1px solid #ccd5e3;
+  border-radius:13px;background:#fff;color:#14213a;outline:none;
+  transition:border-color .18s ease,box-shadow .18s ease
+}
+.access-field input::placeholder{color:#9aa5b5}
+.access-field input:focus{border-color:#4662d9;box-shadow:0 0 0 4px rgba(70,98,217,.13)}
+.access-submit{
+  width:100%;min-height:54px;margin-top:3px;border:0;border-radius:14px;
+  background:linear-gradient(135deg,#304bc5,#4c67e7);color:#fff;font-weight:850;
+  cursor:pointer;box-shadow:0 13px 28px rgba(51,87,213,.23);
+  transition:transform .18s ease,box-shadow .18s ease
+}
+.access-submit:hover{transform:translateY(-1px);box-shadow:0 17px 34px rgba(51,87,213,.29)}
+.access-help{
+  margin-top:22px;padding-top:18px;border-top:1px solid #e4e9f1;
+  color:#778398;font-size:.8rem
+}
+.access-help a{color:#3150ca;font-weight:800;text-decoration:none}
+.access-help a:hover{text-decoration:underline}
+.access-security-note{
+  max-width:440px;margin:16px auto 0;color:#778398;text-align:center;
+  font-size:.76rem;line-height:1.55
+}
+@media(max-width:1100px){
+  .access-main{padding-top:50px}
+  .access-hero{grid-template-columns:1fr;gap:42px}
+  .access-intro{max-width:none}
+  .access-intro h1{max-width:950px;font-size:clamp(3rem,8vw,5.4rem)}
+  .access-login-wrap{max-width:680px;justify-self:start}
+}
+@media(max-width:720px){
+  .access-header{min-height:auto;padding:13px 16px;align-items:flex-start}
+  .access-brand-copy small{display:none}
+  .access-role-tabs{grid-template-columns:repeat(2,minmax(92px,1fr))}
+  .access-role-tab{min-height:42px;padding:8px 13px;font-size:.82rem}
+  .access-main{padding:40px 17px 55px}
+  .access-intro h1{font-size:clamp(2.65rem,13vw,4rem)}
+  .access-lead{font-size:1rem}
+  .access-capabilities{grid-template-columns:1fr}
+  .access-capabilities article{min-height:auto}
+  .access-assurance{padding:21px}
+  .access-login-card{padding:25px 21px;border-radius:21px}
+}
+@media(max-width:480px){
+  .access-brand{gap:9px}
+  .access-brand-mark{width:45px;height:45px;border-radius:14px}
+  .access-brand-copy strong{font-size:1rem}
+  .access-role-tabs{padding:4px}
+  .access-role-tab{min-width:0;padding:7px 10px}
+}
