@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Administration | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar portal-topbar">
+    <a class="brand" href="/admin"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Institutional Administration</small></span></a>
+    <nav class="portal-nav"><a class="nav-link active" href="/admin">Dashboard</a><a class="nav-link" href="/account/password">Password</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="nav-button" type="submit">Sign out</button></form></nav>
+  </header>
+
+  <main class="portal-shell admin-shell">
+    {% if flash %}<div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>{% endif %}
+    {% if credentials %}
+    <section class="credentials-banner">
+      <div><p class="eyebrow">Copy before leaving this page</p><h2>Lecturer login details</h2><p>Send these details securely to {{ credentials.full_name }}. The temporary password must be changed at first login.</p></div>
+      <div class="credential-grid"><div><span>Username</span><strong>{{ credentials.username }}</strong></div><div><span>Temporary password</span><strong>{{ credentials.temporary_password }}</strong></div><div><span>Recovery PIN</span><strong>{{ credentials.recovery_pin }}</strong></div></div>
+    </section>
+    {% endif %}
+
+    <section class="portal-welcome"><div><p class="eyebrow">Administration</p><h1>Institutional supervision dashboard</h1><p>Create lecturer accounts, control access and review platform activity.</p></div></section>
+    <section class="portal-stats"><article><span>Lecturer accounts</span><strong>{{ stats.lecturers }}</strong></article><article><span>Active lecturers</span><strong>{{ stats.active }}</strong></article><article><span>Total reviews</span><strong>{{ stats.reviews }}</strong></article><article><span>In progress</span><strong>{{ stats.processing }}</strong></article></section>
+
+    <section class="admin-grid">
+      <article class="portal-card create-account-card">
+        <div class="portal-card-heading"><div><p class="eyebrow">Account management</p><h2>Create lecturer account</h2></div></div>
+        <form method="post" action="/admin/lecturers" class="admin-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="field"><span>Full name</span><input type="text" name="full_name" required></label>
+          <label class="field"><span>Username <small>optional</small></span><input type="text" name="username" placeholder="Generated from the name when blank"></label>
+          <label class="field"><span>Department or school</span><input type="text" name="department"></label>
+          <label class="field"><span>Email <small>optional</small></span><input type="email" name="email"></label>
+          <label class="field"><span>Phone <small>optional</small></span><input type="text" name="phone"></label>
+          <button class="primary-button" type="submit">Create lecturer account</button>
+          <p class="field-help">The system generates a temporary password and six-digit recovery PIN. They are displayed once after account creation.</p>
+        </form>
+      </article>
+
+      <article class="portal-card lecturer-list-card">
+        <div class="portal-card-heading"><div><p class="eyebrow">Authorised users</p><h2>Lecturer accounts</h2></div><span class="count-badge">{{ lecturers|length }}</span></div>
+        {% if lecturers %}<div class="lecturer-list">
+          {% for lecturer in lecturers %}
+          <div class="lecturer-row">
+            <div class="lecturer-avatar">{{ lecturer.full_name[:1]|upper }}</div>
+            <div class="lecturer-info"><strong>{{ lecturer.full_name }}</strong><span>@{{ lecturer.username }}{% if lecturer.department %} · {{ lecturer.department }}{% endif %}</span><small>{{ review_counts.get(lecturer.id, 0) }} review(s) · {{ 'Active' if lecturer.is_active else 'Suspended' }}</small></div>
+            <div class="lecturer-actions">
+              <form method="post" action="/admin/lecturers/{{ lecturer.id }}/reset"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="mini-button">Reset login</button></form>
+              <form method="post" action="/admin/lecturers/{{ lecturer.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="mini-button {{ 'danger-outline' if lecturer.is_active else 'success-outline' }}">{{ 'Suspend' if lecturer.is_active else 'Activate' }}</button></form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>{% else %}<div class="portal-empty"><h3>No lecturer accounts</h3><p>Create the first account using the form.</p></div>{% endif %}
+      </article>
+    </section>
+
+    <section class="portal-card">
+      <div class="portal-card-heading"><div><p class="eyebrow">Institutional activity</p><h2>Recent reviews</h2></div></div>
+      {% if recent_reviews %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Lecturer</th><th>Document</th><th>Depth</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
+      {% for item in recent_reviews %}<tr><td>{{ item.lecturer.full_name }}</td><td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }}</small></td><td>{{ item.review_depth|title }}</td><td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span></td><td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td><td>{% if item.status == 'completed' and item.review_id %}<a href="/reviews/{{ item.review_id }}">View</a>{% else %}<span class="muted-text">—</span>{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<p class="muted-text">No review activity has been recorded.</p>{% endif %}
+    </section>
+  </main>
+</body>
+</html>

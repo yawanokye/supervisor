@@ -9,14 +9,18 @@
 </head> 
 <body>
   <header class="topbar">
-    <a class="brand" href="/">
+    <a class="brand" href="/portal">
       <span class="brand-mark">PR</span>
       <span>
         <strong>AI Professor</strong>
         <small> Extraordinary Supervisor</small>
       </span>
     </a>
-    <span class="beta">MVP 1.0</span>
+    <nav class="portal-nav compact-nav">
+      <a class="nav-link" href="{{ '/admin' if user.role == 'admin' else '/portal' }}">Portal</a>
+      <span class="user-chip">{{ user.full_name }}</span>
+      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="nav-button" type="submit">Sign out</button></form>
+    </nav>
   </header>
 
   <main class="page-shell">
@@ -49,6 +53,7 @@
         </div>
 
         <form id="reviewForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <label class="field">
             <span>Academic level</span>
             <select name="academic_level" required>

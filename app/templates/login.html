@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ 'Administrator Login' if portal_type == 'admin' else 'Lecturer Login' }} | AI Professor</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-brand-panel">
+      <a class="brand brand-light" href="/">
+        <span class="brand-mark">PR</span>
+        <span><strong>AI Professor</strong><small>Extraordinary Supervisor</small></span>
+      </a>
+      <div class="auth-brand-copy">
+        <p class="eyebrow light-eyebrow">Institutional supervision portal</p>
+        <h1>Structured academic review for every stage of research.</h1>
+        <p>Lecturers can review chapters, proposals, complete theses and revised submissions from one secure workspace.</p>
+      </div>
+      <div class="auth-feature-list">
+        <span>Complete section-by-section review</span>
+        <span>Cross-chapter alignment</span>
+        <span>Annotated Word output</span>
+        <span>Revision follow-up</span>
+      </div>
+    </section>
+
+    <section class="auth-form-panel">
+      <div class="auth-form-card">
+        <div class="auth-heading">
+          <p class="eyebrow">{{ 'Administration' if portal_type == 'admin' else 'Lecturer portal' }}</p>
+          <h2>{{ 'Administrator sign in' if portal_type == 'admin' else 'Welcome back' }}</h2>
+          <p>{{ 'Manage lecturer accounts and institutional review activity.' if portal_type == 'admin' else 'Sign in with the account created by your administrator.' }}</p>
+        </div>
+
+        {% if flash %}<div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>{% endif %}
+
+        <form method="post" action="{{ '/admin/login' if portal_type == 'admin' else '/login' }}" class="auth-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required autofocus></label>
+          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+          <button class="primary-button" type="submit">Sign in</button>
+        </form>
+
+        <div class="auth-links">
+          {% if portal_type != 'admin' %}<a href="/forgot-password">Reset password with recovery PIN</a>{% endif %}
+          <a href="{{ '/login' if portal_type == 'admin' else '/admin/login' }}">{{ 'Lecturer login' if portal_type == 'admin' else 'Administrator login' }}</a>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

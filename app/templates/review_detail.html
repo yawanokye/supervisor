@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Review Summary | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar portal-topbar"><a class="brand" href="{{ '/admin' if user.role == 'admin' else '/portal' }}"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Review Summary</small></span></a><nav class="portal-nav"><a class="nav-link" href="{{ '/admin' if user.role == 'admin' else '/portal' }}">Back to portal</a></nav></header>
+  <main class="portal-shell detail-shell">
+    <section class="portal-card review-summary-card">
+      <p class="eyebrow">Completed academic review</p><h1>{{ record.filename }}</h1>
+      <div class="review-summary-grid"><div><span>Review depth</span><strong>{{ record.review_depth|title }}</strong></div><div><span>Academic level</span><strong>{{ record.academic_level }}</strong></div><div><span>Score</span><strong>{{ ('%.1f'|format(record.overall_score)) + '%' if record.overall_score is not none else '—' }}</strong></div><div><span>Judgement</span><strong>{{ record.readiness_label or 'Completed' }}</strong></div></div>
+      {% if review and review.summary %}<p class="review-meaning">{{ review.summary.readiness_meaning or '' }}</p>{% endif %}
+      <div class="result-actions"><a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/export.docx">Download supervisor report</a>{% if record.annotated_available %}<a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated.docx">Download annotated document</a>{% endif %}</div>
+    </section>
+    {% if review and review.priority_actions %}<section class="portal-card"><p class="eyebrow">Priority guidance</p><h2>Corrections before resubmission</h2><div class="action-list">{% for action in review.priority_actions[:12] %}<article class="action-item {{ action.severity or 'moderate' }}"><strong>{{ action.section or 'Academic review' }}</strong><p>{{ action.action }}</p></article>{% endfor %}</div></section>{% endif %}
+  </main>
+</body>
+</html>

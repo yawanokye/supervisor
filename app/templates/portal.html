@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lecturer Portal | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar portal-topbar">
+    <a class="brand" href="/portal"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Lecturer Portal</small></span></a>
+    <nav class="portal-nav">
+      <a class="nav-link active" href="/portal">Dashboard</a>
+      <a class="nav-link" href="/review">New review</a>
+      <a class="nav-link" href="/account/password">Password</a>
+      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="nav-button" type="submit">Sign out</button></form>
+    </nav>
+  </header>
+
+  <main class="portal-shell">
+    {% if flash %}<div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>{% endif %}
+    <section class="portal-welcome">
+      <div><p class="eyebrow">Lecturer workspace</p><h1>Welcome, {{ user.full_name }}</h1><p>{{ user.department or 'Academic supervision portal' }}</p></div>
+      <a class="primary-link-button" href="/review">Start a new review</a>
+    </section>
+
+    <section class="portal-stats">
+      <article><span>Total submissions</span><strong>{{ stats.total }}</strong></article>
+      <article><span>Completed reviews</span><strong>{{ stats.completed }}</strong></article>
+      <article><span>In progress</span><strong>{{ stats.processing }}</strong></article>
+      <article><span>Revised submissions</span><strong>{{ stats.revised }}</strong></article>
+    </section>
+
+    <section class="portal-card">
+      <div class="portal-card-heading"><div><p class="eyebrow">Review history</p><h2>Your submitted work</h2></div><a href="/review" class="ghost-link-button">New review</a></div>
+      {% if reviews %}
+      <div class="table-wrap"><table class="portal-table">
+        <thead><tr><th>Document</th><th>Review</th><th>Status</th><th>Submitted</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for item in reviews %}
+          <tr>
+            <td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }} · {{ item.submission_stage|title }}</small></td>
+            <td>{{ item.review_depth|title }}<small>{{ item.review_scope|replace('_',' ')|title }}{% if item.selected_chapter %} · Chapter {{ item.selected_chapter }}{% endif %}</small></td>
+            <td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span>{% if item.status in ['queued','processing'] %}<small>{{ item.progress }}%</small>{% endif %}</td>
+            <td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td>
+            <td class="table-actions">
+              {% if item.status == 'completed' and item.review_id %}
+                <a href="/reviews/{{ item.review_id }}">View</a>
+                <a href="/api/review/{{ item.review_id }}/export.docx">Report</a>
+                {% if item.annotated_available %}<a href="/api/review/{{ item.review_id }}/annotated.docx">Annotated</a>{% endif %}
+              {% elif item.status == 'failed' %}<span class="muted-text">Retry from New review</span>{% else %}<span class="muted-text">Processing</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}
+        <div class="portal-empty"><h3>No reviews yet</h3><p>Submit a chapter, proposal or complete thesis to begin.</p><a class="primary-link-button" href="/review">Start first review</a></div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
