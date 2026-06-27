@@ -244,27 +244,26 @@ def _add_numbered_guidance(doc: Document, label: str, values: Sequence[str]) -> 
 
 def _add_review_point(doc: Document, group: Dict[str, Any], index: int) -> None:
     rows = group["rows"]
-    titles = _unique((row.get("item") for row in rows), 4)
+    titles = _unique((row.get("item") for row in rows), 3)
     heading = doc.add_paragraph()
     heading.paragraph_format.space_before = Pt(7)
     heading.paragraph_format.space_after = Pt(2)
-    label = f"Review point {index}"
-    heading.add_run(label + ": ").bold = True
-    heading.add_run("; ".join(titles) if titles else "Academic revision required").bold = True
+    heading.add_run(f"Review point {index}: ").bold = True
+    heading.add_run(_trim("; ".join(titles) if titles else "Academic revision required", 240)).bold = True
 
     _add_location(doc, group.get("evidence") or [])
 
-    assessments = _unique((row.get("comment") for row in rows), 4)
+    assessments = _unique((_trim(row.get("comment", ""), 520) for row in rows), 2)
     if assessments:
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(3)
         p.add_run("Supervisor’s assessment: ").bold = True
         p.add_run(" ".join(assessments))
 
-    actions = _unique((row.get("required_action") for row in rows), 6)
+    actions = _unique((_trim(row.get("required_action", ""), 460) for row in rows), 4)
     _add_numbered_guidance(doc, "Required revision:", actions)
 
-    examples = _unique((row.get("illustrative_guidance") for row in rows), 4)
+    examples = _unique((_trim(row.get("illustrative_guidance", ""), 360) for row in rows), 1)
     if examples:
         p = doc.add_paragraph()
         p.paragraph_format.left_indent = Inches(0.18)
@@ -273,7 +272,7 @@ def _add_review_point(doc: Document, group: Dict[str, Any], index: int) -> None:
         run = p.add_run("Illustrative guidance: ")
         run.bold = True
         run.font.color.rgb = RGBColor.from_string(BRAND)
-        example_run = p.add_run(" ".join(examples))
+        example_run = p.add_run(examples[0])
         example_run.italic = True
         example_run.font.color.rgb = RGBColor.from_string(INK)
 
@@ -291,6 +290,61 @@ def _add_follow_up_section(doc: Document, title: str, rows: Sequence[Dict[str, A
         _add_review_point(doc, group, index)
     return True
 
+
+
+def _context_summary(review: Dict[str, Any]) -> List[Tuple[str, str]]:
+    context = review.get("study_context") or {}
+    rows: List[Tuple[str, str]] = []
+    title = _clean(context.get("title_or_opening_focus"))
+    if title:
+        rows.append(("Study focus recognised", _trim(title, 320)))
+    for label, key in (
+        ("Country", "confirmed_countries"),
+        ("Study location", "confirmed_locations"),
+        ("Sector or field", "confirmed_sectors"),
+    ):
+        values = _unique(context.get(key) or [], 6)
+        if values:
+            rows.append((label, ", ".join(values)))
+    return rows
+
+
+def _is_source_verification(row: Dict[str, Any]) -> bool:
+    return bool(
+        row.get("source_verification_required")
+        or row.get("guidance_type") == "source_verification"
+        or row.get("category") in {"citations_and_sources", "ethics_and_integrity"}
+    )
+
+
+def _add_source_verification_summary(doc: Document, rows: Sequence[Dict[str, Any]], section_number: int) -> bool:
+    selected = [row for row in rows if _is_source_verification(row)]
+    if not selected:
+        return False
+    doc.add_heading(f"{section_number}. Evidence and Source Verification", level=1)
+    intro = doc.add_paragraph(
+        "The following matters require verification against original, credible sources. They are not findings of misconduct."
+    )
+    intro.paragraph_format.space_after = Pt(5)
+    seen = set()
+    count = 0
+    for row in selected:
+        signature = (_normalised(row.get("section", "")), _normalised(row.get("required_action", ""))[:180])
+        if signature in seen or not signature[1]:
+            continue
+        seen.add(signature)
+        count += 1
+        p = doc.add_paragraph(style="List Number")
+        p.paragraph_format.space_after = Pt(3)
+        p.add_run(f'{_clean(row.get("section", "Chapter"))}: ').bold = True
+        p.add_run(_trim(row.get("required_action", ""), 520))
+        if row.get("evidence"):
+            loc = p.add_run(f' ({_location_text(row.get("evidence") or [])})')
+            loc.italic = True
+            loc.font.color.rgb = RGBColor.from_string(MUTED)
+        if count >= 10:
+            break
+    return True
 
 def build_docx_report(review: Dict[str, Any]) -> bytes:
     doc = Document()
@@ -339,6 +393,20 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         _set_cell_shading(cells[0], SOFT)
         _set_cell_text(cells[0], label, True, BRAND)
         _set_cell_text(cells[1], value)
+
+    context_rows = _context_summary(review)
+    if context_rows:
+        context_heading = doc.add_paragraph()
+        context_heading.paragraph_format.space_before = Pt(8)
+        context_heading.paragraph_format.space_after = Pt(3)
+        context_heading.add_run("Study context used for this review").bold = True
+        context_table = doc.add_table(rows=0, cols=2)
+        context_table.style = "Table Grid"
+        for label, value in context_rows:
+            cells = context_table.add_row().cells
+            _set_cell_shading(cells[0], SOFT)
+            _set_cell_text(cells[0], label, True, BRAND, 8.8)
+            _set_cell_text(cells[1], value, False, INK, 8.8)
 
     doc.add_heading("1. Overall Supervisor Assessment", level=1)
     overall = _clean(review.get("overall_academic_assessment") or summary.get("readiness_meaning"))
@@ -395,7 +463,12 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         doc.add_paragraph("No priority correction was identified.")
 
     findings = review.get("academic_findings") or []
-    doc.add_heading("4. Section-by-Section and Subsection Review", level=1)
+    next_section = 4
+    if _add_source_verification_summary(doc, findings, next_section):
+        next_section += 1
+
+    doc.add_heading(f"{next_section}. Section-by-Section and Subsection Review", level=1)
+    next_section += 1
     reviewed_sections = _ordered_section_reviews(review)
     used_finding_ids = set()
 
@@ -410,13 +483,20 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             if assessments:
                 p = doc.add_paragraph(_trim(" ".join(assessments), 900))
                 p.paragraph_format.space_after = Pt(4)
-            rows = _rows_for_section(section_name, findings)
-            for row in rows:
+            all_rows = _rows_for_section(section_name, findings)
+            for row in all_rows:
                 if row.get("finding_id"):
                     used_finding_ids.add(row.get("finding_id"))
+            rows = [row for row in all_rows if not _is_source_verification(row)]
             if rows:
                 for index, group in enumerate(_group_findings(rows), start=1):
                     _add_review_point(doc, group, index)
+            elif all_rows:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_after = Pt(5)
+                run = p.add_run("Source-verification matters for this section are summarised in the evidence and source-verification section above.")
+                run.italic = True
+                run.font.color.rgb = RGBColor.from_string(MUTED)
             else:
                 p = doc.add_paragraph()
                 p.paragraph_format.space_after = Pt(5)
@@ -430,13 +510,16 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
                 p.add_run("Review note: ").bold = True
                 p.add_run(warning)
 
-    unmatched = [row for row in findings if not row.get("finding_id") or row.get("finding_id") not in used_finding_ids]
+    unmatched = [
+        row for row in findings
+        if (not row.get("finding_id") or row.get("finding_id") not in used_finding_ids)
+        and not _is_source_verification(row)
+    ]
     if unmatched:
         doc.add_heading("Whole-Chapter and Additional Observations", level=2)
         for index, group in enumerate(_group_findings(unmatched), start=1):
             _add_review_point(doc, group, index)
 
-    next_section = 5
     if _add_follow_up_section(doc, f"{next_section}. Cross-Chapter Alignment", review.get("alignment_results") or []):
         next_section += 1
     if _add_follow_up_section(doc, f"{next_section}. Response to Earlier Supervisor Comments", review.get("revision_results") or []):
@@ -450,7 +533,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     note.paragraph_format.space_before = Pt(4)
     note.add_run("Use of examples: ").bold = True
     note.add_run(
-        "Any examples in this report are illustrative. Adapt them to the actual study design, evidence, institutional requirements and verified sources rather than copying them mechanically."
+        "Examples are limited to the context stated in the submitted document. Where the document does not provide a necessary detail, the report uses a neutral placeholder. Replace placeholders only with verified information from the actual study."
     )
     scope_note = doc.add_paragraph()
     scope_note.paragraph_format.space_before = Pt(5)

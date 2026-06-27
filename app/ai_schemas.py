@@ -12,6 +12,7 @@ ReviewStatus = Literal[
     "not_applicable",
 ]
 Severity = Literal["critical", "major", "moderate", "minor"]
+GuidanceType = Literal["direct_correction", "structural_guidance", "conditional_guidance", "source_verification", "language_pattern"]
 AcademicCategory = Literal[
     "title_and_focus",
     "chapter_structure",
@@ -91,6 +92,9 @@ class AcademicIssue(StrictModel):
     academic_consequence: str
     required_action: str
     illustrative_guidance: str = ""
+    guidance_type: GuidanceType = "direct_correction"
+    source_verification_required: bool = False
+    context_guard_adjusted: bool = False
 
 
 class AcademicSectionReview(StrictModel):
@@ -121,6 +125,9 @@ class AcademicIssueVerification(StrictModel):
     academic_consequence: str
     required_action: str
     illustrative_guidance: str = ""
+    guidance_type: GuidanceType = "direct_correction"
+    source_verification_required: bool = False
+    context_guard_adjusted: bool = False
 
 
 class AcademicVerificationBatch(StrictModel):

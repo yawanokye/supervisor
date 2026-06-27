@@ -23,12 +23,7 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
-def _env_float(
-    name: str,
-    default: float,
-    minimum: float = 0.0,
-    maximum: Optional[float] = None,
-) -> float:
+def _env_float(name: str, default: float, minimum: float = 0.0, maximum: Optional[float] = None) -> float:
     try:
         value = float(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -39,19 +34,20 @@ def _env_float(
 
 @dataclass(frozen=True)
 class HybridAIConfig:
-    """Provider routing for the academic-review service.
+    """Academic-review routing configuration.
 
-    Light and Standard Review use DeepSeek V4 Pro.
-    Advanced Review uses GPT-5.4.
-    The historic class name is retained for compatibility.
+    Light, Standard and Advanced Review use DeepSeek. Advanced Review uses the
+    advanced model with maximum reasoning and an independent second-pass audit.
+    OpenAI fields remain optional for backwards compatibility only.
     """
 
     enabled: bool
-
     deepseek_api_key: str
     deepseek_base_url: str
     deepseek_review_model: str
+    deepseek_advanced_model: str
     deepseek_reasoning_effort: str
+    deepseek_advanced_reasoning_effort: str
     deepseek_thinking_enabled: bool
 
     openai_api_key: str
@@ -71,6 +67,7 @@ class HybridAIConfig:
     max_parallel_calls: int
     section_batch_size: int
     light_section_batch_size: int
+    advanced_section_batch_size: int
     verification_batch_size: int
     strict_failure: bool
     structured_output_retries: int
@@ -83,7 +80,7 @@ class HybridAIConfig:
     openai_review_cached_input_price: float
     openai_review_output_price: float
 
-    # Compatibility fields retained for older, dormant modules.
+    # Compatibility fields for dormant legacy modules.
     deepseek_extract_model: str = "deepseek-v4-pro"
     use_flash_document_map: bool = False
     provider_failover: bool = False
@@ -95,7 +92,6 @@ class HybridAIConfig:
     deepseek_flash_input_price: float = 0.14
     deepseek_flash_cached_input_price: float = 0.0028
     deepseek_flash_output_price: float = 0.28
-
     openai_mini_model: str = "gpt-5.4"
     openai_advanced_model: str = "gpt-5.4"
     openai_mini_reasoning_effort: str = "high"
@@ -111,148 +107,60 @@ class HybridAIConfig:
 
     @classmethod
     def from_env(cls) -> "HybridAIConfig":
-        openai_model = os.getenv(
-            "OPENAI_REVIEW_MODEL",
-            os.getenv("OPENAI_VERIFY_MODEL", "gpt-5.4"),
-        ).strip()
-        deepseek_model = os.getenv(
-            "DEEPSEEK_REVIEW_MODEL",
-            "deepseek-v4-pro",
-        ).strip()
-
+        review_model = os.getenv("DEEPSEEK_REVIEW_MODEL", "deepseek-v4-pro").strip()
+        advanced_model = os.getenv("DEEPSEEK_ADVANCED_MODEL", review_model).strip()
+        openai_model = os.getenv("OPENAI_REVIEW_MODEL", "gpt-5.4").strip()
         standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 7500)
-        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
-        openai_effort = os.getenv(
-            "OPENAI_REVIEW_REASONING_EFFORT",
-            "high",
-        ).strip().lower()
+        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 10000)
+        openai_effort = os.getenv("OPENAI_REVIEW_REASONING_EFFORT", "high").strip().lower()
 
         return cls(
             enabled=_env_bool("AI_REVIEW_ENABLED", True),
-
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", "").strip(),
-            deepseek_base_url=os.getenv(
-                "DEEPSEEK_BASE_URL",
-                "https://api.deepseek.com",
-            ).rstrip("/"),
-            deepseek_review_model=deepseek_model,
-            deepseek_reasoning_effort=os.getenv(
-                "DEEPSEEK_REASONING_EFFORT",
-                "high",
-            ).strip().lower(),
-            deepseek_thinking_enabled=_env_bool(
-                "DEEPSEEK_THINKING_ENABLED",
-                True,
-            ),
+            deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+            deepseek_review_model=review_model,
+            deepseek_advanced_model=advanced_model,
+            deepseek_reasoning_effort=os.getenv("DEEPSEEK_REASONING_EFFORT", "high").strip().lower(),
+            deepseek_advanced_reasoning_effort=os.getenv("DEEPSEEK_ADVANCED_REASONING_EFFORT", "max").strip().lower(),
+            deepseek_thinking_enabled=_env_bool("DEEPSEEK_THINKING_ENABLED", True),
 
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-            openai_base_url=os.getenv(
-                "OPENAI_BASE_URL",
-                "https://api.openai.com/v1",
-            ).rstrip("/"),
+            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
             openai_review_model=openai_model,
             openai_review_reasoning_effort=openai_effort,
 
-            confidence_threshold=_env_float(
-                "AI_CONFIDENCE_THRESHOLD",
-                0.78,
-                0.0,
-                1.0,
-            ),
-            max_context_chars_per_rule=_env_int(
-                "AI_MAX_CONTEXT_CHARS_PER_RULE",
-                9000,
-            ),
-            max_map_input_chars=_env_int(
-                "AI_MAX_MAP_INPUT_CHARS",
-                30000,
-            ),
+            confidence_threshold=_env_float("AI_CONFIDENCE_THRESHOLD", 0.78, 0.0, 1.0),
+            max_context_chars_per_rule=_env_int("AI_MAX_CONTEXT_CHARS_PER_RULE", 9000),
+            max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
             max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 8000),
-            light_max_output_tokens=_env_int(
-                "AI_LIGHT_MAX_OUTPUT_TOKENS",
-                6000,
-            ),
+            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 6000),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
-            timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 150),
+            timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 180),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 3),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 3),
-            light_section_batch_size=_env_int(
-                "AI_LIGHT_SECTION_BATCH_SIZE",
-                4,
-            ),
-            verification_batch_size=_env_int(
-                "AI_VERIFICATION_BATCH_SIZE",
-                3,
-            ),
+            light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 4),
+            advanced_section_batch_size=_env_int("AI_ADVANCED_SECTION_BATCH_SIZE", 2),
+            verification_batch_size=_env_int("AI_VERIFICATION_BATCH_SIZE", 2),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
-            structured_output_retries=_env_int(
-                "AI_STRUCTURED_OUTPUT_RETRIES",
-                1,
-                0,
-            ),
-            advanced_quality_control=_env_bool(
-                "AI_ADVANCED_QUALITY_CONTROL",
-                True,
-            ),
+            structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 1, 0),
+            advanced_quality_control=_env_bool("AI_ADVANCED_SECOND_PASS", True),
 
-            deepseek_pro_input_price=_env_float(
-                "PRICE_DEEPSEEK_PRO_INPUT",
-                0.435,
-            ),
-            deepseek_pro_cached_input_price=_env_float(
-                "PRICE_DEEPSEEK_PRO_CACHED_INPUT",
-                0.003625,
-            ),
-            deepseek_pro_output_price=_env_float(
-                "PRICE_DEEPSEEK_PRO_OUTPUT",
-                0.87,
-            ),
-            openai_review_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_INPUT",
-                2.50,
-            ),
-            openai_review_cached_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-                0.25,
-            ),
-            openai_review_output_price=_env_float(
-                "PRICE_OPENAI_REVIEW_OUTPUT",
-                15.00,
-            ),
+            deepseek_pro_input_price=_env_float("PRICE_DEEPSEEK_PRO_INPUT", 0.435),
+            deepseek_pro_cached_input_price=_env_float("PRICE_DEEPSEEK_PRO_CACHED_INPUT", 0.003625),
+            deepseek_pro_output_price=_env_float("PRICE_DEEPSEEK_PRO_OUTPUT", 0.87),
+            openai_review_input_price=_env_float("PRICE_OPENAI_REVIEW_INPUT", 2.50),
+            openai_review_cached_input_price=_env_float("PRICE_OPENAI_REVIEW_CACHED_INPUT", 0.25),
+            openai_review_output_price=_env_float("PRICE_OPENAI_REVIEW_OUTPUT", 15.00),
 
-            deepseek_extract_model=deepseek_model,
+            deepseek_extract_model=review_model,
             openai_mini_model=openai_model,
             openai_advanced_model=openai_model,
             openai_mini_reasoning_effort=openai_effort,
             openai_advanced_reasoning_effort=openai_effort,
             mini_max_output_tokens=standard_tokens,
             review_max_output_tokens=advanced_tokens,
-            openai_mini_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_INPUT",
-                2.50,
-            ),
-            openai_mini_cached_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-                0.25,
-            ),
-            openai_mini_output_price=_env_float(
-                "PRICE_OPENAI_REVIEW_OUTPUT",
-                15.00,
-            ),
-            openai_advanced_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_INPUT",
-                2.50,
-            ),
-            openai_advanced_cached_input_price=_env_float(
-                "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-                0.25,
-            ),
-            openai_advanced_output_price=_env_float(
-                "PRICE_OPENAI_REVIEW_OUTPUT",
-                15.00,
-            ),
         )
 
     @property
@@ -301,41 +209,15 @@ class HybridAIConfig:
 
     def resolve_mode(self, requested_mode: str, academic_level: str = "") -> str:
         requested = (requested_mode or "standard").strip().lower()
-        aliases = {
-            "auto": "standard",
-            "openai_only": "advanced",
-            "hybrid": "standard",
-            "premium": "advanced",
-        }
-        requested = aliases.get(requested, requested)
-
+        requested = {"auto": "standard", "openai_only": "advanced", "hybrid": "standard", "premium": "advanced"}.get(requested, requested)
         if requested not in {"light", "standard", "advanced"}:
+            raise AIConfigurationError("Choose Light Review, Standard Review or Advanced Review.")
+        if not self.deepseek_configured:
             raise AIConfigurationError(
-                "Choose Light Review, Standard Review or Advanced Review."
+                "The academic review service is temporarily unavailable because the review provider is not configured."
             )
-
-        if requested in {"light", "standard"} and not self.deepseek_configured:
-            raise AIConfigurationError(
-                "Light and Standard Review are temporarily unavailable because "
-                "the review service is not fully configured."
-            )
-
-        if requested == "advanced" and not self.openai_configured:
-            raise AIConfigurationError(
-                "Advanced Review is temporarily unavailable because "
-                "the advanced review service is not fully configured."
-            )
-
         return requested
 
     def public_status(self) -> Dict[str, Any]:
-        available = []
-        if self.deepseek_configured:
-            available.extend(["light", "standard"])
-        if self.openai_configured:
-            available.append("advanced")
-        return {
-            "enabled": self.enabled,
-            "configured": bool(available),
-            "review_depths": available,
-        }
+        available = ["light", "standard", "advanced"] if self.deepseek_configured else []
+        return {"enabled": self.enabled, "configured": bool(available), "review_depths": available}

@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT, LIGHT_REVIEW_SYSTEM_PROMPT
 from .ai_providers import AIProviderError, DeepSeekProvider, OpenAIProvider, ProviderResult
+from .academic_review_guide import guide_for_heading
+from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
 from .ai_schemas import (
     AIUsageRecord,
     AcademicIssue,
@@ -159,14 +161,8 @@ def _split_group(group: Dict[str, Any], max_chars: int) -> List[Dict[str, Any]]:
 
 
 def _guide_expectations(review: Dict[str, Any], heading: str) -> List[str]:
-    target = _normalise_heading(heading)
-    selected: List[str] = []
-    for row in review.get("results") or []:
-        row_headings = [_normalise_heading(v) for v in row.get("headings") or []]
-        row_section = _normalise_heading(row.get("section", ""))
-        if any(h in target or target in h for h in row_headings if h != "Untitled section") or (row_section != "Untitled section" and (row_section in target or target in row_section)):
-            selected.append(clean_text(row.get("item", "")))
-    return list(dict.fromkeys(x for x in selected if x))[:16]
+    """Return broad internal academic expectations without exposing checklist wording."""
+    return guide_for_heading(heading, limit=10)
 
 
 def _chapter_dimensions(review: Dict[str, Any]) -> List[str]:
@@ -212,7 +208,13 @@ def _section_key(section: Dict[str, Any], index: int) -> str:
     return f"S{index + 1:03d}P{int(section.get('part') or 1):02d}"
 
 
-def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], supervisor_comments: Sequence[Dict[str, Any]], depth: str = "standard") -> str:
+def _batch_prompt(
+    review: Dict[str, Any],
+    batch: Sequence[Dict[str, Any]],
+    supervisor_comments: Sequence[Dict[str, Any]],
+    context_lock: Dict[str, Any],
+    depth: str = "standard",
+) -> str:
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
     sections = []
@@ -223,7 +225,7 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
             "part": section.get("part", 1),
             "cross_chapter_audit": bool(section.get("alignment_audit")),
             "revision_audit": bool(section.get("revision_audit")),
-            "internal_guidance_only_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
+            "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
             "extra_context": section.get("extra_context") or {},
         })
@@ -239,6 +241,10 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
             "review_benchmark": profile["benchmark"],
             "depth_expectation": profile["focus"],
         },
+        "study_context_lock": {
+            key: value for key, value in context_lock.items()
+            if key != "source_text_normalised"
+        },
         "chapter_review_dimensions": _chapter_dimensions(review),
         "coverage_contract": {
             "review_every_section_and_subsection": True,
@@ -247,17 +253,30 @@ def _batch_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], super
             "strengths_should_be_reported_where_deserved": True,
             "normal_issue_limit_per_section": profile["normal_issue_limit_per_section"],
         },
+        "accuracy_contract": {
+            "do_not_introduce_external_countries_or_locations": True,
+            "do_not_invent_citations_statistics_or_organisations": True,
+            "use_placeholders_for_unknown_context": True,
+            "distinguish_missing_from_weak_content": True,
+            "make_method_advice_conditional_when_design_is_unknown": True,
+        },
         "instruction": (
             "Review every supplied section and subsection at the stated benchmark. Return exactly one review for every section_key. "
-            "Do not omit short or apparently adequate sections. A section may have zero issues only after a substantive assessment, "
-            "and its section_assessment must explain the judgement. Provide context-aware examples or guidance where this will help the student."
+            "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate sections. "
+            "A section may have zero issues only after a substantive assessment. Give examples only from the confirmed study context, "
+            "or use neutral placeholders when a contextual detail is not supplied."
         ),
         "sections": sections,
     }
     return json.dumps(packet, ensure_ascii=False)
 
 
-def _verification_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]], depth: str) -> str:
+def _verification_prompt(
+    review: Dict[str, Any],
+    batch: Sequence[Dict[str, Any]],
+    depth: str,
+    context_lock: Dict[str, Any],
+) -> str:
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
     proposals = []
@@ -280,26 +299,41 @@ def _verification_prompt(review: Dict[str, Any], batch: Sequence[Dict[str, Any]]
             "review_benchmark": profile["benchmark"],
             "depth_expectation": profile["focus"],
         },
+        "study_context_lock": {
+            key: value for key, value in context_lock.items()
+            if key != "source_text_normalised"
+        },
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
-            "Verify the proposed issues at the stated benchmark, correct unsupported or misplaced findings, consolidate repetition, "
-            "and add important missed issues. Confirm that every supplied section and subsection received a substantive assessment. "
-            "For Standard Review, apply Research Master’s/MPhil expectations. For Advanced Review, apply doctoral expectations to originality, "
-            "theoretical contribution, methodological defensibility, robustness, alternative explanations and contribution to knowledge."
+            "Independently verify the proposed issues at the stated benchmark. Remove unsupported, repetitive or misplaced findings; "
+            "correct severity and evidence; add important missed issues; and confirm that all sections received a substantive assessment. "
+            "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
+            "For Advanced Review, apply doctoral expectations to originality, theoretical contribution, methodological defensibility, "
+            "robustness, alternative explanations and contribution to knowledge."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
 
 
-def _valid_issue(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _valid_issue(
+    issue: Dict[str, Any],
+    paragraph_index: Dict[str, Dict[str, Any]],
+    context_lock: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
     try:
         parsed = AcademicIssue.model_validate(issue).model_dump()
     except Exception:
         return None
-    parsed["evidence_paragraph_ids"] = [pid for pid in parsed["evidence_paragraph_ids"] if pid in paragraph_index]
+    parsed = sanitise_issue(parsed, context_lock)
+    parsed["evidence_paragraph_ids"] = [
+        pid for pid in parsed["evidence_paragraph_ids"] if pid in paragraph_index
+    ]
     quote = clean_text(parsed.get("problematic_quote", ""))
-    if quote and not any(quote in clean_text(paragraph_index[pid].get("text", "")) for pid in parsed["evidence_paragraph_ids"]):
+    if quote and not any(
+        quote in clean_text(paragraph_index[pid].get("text", ""))
+        for pid in parsed["evidence_paragraph_ids"]
+    ):
         parsed["problematic_quote"] = ""
     if not parsed["evidence_paragraph_ids"]:
         parsed["confidence"] = min(float(parsed["confidence"]), 0.55)
@@ -321,6 +355,46 @@ def _deduplicate_issues(issues: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
     return sorted(output.values(), key=lambda x: (SEVERITY_ORDER.get(x.get("severity", "minor"), 9), normalised(x.get("section", "")), normalised(x.get("issue_title", ""))))
 
 
+def _consolidate_repetitive_issues(issues: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merge repetitive language, citation and terminology comments within a section."""
+    merge_categories = {"academic_writing", "citations_and_sources", "conceptual_clarity"}
+    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    untouched: List[Dict[str, Any]] = []
+    for issue in issues:
+        category = str(issue.get("category") or "other")
+        if category in merge_categories:
+            grouped[(normalised(issue.get("section", "")), category)].append(issue)
+        else:
+            untouched.append(issue)
+
+    merged: List[Dict[str, Any]] = list(untouched)
+    for (_, category), values in grouped.items():
+        values = sorted(values, key=lambda item: (SEVERITY_ORDER.get(item.get("severity", "minor"), 9), -float(item.get("confidence") or 0)))
+        primary = dict(values[0])
+        evidence: List[str] = []
+        for value in values:
+            evidence.extend(value.get("evidence_paragraph_ids") or [])
+        primary["evidence_paragraph_ids"] = list(dict.fromkeys(evidence))[:6]
+        if len(values) > 1:
+            if category == "academic_writing":
+                primary["issue_title"] = "Recurring academic writing and language problems"
+                primary["required_action"] = (
+                    "Undertake a systematic line-by-line language edit of this section, correcting the recurring patterns identified in the marked examples rather than treating each sentence as an isolated error."
+                )
+                primary["guidance_type"] = "language_pattern"
+            elif category == "citations_and_sources":
+                primary["issue_title"] = "Source attribution and verification require systematic correction"
+                primary["required_action"] = (
+                    "Verify each marked claim or citation against the original source, remove unsupported details, and ensure every retained in-text citation has a complete and accurate reference-list entry."
+                )
+                primary["source_verification_required"] = True
+                primary["guidance_type"] = "source_verification"
+            elif category == "conceptual_clarity":
+                primary["issue_title"] = "Key terminology is used inconsistently"
+        merged.append(primary)
+    return sorted(merged, key=lambda x: (SEVERITY_ORDER.get(x.get("severity", "minor"), 9), normalised(x.get("section", "")), normalised(x.get("issue_title", ""))))
+
+
 def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     severity = issue.get("severity", "moderate")
     status, label = ACTIONABLE_STATUS[severity]
@@ -336,6 +410,9 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "status_label": label, "severity": severity, "confidence": round(float(issue.get("confidence") or 0), 2),
         "evidence": evidence, "comment": comment, "required_action": clean_text(issue.get("required_action", "")),
         "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
+        "guidance_type": issue.get("guidance_type", "direct_correction"),
+        "source_verification_required": bool(issue.get("source_verification_required")),
+        "context_guard_adjusted": bool(issue.get("context_guard_adjusted")),
         "problematic_quote": clean_text(issue.get("problematic_quote", "")), "headings": [section],
     }
 
@@ -430,6 +507,9 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
             "academic_consequence": value.get("academic_consequence", source.get("academic_consequence")),
             "required_action": value.get("required_action", source.get("required_action")),
             "illustrative_guidance": value.get("illustrative_guidance", source.get("illustrative_guidance", "")),
+            "guidance_type": value.get("guidance_type", source.get("guidance_type", "direct_correction")),
+            "source_verification_required": value.get("source_verification_required", source.get("source_verification_required", False)),
+            "context_guard_adjusted": value.get("context_guard_adjusted", source.get("context_guard_adjusted", False)),
         })
     values = list(by_id.values())
     values.extend(verification.get("missed_issues") or [])
@@ -511,7 +591,7 @@ async def enrich_review_with_academic_ai(
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
     depth = config.resolve_mode(requested_mode, academic_level)
     deepseek = DeepSeekProvider(config) if config.deepseek_configured else None
-    openai = OpenAIProvider(config) if config.openai_configured else None
+    openai = OpenAIProvider(config) if config.openai_configured else None  # optional legacy fallback only
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
@@ -519,6 +599,7 @@ async def enrich_review_with_academic_ai(
     supervisor_comments = list(runtime.get("supervisor_comments") or [])
     all_paragraphs = current + context + original
     paragraph_index = {_pid(p): p for p in all_paragraphs}
+    context_lock = build_context_lock(all_paragraphs, review.get("summary") or {})
 
     groups = _section_groups(current)
     max_section_chars = (
@@ -564,12 +645,12 @@ async def enrich_review_with_academic_ai(
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
     else:
-        provider = openai
-        primary_model = config.openai_review_model
-        primary_effort = config.openai_review_reasoning_effort
+        provider = deepseek
+        primary_model = config.deepseek_advanced_model
+        primary_effort = config.deepseek_advanced_reasoning_effort
         primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
-        batch_size = config.section_batch_size
+        batch_size = config.advanced_section_batch_size
 
     if provider is None:
         raise AIProviderError(
@@ -583,7 +664,7 @@ async def enrich_review_with_academic_ai(
     async def primary_call(batch: Sequence[Dict[str, Any]], model: str, effort: str, purpose: str, tokens: int) -> ProviderResult:
         return await provider.complete_json(
             model=model, system_prompt=primary_system_prompt,
-            user_prompt=_batch_prompt(review, batch, supervisor_comments, depth),
+            user_prompt=_batch_prompt(review, batch, supervisor_comments, context_lock, depth),
             schema_model=AcademicReviewBatch, purpose=purpose,
             reasoning_effort=effort, max_output_tokens=tokens,
         )
@@ -674,18 +755,24 @@ async def enrich_review_with_academic_ai(
                 continue
 
             used_ids.add(id(data))
-            valid_issues = [valid for item in data.get("issues") or [] if (valid := _valid_issue(item, paragraph_index))]
+            valid_issues = [valid for item in data.get("issues") or [] if (valid := _valid_issue(item, paragraph_index, context_lock))]
             valid_strengths = []
             for strength in data.get("strengths") or []:
                 ids = [pid for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
                 if ids:
-                    row = dict(strength); row["evidence_paragraph_ids"] = ids; valid_strengths.append(row)
+                    row = dict(strength)
+                    row["evidence_paragraph_ids"] = ids
+                    row["observation"], _ = sanitise_generated_text(row.get("observation", ""), context_lock)
+                    row["section"], _ = sanitise_generated_text(row.get("section", ""), context_lock)
+                    valid_strengths.append(row)
+            section_assessment, _ = sanitise_generated_text(data.get("section_assessment", ""), context_lock)
+            coverage_warning, _ = sanitise_generated_text(data.get("coverage_warning", ""), context_lock)
             section_reviews.append({
                 "section_key": section["section_key"], "heading": clean_text(section.get("heading", "Untitled section")),
                 "part": section.get("part", 1), "paragraph_count": len(section.get("paragraphs") or []),
                 "section_score": float(data.get("section_score") or 0),
-                "section_assessment": clean_text(data.get("section_assessment", "")),
-                "coverage_warning": clean_text(data.get("coverage_warning", "")),
+                "section_assessment": section_assessment,
+                "coverage_warning": coverage_warning,
                 "strengths": valid_strengths, "issues": valid_issues, "source_section": section,
             })
 
@@ -708,8 +795,8 @@ async def enrich_review_with_academic_ai(
                 else config.standard_max_output_tokens
             )
         else:
-            recovery_model = config.openai_review_model
-            recovery_effort = config.openai_review_reasoning_effort
+            recovery_model = config.deepseek_advanced_model
+            recovery_effort = config.deepseek_advanced_reasoning_effort
             recovery_tokens = config.advanced_max_output_tokens
         retry_results = await _run_limited(
             [primary_call([section], recovery_model, recovery_effort, "section_review_recovery", recovery_tokens) for section in retry_sections],
@@ -756,17 +843,17 @@ async def enrich_review_with_academic_ai(
         async def verify_call(
             batch: Sequence[Dict[str, Any]],
         ) -> ProviderResult:
-            if openai is None:
+            if deepseek is None:
                 raise AIProviderError(
                     "The advanced review service is not configured."
                 )
-            return await openai.complete_json(
-                model=config.openai_review_model,
+            return await deepseek.complete_json(
+                model=config.deepseek_advanced_model,
                 system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                user_prompt=_verification_prompt(review, batch, depth),
+                user_prompt=_verification_prompt(review, batch, depth, context_lock),
                 schema_model=AcademicVerificationBatch,
-                purpose="advanced_quality_control",
-                reasoning_effort=config.openai_review_reasoning_effort,
+                purpose="advanced_deepseek_second_pass",
+                reasoning_effort=config.deepseek_advanced_reasoning_effort,
                 max_output_tokens=config.advanced_max_output_tokens,
             )
 
@@ -794,7 +881,7 @@ async def enrich_review_with_academic_ai(
             merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
             for item in merged:
-                valid = _valid_issue(item, paragraph_index)
+                valid = _valid_issue(item, paragraph_index, context_lock)
                 if valid:
                     merged_by_section[
                         normalised(valid.get("section", ""))
@@ -812,7 +899,9 @@ async def enrich_review_with_academic_ai(
             if leftovers and batch:
                 batch[0]["issues"].extend(leftovers)
 
-    all_issues = _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
+    all_issues = _consolidate_repetitive_issues(
+        _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
+    )
     strengths = []
     seen = set()
     for section_review in section_reviews:
@@ -888,6 +977,7 @@ async def enrich_review_with_academic_ai(
         "moderate_issues": counts["moderate"], "minor_issues": counts["minor"],
         "strengths_identified": len(strengths),
     })
+    review["study_context"] = public_context(context_lock)
     review["academic_findings"] = finding_rows
     review["academic_strengths"] = strengths
     review["academic_section_reviews"] = [{k: v for k, v in section.items() if k not in {"source_section", "issues", "strengths"}} for section in section_reviews]
@@ -911,6 +1001,9 @@ async def enrich_review_with_academic_ai(
         "usage": [record.model_dump() for record in usage_records],
         "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
+        "active_provider": "deepseek",
+        "advanced_second_pass": bool(depth == "advanced" and config.advanced_quality_control),
+        "context_guard_enabled": True,
     }
     await _notify(progress_callback, 86, "Preparing the annotated review")
     return review

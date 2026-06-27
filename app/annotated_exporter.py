@@ -108,6 +108,14 @@ def _sanitise_guidance(value: str) -> str:
     return text.rstrip()
 
 
+
+def _shorten_comment(value: str, limit: int = 720) -> str:
+    text = clean_text(value)
+    if len(text) <= limit:
+        return text
+    shortened = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return shortened + "."
+
 def _comment_body(row: Dict[str, Any]) -> str:
     action = _sanitise_guidance(row.get("required_action", ""))
     assessment = _sanitise_guidance(row.get("comment", ""))
@@ -118,7 +126,7 @@ def _comment_body(row: Dict[str, Any]) -> str:
     body = action
     if example:
         body += f" Example: {example}"
-    return body
+    return _shorten_comment(body)
 
 
 def _format_comment_group(comments: Iterable[str]) -> str:
@@ -130,7 +138,9 @@ def _format_comment_group(comments: Iterable[str]) -> str:
         if not text or not key or key in seen:
             continue
         seen.add(key)
-        unique.append(text)
+        unique.append(_shorten_comment(text, 620))
+        if len(unique) >= 4:
+            break
     if not unique:
         return ""
     if len(unique) == 1:
