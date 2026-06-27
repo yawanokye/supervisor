@@ -586,6 +586,11 @@ async def enrich_review_with_academic_ai(
         [primary_call(batch, primary_model, primary_effort, "batched_academic_review", primary_tokens) for batch in section_batches],
         config.max_parallel_calls,
     )
+    await _notify(
+        progress_callback,
+        54,
+        "Completing section coverage and checking omitted sections",
+    )
 
     usage_records: List[AIUsageRecord] = []
     section_reviews: List[Dict[str, Any]] = []
@@ -642,6 +647,11 @@ async def enrich_review_with_academic_ai(
         for section, result in zip(retry_sections, retry_results):
             if not isinstance(result, Exception):
                 consume_batch([section], result)
+        await _notify(
+            progress_callback,
+            64,
+            "Finalising coverage of every section and subsection",
+        )
 
     reviewed_keys = {row["section_key"] for row in section_reviews}
     still_missing = [section for section in sections if section["section_key"] not in reviewed_keys]

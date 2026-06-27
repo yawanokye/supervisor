@@ -44,6 +44,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
 MAX_TOTAL_CONTEXT_BYTES = 75 * 1024 * 1024
+AI_JOB_MAX_SECONDS = max(900, int(os.getenv("AI_JOB_MAX_SECONDS", "5400")))
 ALLOWED_EXTENSIONS = (".docx", ".pdf")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "development-only-change-this-secret")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -212,7 +213,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.3.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.3.1"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -601,9 +602,15 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
         async def progress_callback(value: int, message: str) -> None:
             _job_update(job_id, progress=value, message=message)
 
-        review = await enrich_review_with_academic_ai(
-            review, runtime_context, requested_mode=payload["review_depth"],
-            config=config, progress_callback=progress_callback,
+        review = await asyncio.wait_for(
+            enrich_review_with_academic_ai(
+                review,
+                runtime_context,
+                requested_mode=payload["review_depth"],
+                config=config,
+                progress_callback=progress_callback,
+            ),
+            timeout=AI_JOB_MAX_SECONDS,
         )
         if review.get("ai_review"):
             AI_USAGE_CACHE[review["review_id"]] = dict(review["ai_review"])
@@ -636,9 +643,26 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
                 record.annotated_available = bool(summary.get("annotated_document_available"))
                 record.completed_at = datetime.now(timezone.utc)
                 db.commit()
-        _job_update(job_id, status="completed", progress=100, message="Review complete", review_id=review["review_id"], review=review)
+        _job_update(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Review complete",
+            review_id=review["review_id"],
+            result_url=f'/api/review/{review["review_id"]}',
+        )
     except (ValueError, AIConfigurationError) as exc:
         _job_update(job_id, status="failed", progress=100, message="Review could not start", error=str(exc), retryable=False)
+    except asyncio.TimeoutError:
+        logger.exception("Background review exceeded the maximum processing time")
+        _job_update(
+            job_id,
+            status="failed",
+            progress=100,
+            message="The review exceeded the maximum processing time",
+            error="The review did not finish within the allowed processing window. Please retry with a smaller document or contact the administrator.",
+            retryable=True,
+        )
     except AIProviderError:
         logger.exception("Expert review provider failure")
         _job_update(job_id, status="failed", progress=100, message="The expert review service was temporarily unable to finish", error="The expert review could not be completed. Please retry in a few minutes.", retryable=True)
@@ -740,15 +764,23 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     if not record or (user.role != "admin" and record.lecturer_id != user.id):
         raise HTTPException(status_code=404, detail="Review job not found or expired.")
     if job:
-        return job
-    return {
+        response = dict(job)
+        if response.get("status") == "completed" and response.get("review_id"):
+            response.setdefault("result_url", f'/api/review/{response["review_id"]}')
+        return response
+    response = {
         "job_id": record.job_id,
         "status": record.status,
         "progress": record.progress,
         "message": record.message,
         "error": record.error,
         "review_id": record.review_id,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "completed_at": record.completed_at.isoformat() if record.completed_at else None,
     }
+    if record.status == "completed" and record.review_id:
+        response["result_url"] = f"/api/review/{record.review_id}"
+    return response
 
 
 @app.get("/api/review/{review_id}")
