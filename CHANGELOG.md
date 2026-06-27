@@ -1,3 +1,31 @@
+## v1.4.3
+
+- Replaced the landing-page hero writeup with one concise message.
+- The hero now displays: "Meet Virtual Professor {supervisor name} (V), your Academic Supervision and Assessment Assistant."
+- Removed the previous eyebrow line, supporting paragraph and feature chips from the hero section.
+
+## v1.4.2
+
+- Replaced the bulky review-report DOCX with a concise human-supervisor summary.
+- Kept the annotated Word document unchanged as the detailed review record.
+- Limited the summary report to the overall comment, main strengths, and key corrections by chapter or section.
+- Limited each chapter or section to two strengths and three principal corrections.
+- Grouped complete-thesis reviews by chapter to prevent excessively long reports.
+- Removed detailed review points, long examples, repeated locations and separate source-verification narratives from the summary report.
+- Added a compact supervisor recommendation and up to five immediate revision priorities.
+
+## v1.4.1
+
+- Reduced Advanced Review from repeated per-section audits to one compact doctoral audit.
+- Increased safe section batching for Light, Standard and Advanced Review.
+- Changed Advanced primary review from maximum to high reasoning.
+- Reserved maximum reasoning for the single final doctoral audit.
+- Retried omitted sections in grouped batches instead of one request per section.
+- Added a transparent fallback for up to two omitted short sections such as a title.
+- Reduced output-token limits and repetitive findings without reducing section coverage.
+- Added live section-group progress and internal API call counts.
+- Disabled structured-output retries by default to prevent duplicate successful calls.
+
 ## v1.4.0
 
 - Routed Advanced Review through DeepSeek V4 Pro with maximum reasoning.

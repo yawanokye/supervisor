@@ -104,3 +104,33 @@ AI_JOB_MAX_SECONDS=5400
 ```
 
 A completed job returns a small polling response containing a result URL. The full review is fetched separately, which prevents oversized polling responses and reduces browser failures.
+
+## Faster DeepSeek review workflow
+
+Version 1.4.1 reduces the number of model requests substantially.
+
+- Light Review processes up to 6 sections per request.
+- Standard Review processes up to 5 sections per request.
+- Advanced Review processes up to 4 sections per request.
+- Advanced primary review uses high reasoning.
+- Maximum reasoning is reserved for one compact doctoral audit.
+- Omitted sections are retried in groups of up to 6, not individually.
+- Structured-output retries are disabled by default because grouped recovery handles incomplete coverage.
+
+Recommended values:
+
+```text
+AI_LIGHT_SECTION_BATCH_SIZE=6
+AI_SECTION_BATCH_SIZE=5
+AI_ADVANCED_SECTION_BATCH_SIZE=4
+AI_RECOVERY_BATCH_SIZE=6
+AI_MAX_RECOVERY_BATCHES=2
+AI_STRUCTURED_OUTPUT_RETRIES=0
+
+DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT=high
+DEEPSEEK_ADVANCED_REASONING_EFFORT=max
+AI_ADVANCED_SECOND_PASS=true
+AI_ADVANCED_AUDIT_MAX_FINDINGS=24
+```
+
+For a typical Chapter One with about 15 detected review units, Advanced Review should normally require about four primary requests and one compact audit, plus a grouped recovery request only when a section is omitted.
