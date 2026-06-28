@@ -1,3 +1,17 @@
+## v1.5.0
+
+- Added a complete-thesis structure gate before AI review begins.
+- A complete thesis must cover the five standard research functions: Introduction, Literature Review, Research Methods, Results and Discussion, and Summary/Conclusions/Recommendations.
+- Additional discipline-specific chapters are allowed and receive an integration and cross-thesis alignment audit.
+- When a selected chapter is contained in a composite upload, only that chapter is reviewed. Other embedded chapters are used solely for alignment.
+- Removed the requirement to upload previous chapters separately when they already exist in the main composite file.
+- Strengthened Chapter One review of the research problem, objective flow, research-question alignment and hypothesis adequacy.
+- Strengthened Chapter Two review of concepts, theories and critically synthesised empirical literature.
+- Strengthened Chapter Three objective-method-question-hypothesis alignment and procedural defensibility.
+- Strengthened Chapter Four accuracy, completeness, interpretation and discussion checks.
+- Strengthened Chapter Five checks against repeating the analysis and for findings-based conclusions and recommendations.
+- Kept the concise supervisor report while listing every material correction in summary form.
+
 ## v1.4.3
 
 - Replaced the landing-page hero writeup with one concise message.
