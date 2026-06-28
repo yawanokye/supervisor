@@ -76,7 +76,7 @@ function updateUploadWorkflow() {
 
   documentTypeField.classList.toggle("hidden", fullThesis || chapter !== 1);
   previousChaptersField.classList.toggle("hidden", fullThesis || chapter < 2);
-  previousFilesInput.required = !fullThesis && chapter >= 2;
+  previousFilesInput.required = false;
   previousFilesInput.disabled = fullThesis || chapter < 2;
 
   revisionReviewFields.classList.toggle("hidden", !revised);
@@ -102,8 +102,8 @@ function updateUploadWorkflow() {
     const last = chapter - 1;
     previousUploadTitle.textContent = last === 1 ? "Upload Chapter One" : `Upload Chapters 1 to ${last}`;
     previousUploadHelp.textContent = last === 1
-      ? "Upload Chapter One as a DOCX or PDF so the current chapter can be checked against the problem, objectives, questions, hypotheses, concepts, and variables."
-      : `Upload Chapters 1 to ${last} as one composite DOCX/PDF or as separate files. These files are used to test alignment with Chapter ${chapter}.`;
+      ? "If the main upload does not already contain Chapter One, upload it here for alignment. When the main file is composite, only the selected chapter is reviewed and Chapter One is used as context."
+      : `If the main upload does not already contain Chapters 1 to ${last}, upload them here as one composite file or separate files. Other chapters are used for alignment only.`;
   } else {
     mainUploadTitle.textContent = revised ? "Choose the revised chapter under review" : "Choose the chapter under review";
   }
@@ -472,9 +472,6 @@ form.addEventListener("submit", async event => {
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
   if (scope === "chapter" && !chapter) { chapterSelect.focus(); return; }
-  if (scope === "chapter" && chapter >= 2 && !(previousFilesInput.files || []).length) {
-    showFormError(`Upload Chapters 1 to ${chapter - 1} as one composite file or as separate files before running the review.`, previousChaptersField); return;
-  }
   if (stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
     showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields); return;
   }
