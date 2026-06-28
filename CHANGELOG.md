@@ -1,3 +1,27 @@
+## v1.5.2
+
+- Made chapter and section numbering optional.
+- Chapter titles and recognised section headings are now the primary basis for chapter identification.
+- Added direct detection of unnumbered chapter titles such as Introduction, Literature Review, Research Methods, Results and Discussion, and Summary, Conclusions and Recommendations.
+- Retained section numbering such as 1.1 or 4.2 as supporting evidence where a school, department or student uses it.
+- Prevented an unnumbered Introduction subsection inside a later chapter from being treated as Chapter One.
+- Updated mismatch guidance so students are not instructed to number headings when numbering is not required.
+- Section-heading text remains the main reference in review comments, with section numbers included only when present.
+
+## v1.5.1
+
+- Rebuilt chapter identification around explicit chapter titles and UCC-style numbered section headings such as 1.1, 3.4 and 5.2.
+- Removed global keyword leakage that could treat an Introduction subsection in Chapter Four or Five as Chapter One.
+- Complete-thesis rejection messages now list every missing standard chapter function accurately.
+- A selected chapter is rejected before review when the uploaded chapter title or section numbering identifies a different chapter.
+- Strong component-aware fallback is retained only for genuinely unnumbered standalone chapters.
+- Composite uploads are segmented by chapter, and only the selected chapter is reviewed. Other chapters remain alignment context.
+- Added DOCX table-row extraction so statistics in tables are available to the academic review.
+- Added section-number, table and chapter-detection metadata for clearer evidence references.
+- Added model-specific diagnostic checks to Research Methods and Results and Discussion.
+- Added deterministic screening for invalid p-values, R-squared values, percentages, reversed confidence intervals, coefficient-sign contradictions and p-value interpretation contradictions.
+- Strengthened checks for sample-size, total, percentage, table, figure and narrative reconciliation.
+
 ## v1.5.0
 
 - Added a complete-thesis structure gate before AI review begins.
