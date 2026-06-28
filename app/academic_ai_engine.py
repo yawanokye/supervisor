@@ -62,7 +62,7 @@ CHAPTER_DIMENSIONS: Dict[int, List[str]] = {
         "validity, reliability, trustworthiness and pilot evidence",
         "data collection procedures, ethics and data protection",
         "data preparation and analysis mapped objective by objective",
-        "model specification, assumptions, reproducibility and limitations",
+        "model specification, assumptions, model-specific diagnostics, thresholds, remedies and reproducibility",
         "proposal or completed-study tense and procedural accuracy",
     ],
     4: [
@@ -70,6 +70,8 @@ CHAPTER_DIMENSIONS: Dict[int, List[str]] = {
         "complete objective-by-objective or hypothesis-by-hypothesis presentation",
         "internal accuracy of narrative, tables, figures, totals and sample sizes",
         "accuracy of coefficients, signs, significance values, intervals and decisions",
+        "presence and interpretation of diagnostics appropriate to the statistical model",
+        "reconciliation of sample sizes, totals, percentages, tables, figures and narrative claims",
         "appropriate statistical, qualitative or mixed-method interpretation",
         "distinction between results, interpretation and discussion",
         "thorough discussion against theory and empirical literature",
@@ -168,6 +170,10 @@ def _evidence(paragraph: Dict[str, Any]) -> Dict[str, Any]:
         "chapter_number": value["chapter_number"], "is_heading": value["is_heading"],
         "source_filename": value["source_filename"], "document_role": value["document_role"],
         "document_index": paragraph.get("document_index", 0), "paragraph_id": value["id"],
+        "section_number": paragraph.get("section_number"),
+        "source_kind": paragraph.get("source_kind", "paragraph"),
+        "table_index": paragraph.get("table_index"),
+        "table_row": paragraph.get("table_row"),
         "matched_terms": [], "adequacy_terms": [], "rank_score": 1,
     }
 
@@ -326,7 +332,11 @@ def _batch_prompt(
             "make_method_advice_conditional_when_design_is_unknown": True,
             "do_not_review_context_only_chapters_as_the_selected_chapter": True,
             "verify_objective_question_hypothesis_method_result_conclusion_alignment": True,
+            "verify_model_specific_diagnostics_in_methods_and_results": True,
+            "verify_statistical_values_against_tables_and_interpretations": True,
+            "treat_local_statistical_flags_as_items_to_verify_not_automatic_conclusions": True,
         },
+        "statistical_review_audit": review.get("statistical_review") or {},
         "institutional_structure_contract": {
             "default_complete_thesis_structure": [
                 "Chapter One: Introduction",
@@ -345,6 +355,8 @@ def _batch_prompt(
             "A section may have zero issues only after a substantive assessment. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
             "For a complete thesis, examine all standard chapters and any optional chapters, and test whether optional chapters integrate coherently with the rest of the study. "
+            "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
+            "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied."
         ),
         "sections": sections,

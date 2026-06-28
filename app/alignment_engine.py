@@ -275,7 +275,7 @@ def _anchor_alignment(
             item=item,
             status=STATUS_MANUAL,
             comment="The previous chapters were uploaded, but no clear objectives, questions, or hypotheses could be extracted for comparison.",
-            action="Use clear, numbered headings for the research objectives, questions, and hypotheses, then rerun the alignment review.",
+            action="Use clear headings for the research objectives, questions and hypotheses. Numbering may be used but is not required. Then rerun the alignment review.",
             headings=list(preferred_headings),
             confidence=0.48,
             details={"anchors_found": 0, "matched": [], "unmatched": []},

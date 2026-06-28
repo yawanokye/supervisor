@@ -9,7 +9,10 @@ from .alignment_engine import alignment_score, detected_chapters, evaluate_align
 from .comment_parser import extract_supervisor_comments
 from .revision_engine import evaluate_revision_comments, revision_counts, revision_score
 from .document_parser import (
+    CHAPTER_DISPLAY_NAMES,
+    CHAPTER_EXPECTED_COMPONENTS,
     clean_text,
+    detect_document_chapter_profile,
     detect_standard_chapter_coverage,
     infer_primary_chapter,
     normalised,
@@ -68,7 +71,7 @@ def _location(evidence: List[Dict[str, Any]]) -> str:
     heading = best.get("heading")
     parts = []
     if heading:
-        parts.append(str(heading))
+        parts.append(f'section heading "{heading}"')
     if page is not None:
         parts.append(f"page {page}")
     if para is not None:
@@ -299,6 +302,14 @@ def _tag_paragraphs(
     return tagged
 
 
+def _chapter_name(number: int) -> str:
+    return CHAPTER_DISPLAY_NAMES.get(number, f"Chapter {number}")
+
+
+def _expected_components_text(number: int, limit: int = 6) -> str:
+    return ", ".join(CHAPTER_EXPECTED_COMPONENTS.get(number, [])[:limit])
+
+
 def _partition_submission_for_review(
     paragraphs: List[Dict[str, Any]],
     *,
@@ -306,75 +317,88 @@ def _partition_submission_for_review(
     full_thesis: bool,
     filename: str,
 ) -> Dict[str, Any]:
-    detected = sorted(detected_chapters(paragraphs, filename))
+    profile = detect_document_chapter_profile(paragraphs)
+    detected = list(profile["detected_chapters"])
     coverage = detect_standard_chapter_coverage(paragraphs)
 
     if full_thesis:
         if not coverage["complete"]:
+            uploaded = ", ".join(coverage["detected_chapter_labels"]) or "no reliably identified chapter title"
             missing = "; ".join(coverage["missing_functions"])
             raise ValueError(
-                "The uploaded thesis is not complete and the review has not "
-                "started. The following standard chapter coverage is missing: "
-                f"{missing}. Upload a complete thesis covering the default "
-                "five-chapter research structure. Additional discipline-specific "
-                "chapters are allowed."
+                "The uploaded thesis is not complete, so the review has not started. "
+                f"Detected: {uploaded}. Missing standard coverage: {missing}. "
+                "Upload the complete thesis or choose the correct chapter review."
             )
         return {
             "review_paragraphs": paragraphs,
             "embedded_context_paragraphs": [],
             "uploaded_chapters": detected,
+            "uploaded_chapter_labels": profile["detected_labels"],
             "reviewed_chapters": detected,
             "embedded_alignment_chapters": [],
             "coverage": coverage,
+            "chapter_profile": profile,
         }
 
     if selected_chapter not in {1, 2, 3, 4, 5}:
-        raise ValueError(
-            "Select Chapter 1, 2, 3, 4 or 5 for the chapter review."
-        )
+        raise ValueError("Select Chapter 1, 2, 3, 4 or 5 for the chapter review.")
 
+    selected_name = _chapter_name(selected_chapter)
+    detected_text = ", ".join(profile["detected_labels"])
     if detected and selected_chapter not in detected:
-        detected_text = ", ".join(map(str, detected))
         raise ValueError(
-            f"Chapter {selected_chapter} was selected, but it was not detected "
-            f"in the uploaded document. Detected chapter(s): {detected_text}. "
-            "Upload the correct chapter or select the chapter actually contained "
-            "in the document."
+            f"You selected {selected_name}, but the uploaded document was identified as {detected_text}. "
+            "The review has not started. "
+            f"Upload {selected_name} containing expected sections such as {_expected_components_text(selected_chapter)}."
         )
 
-    if selected_chapter in detected:
-        review_paragraphs = [
-            paragraph for paragraph in paragraphs
-            if paragraph.get("chapter_number") == selected_chapter
-        ]
+    if not detected:
+        inferred = profile.get("inferred_chapter")
+        selected_score = profile["component_scores"].get(selected_chapter, 0)
+        if inferred is not None and inferred != selected_chapter:
+            raise ValueError(
+                f"You selected {selected_name}, but the section headings most closely match {_chapter_name(inferred)}. "
+                "The review has not started. Upload the correct chapter or change the chapter selection."
+            )
+        if selected_score < 3:
+            raise ValueError(
+                f"The app could not confirm that the uploaded document is {selected_name}. "
+                "The review has not started. Use a clear chapter title and recognised section headings. "
+                "Section numbering is optional. Include expected components such as "
+                f"{_expected_components_text(selected_chapter)}."
+            )
+        detected = [selected_chapter]
+        profile["detected_chapters"] = detected
+        profile["detected_labels"] = [selected_name]
+        profile["inferred_chapter"] = selected_chapter
+
+    assigned_selected = [row for row in paragraphs if row.get("chapter_number") == selected_chapter]
+    if assigned_selected:
+        review_paragraphs = assigned_selected
         embedded_context = [
-            dict(paragraph)
-            for paragraph in paragraphs
-            if isinstance(paragraph.get("chapter_number"), int)
-            and paragraph.get("chapter_number") != selected_chapter
+            dict(row) for row in paragraphs
+            if isinstance(row.get("chapter_number"), int) and row.get("chapter_number") != selected_chapter
         ]
     else:
         review_paragraphs = paragraphs
         embedded_context = []
 
     if not review_paragraphs:
-        raise ValueError(
-            f"No readable content was isolated for Chapter {selected_chapter}."
-        )
+        raise ValueError(f"No readable content was isolated for {selected_name}.")
 
     return {
         "review_paragraphs": review_paragraphs,
         "embedded_context_paragraphs": embedded_context,
         "uploaded_chapters": detected,
+        "uploaded_chapter_labels": profile["detected_labels"],
         "reviewed_chapters": [selected_chapter],
-        "embedded_alignment_chapters": sorted(
-            {
-                int(paragraph["chapter_number"])
-                for paragraph in embedded_context
-                if isinstance(paragraph.get("chapter_number"), int)
-            }
-        ),
+        "embedded_alignment_chapters": sorted({
+            int(row["chapter_number"]) for row in embedded_context
+            if isinstance(row.get("chapter_number"), int)
+        }),
         "coverage": coverage,
+        "chapter_profile": profile,
     }
 
 
@@ -415,6 +439,18 @@ def analyse(
         filename=filename,
     )
     current_paragraphs = partition["review_paragraphs"]
+    statistical_chapters = [3, 4] if full_thesis else ([selected_chapter] if selected_chapter in {3, 4} else [])
+    statistical_review = (
+        build_statistical_review(current_paragraphs, chapter_numbers=statistical_chapters)
+        if statistical_chapters
+        else {
+            "chapter_numbers": [],
+            "diagnostic_inventory": {"groups": {}, "any_diagnostics_present": False, "diagnostic_group_count": 0},
+            "consistency_warnings": [],
+            "warning_count": 0,
+            "note": "",
+        }
+    )
     proposal_mode = bool(
         not full_thesis
         and selected_chapter == 1
@@ -601,6 +637,8 @@ def analyse(
             "selected_chapter": selected_chapter,
             "inferred_chapter": inferred,
             "uploaded_chapters_detected": sorted(uploaded_chapters),
+            "uploaded_chapter_labels": partition["uploaded_chapter_labels"],
+            "chapter_detection_profile": partition["chapter_profile"],
             "current_chapters_detected": sorted(current_chapters),
             "embedded_alignment_chapters": partition["embedded_alignment_chapters"],
             "reviewed_only_selected_chapter": bool(
@@ -644,6 +682,7 @@ def analyse(
             "original_document_supplied": bool(original_summary),
         },
         "context_documents": prepared_context,
+        "statistical_review": statistical_review,
         "original_document": original_summary,
         "supervisor_comment_sources": comment_sources,
         "chapter_scores": chapter_scores,

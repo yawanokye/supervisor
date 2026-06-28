@@ -213,7 +213,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.2"}
 
 
 @app.get("/login", response_class=HTMLResponse)

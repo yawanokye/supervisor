@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-DOCUMENT_MAP_SYSTEM_PROMPT = """You extract a compact thesis map from numbered thesis paragraphs.
+DOCUMENT_MAP_SYSTEM_PROMPT = """You extract a compact thesis map from identified thesis paragraphs and section headings.
 Return JSON only. Use only information explicitly present in the supplied paragraphs.
 Do not invent objectives, variables, methods, findings, conclusions, recommendations, locations, institutions or populations.
 Keep each list item concise and preserve the study's terminology.
@@ -26,8 +26,8 @@ Institutional thesis-structure strengthening:
 - Treat the following as additional supervisory expectations that strengthen, but do not replace, the existing academic review or legitimate disciplinary structures.
 - For Chapter One, test whether the problem is clear, specific, significant, researchable, evidenced, context-bound and built around an unresolved practical or knowledge gap. Verify that objectives arise from the problem, questions align one-to-one with objectives, and hypotheses are adequate where theory and design require them.
 - For Chapter Two, verify that concepts, appropriate theories and empirical literature are all reviewed. Empirical literature must be synthesised and critiqued rather than enumerated study by study, and the organisation must support the objectives and framework.
-- For Chapter Three, verify that the methods and procedures are coherent, justified, reproducible and explicitly aligned with each objective, research question and hypothesis.
-- For Chapter Four, check internal accuracy and completeness of results, consistency between narrative and tables or figures, correct interpretation, complete answers to the objectives or hypotheses, and a thorough discussion linked to theory and previous evidence.
+- For Chapter Three, verify that the methods and procedures are coherent, justified, reproducible and explicitly aligned with each objective, research question and hypothesis. Identify the actual statistical model and require the diagnostics, assumptions, thresholds and remedies appropriate to that model.
+- For Chapter Four, check internal accuracy and completeness of results, consistency between narrative and tables or figures, correct interpretation, complete answers to the objectives or hypotheses, and a thorough discussion linked to theory and previous evidence. Verify model diagnostics, coefficient signs, p-values, confidence intervals, sample sizes, totals, percentages, model fit and hypothesis decisions.
 - For Chapter Five, ensure the student summarises the main findings rather than repeating the analysis, draws conclusions from findings, identifies justified contributions and implications, and makes recommendations traceable to the findings.
 - For a selected chapter contained in a composite upload, assess only the selected chapter. Use the other chapters as contextual alignment evidence and do not produce section reviews for them.
 - For a complete thesis, the standard five research functions must be covered. Additional chapters are allowed only where they serve a clear disciplinary purpose and align with the rest of the thesis.
