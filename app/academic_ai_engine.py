@@ -30,11 +30,64 @@ ACTIONABLE_STATUS = {
 }
 
 CHAPTER_DIMENSIONS: Dict[int, List[str]] = {
-    1: ["title accuracy and scope", "background progression and evidence", "research problem and gap", "purpose, objectives, questions and hypotheses", "significance and contribution", "scope and limitations", "definitions and chapter organisation", "terminology consistency", "academic writing and citations"],
-    2: ["conceptual definitions and construct boundaries", "theory selection and application", "critical empirical synthesis", "objective-driven organisation", "contradictions and limitations in prior studies", "research gap", "hypothesis development and conceptual framework", "source quality, recency and citation accuracy", "academic writing"],
-    3: ["research philosophy and design fit", "study setting, population and sampling", "sample-size justification", "instrument development and measurement", "validity, reliability or qualitative trustworthiness", "data collection", "data preparation and analysis mapped to objectives", "model specification and assumptions", "ethics and reproducibility", "academic writing and methodological consistency"],
-    4: ["data quality and preliminary analysis", "objective-by-objective presentation", "accuracy of tables and figures", "statistical or qualitative interpretation", "hypothesis decisions", "effect sizes and uncertainty", "discussion against theory and prior studies", "unexpected findings and alternative explanations", "consistency with Chapter Three", "academic writing and reporting standards"],
-    5: ["summary by objectives", "conclusions supported by findings", "theoretical, practical and policy implications", "recommendations traceable to findings", "contribution to knowledge", "limitations and future research", "absence of new evidence", "consistency with the research problem", "academic writing and presentation"],
+    1: [
+        "title accuracy and scope",
+        "background progression and evidence",
+        "a clear, specific, significant and researchable problem",
+        "the practical or empirical condition and the defensible knowledge gap",
+        "problem consequences, affected population or unit and actual study context",
+        "purpose and objectives that flow directly from the problem",
+        "one-to-one alignment of objectives and research questions",
+        "adequate theoretically justified hypotheses where necessary",
+        "significance and contribution",
+        "scope, limitations, definitions and chapter organisation",
+        "terminology consistency, academic writing and citations",
+    ],
+    2: [
+        "review and clarification of all central concepts",
+        "appropriate theory selection, critique and application",
+        "critical empirical synthesis rather than study-by-study enumeration",
+        "organisation around objectives, constructs or relationships",
+        "comparison of contexts, methods, data and findings",
+        "contradictions, limitations and unresolved issues in prior studies",
+        "research gap, hypothesis or proposition development and conceptual framework",
+        "clear implications of the literature for the study",
+        "source quality, recency, citation accuracy and academic writing",
+    ],
+    3: [
+        "research paradigm, approach, design and time-horizon fit",
+        "methods and procedures aligned with every objective, question and hypothesis",
+        "study setting, population, sampling frame, sample size and selection procedures",
+        "instrument or data-source development and measurement",
+        "validity, reliability, trustworthiness and pilot evidence",
+        "data collection procedures, ethics and data protection",
+        "data preparation and analysis mapped objective by objective",
+        "model specification, assumptions, reproducibility and limitations",
+        "proposal or completed-study tense and procedural accuracy",
+    ],
+    4: [
+        "advance organiser and actual analysed sample",
+        "complete objective-by-objective or hypothesis-by-hypothesis presentation",
+        "internal accuracy of narrative, tables, figures, totals and sample sizes",
+        "accuracy of coefficients, signs, significance values, intervals and decisions",
+        "appropriate statistical, qualitative or mixed-method interpretation",
+        "distinction between results, interpretation and discussion",
+        "thorough discussion against theory and empirical literature",
+        "unexpected findings, contradictions and alternative explanations",
+        "theoretical, practical and policy implications",
+        "consistency with Chapter Three and reporting standards",
+    ],
+    5: [
+        "overview of purpose, questions or hypotheses and methods",
+        "summary of main findings by objective without repeating the analysis",
+        "conclusions drawn from findings rather than restated results",
+        "unexpected findings, contribution and implications",
+        "recommendations traceable to specific findings",
+        "responsible actors and realistic implementation where appropriate",
+        "limitations and suggestions for further research",
+        "absence of new evidence and consistency with the research problem",
+        "academic writing and presentation",
+    ],
 }
 
 KEY_ALIGNMENT_TERMS = (
@@ -237,6 +290,18 @@ def _batch_prompt(
             "chapter_under_review": summary.get("selected_chapter"),
             "review_stage": summary.get("submission_stage"),
             "review_depth": depth,
+            "review_scope": summary.get("review_scope"),
+            "uploaded_chapters_detected": summary.get("uploaded_chapters_detected", []),
+            "reviewed_chapters": summary.get("current_chapters_detected", []),
+            "selected_chapter_isolated_from_composite": summary.get(
+                "reviewed_only_selected_chapter", False
+            ),
+            "complete_thesis_structure_validated": summary.get(
+                "complete_thesis_structure_validated", False
+            ),
+            "optional_chapters_detected": summary.get(
+                "optional_chapters_detected", []
+            ),
             "review_level_label": profile["label"],
             "review_benchmark": profile["benchmark"],
             "depth_expectation": profile["focus"],
@@ -259,12 +324,28 @@ def _batch_prompt(
             "use_placeholders_for_unknown_context": True,
             "distinguish_missing_from_weak_content": True,
             "make_method_advice_conditional_when_design_is_unknown": True,
+            "do_not_review_context_only_chapters_as_the_selected_chapter": True,
+            "verify_objective_question_hypothesis_method_result_conclusion_alignment": True,
+        },
+        "institutional_structure_contract": {
+            "default_complete_thesis_structure": [
+                "Chapter One: Introduction",
+                "Chapter Two: Literature Review",
+                "Chapter Three: Research Methods",
+                "Chapter Four: Results and Discussion",
+                "Chapter Five: Summary, Conclusions and Recommendations",
+            ],
+            "discipline_specific_additional_chapters_are_allowed": True,
+            "additional_chapters_must_align_with_the_problem_objectives_methods_results_and_conclusions": True,
+            "the_guideline_strengthens_but_does_not_replace_the_existing_academic_review": True,
         },
         "instruction": (
             "Review every supplied section and subsection at the stated benchmark. Return exactly one review for every section_key. "
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate sections. "
-            "A section may have zero issues only after a substantive assessment. Give examples only from the confirmed study context, "
-            "or use neutral placeholders when a contextual detail is not supplied."
+            "A section may have zero issues only after a substantive assessment. "
+            "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
+            "For a complete thesis, examine all standard chapters and any optional chapters, and test whether optional chapters integrate coherently with the rest of the study. "
+            "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied."
         ),
         "sections": sections,
     }
@@ -718,6 +799,47 @@ async def enrich_review_with_academic_ai(
     whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
     if whole_audit:
         sections.append({"heading": "Whole-chapter coherence and consistency audit", "part": 1, "paragraphs": whole_audit})
+
+    optional_chapters = list(
+        (review.get("summary") or {}).get("optional_chapters_detected") or []
+    )
+    if optional_chapters:
+        optional_paragraphs = [
+            paragraph for paragraph in current
+            if paragraph.get("chapter_number") in optional_chapters
+        ]
+        standard_alignment = _selected_audit_paragraphs(
+            [
+                paragraph for paragraph in current
+                if paragraph.get("chapter_number") in {1, 2, 3, 4, 5}
+            ],
+            max(12000, config.max_map_input_chars // 2),
+        )
+        optional_packet = _selected_audit_paragraphs(
+            optional_paragraphs,
+            max(12000, config.max_map_input_chars // 2),
+        )
+        combined_optional = standard_alignment + [
+            paragraph for paragraph in optional_packet
+            if paragraph not in standard_alignment
+        ]
+        if combined_optional:
+            sections.append({
+                "heading": "Optional chapter integration and cross-thesis alignment audit",
+                "part": 1,
+                "paragraphs": combined_optional,
+                "alignment_audit": True,
+                "extra_context": {
+                    "optional_chapters": optional_chapters,
+                    "instruction": (
+                        "Determine whether every optional chapter has a clear "
+                        "disciplinary purpose and remains consistent with the "
+                        "problem, objectives, literature, methods, results, "
+                        "conclusions and recommendations."
+                    ),
+                },
+            })
+
     if context:
         combined = _selected_audit_paragraphs(context + current, max(config.max_map_input_chars, 30000))
         if combined:

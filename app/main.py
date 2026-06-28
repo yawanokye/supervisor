@@ -213,7 +213,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.4.3"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.0"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -705,9 +705,13 @@ async def create_review(
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
 
-    context_uploads = [item for item in (previous_files or []) if item and item.filename]
-    if review_scope == "chapter" and selected_chapter >= 2 and not context_uploads:
-        raise HTTPException(status_code=400, detail=f"Upload Chapters 1 to {selected_chapter - 1} for alignment.")
+    context_uploads = [
+        item for item in (previous_files or [])
+        if item and item.filename
+    ]
+    # The main upload may be a composite containing both the selected chapter
+    # and alignment chapters. The parsed document determines whether extra
+    # context uploads are required.
     if len(context_uploads) > MAX_CONTEXT_FILES:
         raise HTTPException(status_code=400, detail=f"Upload no more than {MAX_CONTEXT_FILES} previous-chapter files.")
     context_documents = []

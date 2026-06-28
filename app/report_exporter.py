@@ -462,7 +462,7 @@ def _section_strengths(
 def _section_corrections(
     section_name: str,
     findings: Sequence[Dict[str, Any]],
-    limit: int = 3,
+    limit: int | None = None,
 ) -> List[str]:
     rows = _rows_for_section(section_name, findings)
     rows = [
@@ -491,7 +491,7 @@ def _section_corrections(
             continue
         seen.add(signature)
         output.append(action)
-        if len(output) >= limit:
+        if limit is not None and len(output) >= limit:
             break
     return output
 
@@ -561,7 +561,7 @@ def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
                 strengths,
                 section.get("assessments") or [],
             ),
-            "corrections": _section_corrections(heading, findings, 3),
+            "corrections": _section_corrections(heading, findings, None),
             "warnings": _unique(section.get("coverage_warnings") or [], 1),
             "assessments": section.get("assessments") or [],
         })
@@ -591,7 +591,7 @@ def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     output = []
     for group in grouped.values():
         group["strengths"] = _unique(group["strengths"], 3)
-        group["corrections"] = _unique(group["corrections"], 5)
+        group["corrections"] = _unique(group["corrections"], None)
         group["warnings"] = _unique(group["warnings"], 1)
         output.append(group)
     return output
@@ -797,8 +797,9 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
 
     doc.add_heading("3. Strengths and Key Corrections by Chapter or Section", level=1)
     intro = doc.add_paragraph(
-        "Only the principal matters are summarised below. Detailed passage-level "
-        "comments, examples and locations are provided in the annotated document."
+        "All material corrections identified by the review are summarised below in "
+        "concise action form. Detailed explanations, examples and exact locations remain "
+        "in the annotated document."
     )
     intro.paragraph_format.space_after = Pt(5)
 

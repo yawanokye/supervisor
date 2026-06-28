@@ -8,7 +8,13 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from .alignment_engine import alignment_score, detected_chapters, evaluate_alignment
 from .comment_parser import extract_supervisor_comments
 from .revision_engine import evaluate_revision_comments, revision_counts, revision_score
-from .document_parser import clean_text, infer_primary_chapter, normalised, parse_document
+from .document_parser import (
+    clean_text,
+    detect_standard_chapter_coverage,
+    infer_primary_chapter,
+    normalised,
+    parse_document,
+)
 from .review_rules import (
     CHAPTERS,
     RULES,
@@ -293,6 +299,85 @@ def _tag_paragraphs(
     return tagged
 
 
+def _partition_submission_for_review(
+    paragraphs: List[Dict[str, Any]],
+    *,
+    selected_chapter: Optional[int],
+    full_thesis: bool,
+    filename: str,
+) -> Dict[str, Any]:
+    detected = sorted(detected_chapters(paragraphs, filename))
+    coverage = detect_standard_chapter_coverage(paragraphs)
+
+    if full_thesis:
+        if not coverage["complete"]:
+            missing = "; ".join(coverage["missing_functions"])
+            raise ValueError(
+                "The uploaded thesis is not complete and the review has not "
+                "started. The following standard chapter coverage is missing: "
+                f"{missing}. Upload a complete thesis covering the default "
+                "five-chapter research structure. Additional discipline-specific "
+                "chapters are allowed."
+            )
+        return {
+            "review_paragraphs": paragraphs,
+            "embedded_context_paragraphs": [],
+            "uploaded_chapters": detected,
+            "reviewed_chapters": detected,
+            "embedded_alignment_chapters": [],
+            "coverage": coverage,
+        }
+
+    if selected_chapter not in {1, 2, 3, 4, 5}:
+        raise ValueError(
+            "Select Chapter 1, 2, 3, 4 or 5 for the chapter review."
+        )
+
+    if detected and selected_chapter not in detected:
+        detected_text = ", ".join(map(str, detected))
+        raise ValueError(
+            f"Chapter {selected_chapter} was selected, but it was not detected "
+            f"in the uploaded document. Detected chapter(s): {detected_text}. "
+            "Upload the correct chapter or select the chapter actually contained "
+            "in the document."
+        )
+
+    if selected_chapter in detected:
+        review_paragraphs = [
+            paragraph for paragraph in paragraphs
+            if paragraph.get("chapter_number") == selected_chapter
+        ]
+        embedded_context = [
+            dict(paragraph)
+            for paragraph in paragraphs
+            if isinstance(paragraph.get("chapter_number"), int)
+            and paragraph.get("chapter_number") != selected_chapter
+        ]
+    else:
+        review_paragraphs = paragraphs
+        embedded_context = []
+
+    if not review_paragraphs:
+        raise ValueError(
+            f"No readable content was isolated for Chapter {selected_chapter}."
+        )
+
+    return {
+        "review_paragraphs": review_paragraphs,
+        "embedded_context_paragraphs": embedded_context,
+        "uploaded_chapters": detected,
+        "reviewed_chapters": [selected_chapter],
+        "embedded_alignment_chapters": sorted(
+            {
+                int(paragraph["chapter_number"])
+                for paragraph in embedded_context
+                if isinstance(paragraph.get("chapter_number"), int)
+            }
+        ),
+        "coverage": coverage,
+    }
+
+
 def analyse(
     file_bytes: bytes,
     filename: str,
@@ -308,27 +393,59 @@ def analyse(
     supervisor_comments_text: str = "",
     original_document: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    current_paragraphs = _tag_paragraphs(
+    uploaded_paragraphs = _tag_paragraphs(
         parse_document(file_bytes, filename),
         filename=filename,
         role="current",
     )
-    if not current_paragraphs:
+    if not uploaded_paragraphs:
         raise ValueError("No readable text was extracted from the document.")
 
     full_thesis = review_scope == "full_thesis"
     revised_mode = submission_stage == "revised"
-    inferred = infer_primary_chapter(current_paragraphs)
-    proposal_mode = bool(not full_thesis and selected_chapter == 1 and document_type == "proposal")
+    inferred = infer_primary_chapter(uploaded_paragraphs)
 
     if not full_thesis:
         selected_chapter = selected_chapter or inferred
-        if selected_chapter not in {1, 2, 3, 4, 5}:
-            raise ValueError("Select the chapter being reviewed because it could not be detected reliably.")
+
+    partition = _partition_submission_for_review(
+        uploaded_paragraphs,
+        selected_chapter=selected_chapter,
+        full_thesis=full_thesis,
+        filename=filename,
+    )
+    current_paragraphs = partition["review_paragraphs"]
+    proposal_mode = bool(
+        not full_thesis
+        and selected_chapter == 1
+        and document_type == "proposal"
+    )
 
     prepared_context: List[Dict[str, Any]] = []
     context_paragraphs: List[Dict[str, Any]] = []
-    for index, document in enumerate(context_documents or [], start=1):
+
+    embedded_context = partition["embedded_context_paragraphs"]
+    next_context_index = 1
+    if embedded_context:
+        embedded_context = _tag_paragraphs(
+            embedded_context,
+            filename=filename,
+            role="previous",
+            document_index=next_context_index,
+        )
+        context_paragraphs.extend(embedded_context)
+        prepared_context.append({
+            "filename": f"{filename} (other embedded chapters)",
+            "detected_chapters": partition["embedded_alignment_chapters"],
+            "paragraphs_extracted": len(embedded_context),
+            "source": "embedded_in_main_upload",
+        })
+        next_context_index += 1
+
+    for index, document in enumerate(
+        context_documents or [],
+        start=next_context_index,
+    ):
         context_name = document.get("filename") or f"previous-document-{index}"
         context_bytes = document.get("data") or b""
         if not context_bytes:
@@ -347,9 +464,16 @@ def analyse(
             "paragraphs_extracted": len(parsed),
         })
 
-    if not full_thesis and selected_chapter and selected_chapter >= 2 and not prepared_context:
+    if (
+        not full_thesis
+        and selected_chapter
+        and selected_chapter >= 2
+        and not prepared_context
+    ):
         raise ValueError(
-            f"Upload Chapters 1 to {selected_chapter - 1} as one composite file or as separate files to check alignment."
+            f"Chapter {selected_chapter} requires Chapters 1 to "
+            f"{selected_chapter - 1} for alignment. Include them in the main "
+            "composite document or upload them as separate context files."
         )
 
     original_paragraphs: List[Dict[str, Any]] = []
@@ -388,7 +512,8 @@ def analyse(
         revision_value = revision_score(revision_results)
         revision_summary_counts = revision_counts(revision_results)
 
-    current_chapters = detected_chapters(current_paragraphs, filename)
+    current_chapters = set(partition["reviewed_chapters"])
+    uploaded_chapters = set(partition["uploaded_chapters"])
     rules = _select_rules(
         selected_chapter,
         full_thesis,
@@ -475,8 +600,20 @@ def analyse(
             "revised_mode": revised_mode,
             "selected_chapter": selected_chapter,
             "inferred_chapter": inferred,
+            "uploaded_chapters_detected": sorted(uploaded_chapters),
             "current_chapters_detected": sorted(current_chapters),
+            "embedded_alignment_chapters": partition["embedded_alignment_chapters"],
+            "reviewed_only_selected_chapter": bool(
+                not full_thesis and len(uploaded_chapters) > 1
+            ),
+            "standard_chapter_coverage": partition["coverage"]["covered_functions"],
+            "missing_standard_chapter_coverage": partition["coverage"]["missing_functions"],
+            "complete_thesis_structure_validated": bool(
+                full_thesis and partition["coverage"]["complete"]
+            ),
+            "optional_chapters_detected": partition["coverage"]["optional_chapters"],
             "paragraphs_extracted": len(current_paragraphs),
+            "uploaded_paragraphs_extracted": len(uploaded_paragraphs),
             "rules_checked": len(combined_results),
             "official_rules_checked": len(results),
             "alignment_rules_checked": len(alignment_results),

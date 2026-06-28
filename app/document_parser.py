@@ -22,6 +22,30 @@ CHAPTER_TITLE_MAP = {
     5: ["summary conclusions and recommendations", "conclusions and recommendations", "conclusion and recommendations"],
 }
 
+
+STANDARD_CHAPTER_FUNCTIONS = {
+    "introduction": "Chapter One: Introduction",
+    "literature_review": "Chapter Two: Literature Review",
+    "research_methods": "Chapter Three: Research Methods",
+    "results": "Chapter Four: Results",
+    "discussion": "Chapter Four: Discussion",
+    "summary_conclusions_recommendations": (
+        "Chapter Five: Summary, Conclusions and Recommendations"
+    ),
+}
+
+CHAPTER_WORD_NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20,
+    "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5,
+    "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
+    "xi": 11, "xii": 12, "xiii": 13, "xiv": 14, "xv": 15,
+    "xvi": 16, "xvii": 17, "xviii": 18, "xix": 19, "xx": 20,
+}
+
 KNOWN_SECTION_TERMS = [
     "introduction", "background", "background to the study", "background of the study",
     "statement of the problem", "problem statement", "purpose of the study", "aim of the study",
@@ -90,30 +114,177 @@ def is_heading(text: str, style_name: str = "") -> bool:
 
 def detect_chapter_number(text: str) -> Optional[int]:
     low = normalised(text)
-    explicit = re.match(r"^chapter\s+(one|two|three|four|five|1|2|3|4|5|i|ii|iii|iv|v)\b", low)
-    mapping = {"one":1,"1":1,"i":1,"two":2,"2":2,"ii":2,"three":3,"3":3,"iii":3,"four":4,"4":4,"iv":4,"five":5,"5":5,"v":5}
+    explicit = re.match(
+        r"^chapter\s+("
+        r"one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
+        r"seventeen|eighteen|nineteen|twenty|"
+        r"xx|xix|xviii|xvii|xvi|xv|xiv|xiii|xii|xi|x|ix|viii|vii|vi|v|iv|iii|ii|i|"
+        r"[1-9]|1[0-9]|20"
+        r")\b",
+        low,
+    )
     if explicit:
-        number = mapping.get(explicit.group(1))
+        token = explicit.group(1)
+        number = int(token) if token.isdigit() else CHAPTER_WORD_NUMBERS.get(token)
+        if number is None or not 1 <= number <= 20:
+            return None
+
         remainder = low[explicit.end():].strip(" .:-–—")
         if not remainder:
             return number
-        if remainder.startswith(("is ", "deals ", "being ", "will ", "comprises ", "is devoted ", "is concerned ", "is mainly ")):
+
+        if remainder.startswith(
+            (
+                "is ", "deals ", "being ", "will ", "comprises ",
+                "is devoted ", "is concerned ", "is mainly ",
+            )
+        ):
             return None
-        if number and any(title in remainder for title in CHAPTER_TITLE_MAP[number]):
+
+        if number in CHAPTER_TITLE_MAP and any(
+            title in remainder for title in CHAPTER_TITLE_MAP[number]
+        ):
             return number
-        if clean_text(text).isupper() and number:
+
+        if clean_text(text).isupper() or len(remainder.split()) <= 14:
             return number
         return None
-    numbered = re.match(r"^([1-5])(?:\.0)?\s+(.+)$", low)
+
+    numbered = re.match(r"^([1-9]|1[0-9]|20)(?:\.0)?\s+(.+)$", low)
     if numbered:
         candidate = int(numbered.group(1))
         title = numbered.group(2)
-        if any(x in title for x in CHAPTER_TITLE_MAP[candidate]):
+        if candidate in CHAPTER_TITLE_MAP and any(
+            value in title for value in CHAPTER_TITLE_MAP[candidate]
+        ):
             return candidate
+
     for number, titles in CHAPTER_TITLE_MAP.items():
         if low in titles:
             return number
     return None
+
+
+def detect_standard_chapter_coverage(
+    paragraphs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Detect the required functions of the default five-chapter structure.
+
+    Results and Discussion may be combined or separated. Additional chapters
+    are permitted, but the standard research functions must still be present.
+    """
+    detected_numbers = sorted(
+        {
+            int(paragraph["chapter_number"])
+            for paragraph in paragraphs
+            if isinstance(paragraph.get("chapter_number"), int)
+            and 1 <= int(paragraph["chapter_number"]) <= 20
+        }
+    )
+
+    headings = [
+        normalised(paragraph.get("text", ""))
+        for paragraph in paragraphs
+        if paragraph.get("is_heading")
+    ]
+    heading_text = "\n".join(headings)
+
+    coverage = set()
+
+    if 1 in detected_numbers or any(
+        value in heading_text
+        for value in ("chapter one introduction", "background to the study")
+    ):
+        coverage.add("introduction")
+
+    if 2 in detected_numbers or any(
+        value in heading_text
+        for value in ("literature review", "review of related literature")
+    ):
+        coverage.add("literature_review")
+
+    if 3 in detected_numbers or any(
+        value in heading_text
+        for value in (
+            "research methods", "research methodology",
+            "materials and methods", "methodology",
+        )
+    ):
+        coverage.add("research_methods")
+
+    if 4 in detected_numbers or any(
+        value in heading_text
+        for value in (
+            "results and discussion", "presentation of results",
+            "research findings", "results", "findings",
+        )
+    ):
+        coverage.add("results")
+
+    if any(
+        value in heading_text
+        for value in (
+            "results and discussion", "discussion of findings",
+            "discussion of results", "discussion",
+        )
+    ):
+        coverage.add("discussion")
+
+    has_summary = any(
+        value in heading_text
+        for value in ("summary of findings", "summary conclusions", "chapter summary")
+    )
+    has_conclusion = "conclusion" in heading_text
+    has_recommendation = "recommendation" in heading_text
+    standard_five_title = any(
+        value in heading_text
+        for value in (
+            "summary conclusions and recommendations",
+            "summary conclusions recommendations",
+            "conclusions and recommendations",
+        )
+    )
+    if standard_five_title or (
+        has_summary and has_conclusion and has_recommendation
+    ):
+        coverage.add("summary_conclusions_recommendations")
+    elif 5 in detected_numbers:
+        chapter_five_headings = [
+            normalised(paragraph.get("text", ""))
+            for paragraph in paragraphs
+            if paragraph.get("is_heading")
+            and paragraph.get("chapter_number") == 5
+        ]
+        if any(
+            "conclusion" in value or "recommendation" in value
+            for value in chapter_five_headings
+        ):
+            coverage.add("summary_conclusions_recommendations")
+
+    missing_keys = [
+        key for key in STANDARD_CHAPTER_FUNCTIONS
+        if key not in coverage
+    ]
+    optional_numbers = [
+        number for number in detected_numbers if number > 5
+    ]
+
+    return {
+        "detected_chapter_numbers": detected_numbers,
+        "covered_functions": [
+            STANDARD_CHAPTER_FUNCTIONS[key]
+            for key in STANDARD_CHAPTER_FUNCTIONS
+            if key in coverage
+        ],
+        "missing_function_keys": missing_keys,
+        "missing_functions": [
+            STANDARD_CHAPTER_FUNCTIONS[key] for key in missing_keys
+        ],
+        "optional_chapters": optional_numbers,
+        "complete": not missing_keys,
+    }
+
 
 def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     if Document is None:

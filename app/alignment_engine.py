@@ -173,9 +173,17 @@ def _result(
 
 
 def detected_chapters(paragraphs: Sequence[Dict[str, Any]], filename: str = "") -> Set[int]:
-    found = {int(p["chapter_number"]) for p in paragraphs if p.get("chapter_number") in {1, 2, 3, 4, 5}}
+    found = {
+        int(paragraph["chapter_number"])
+        for paragraph in paragraphs
+        if isinstance(paragraph.get("chapter_number"), int)
+        and 1 <= int(paragraph["chapter_number"]) <= 20
+    }
     low = normalised(filename)
-    for match in re.finditer(r"(?:chapter|chap|ch)\s*[-_ ]?([1-5])\b", low):
+    for match in re.finditer(
+        r"(?:chapter|chap|ch)\s*[-_ ]?([1-9]|1[0-9]|20)\b",
+        low,
+    ):
         found.add(int(match.group(1)))
     return found
 
