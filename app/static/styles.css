@@ -25,7 +25,20 @@ button,select,input{font:inherit}
 .hero{display:grid;grid-template-columns:1.4fr .6fr;gap:38px;align-items:center;margin-bottom:38px}
 .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.73rem;font-weight:800;color:var(--brand);margin:0 0 8px}
 h1{font-size:clamp(2.25rem,4.8vw,4.5rem);line-height:1.02;letter-spacing:-.055em;margin:0;max-width:850px}
-.hero h1{color:var(--hero-heading)}
+.hero h1{color:var(--ink)}
+.hero h2{
+  max-width:980px;
+  margin:14px 0 0;
+  color:var(--ink);
+  font-size:clamp(1.45rem,2.7vw,2.5rem);
+  line-height:1.2;
+  letter-spacing:-.025em;
+  font-weight:750;
+}
+.v-prof-name{
+  color:var(--hero-heading);
+  font-weight:850;
+}
 .hero-copy{max-width:760px;color:var(--muted);font-size:1.08rem;margin:22px 0}
 .trust-row{display:flex;gap:10px;flex-wrap:wrap}.trust-row span{padding:8px 11px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:.8rem;font-weight:650}
 .hero-card{background:linear-gradient(145deg,#223eaa,#3357d5);color:#fff;border-radius:26px;padding:28px;box-shadow:var(--shadow)}
