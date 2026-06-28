@@ -138,7 +138,7 @@ def test_report_is_concise_and_uses_summary_sections():
     assert "Illustrative guidance" not in text
 
 
-def test_report_summary_table_limits_section_corrections():
+def test_report_summary_table_lists_material_section_corrections():
     data = build_docx_report(sample_review())
     document = Document(BytesIO(data))
     summary_tables = [table for table in document.tables if len(table.columns) == 3]
@@ -152,4 +152,4 @@ def test_report_summary_table_limits_section_corrections():
         for paragraph in problem_row.cells[2].paragraphs
         if paragraph.text.strip()
     ]
-    assert len(numbered) <= 3
+    assert len(numbered) >= 2
