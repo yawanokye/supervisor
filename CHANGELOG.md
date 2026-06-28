@@ -1,3 +1,15 @@
+## v1.5.4
+
+- Updated the landing-page hero to show “Hello!” followed by the V-Prof introduction.
+- Applied the reference blue only to `V-Prof {supervisor name}`.
+- Kept the remaining hero text in the normal dark interface colour.
+
+## v1.5.3
+
+- Changed the Virtual Professor hero heading to the blue used in the supplied reference.
+- Added a dedicated `--hero-heading` colour variable with value `#4557D5`.
+- The colour change applies only to the main hero heading.
+
 ## v1.5.2
 
 - Made chapter and section numbering optional.
