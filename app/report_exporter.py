@@ -723,6 +723,21 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             ("Overall judgement", summary.get("readiness_label", "")),
         ),
     ]
+    if summary.get("thesis_structure_label"):
+        pairs.append(
+            (
+                (
+                    "Thesis structure",
+                    summary.get("thesis_structure_label", ""),
+                ),
+                (
+                    "Fixed five chapters",
+                    "Required"
+                    if summary.get("fixed_five_chapter_required")
+                    else "Not required",
+                ),
+            )
+        )
     for left, right in pairs:
         cells = details.add_row().cells
         for cell, width in zip(cells, (1.2, 2.35, 1.35, 2.35)):

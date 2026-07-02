@@ -213,7 +213,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.2"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.7"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -590,7 +590,9 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
         review = analyse(
             payload["data"], payload["filename"],
             academic_level=payload["academic_level"], research_approach=payload["research_approach"],
-            selected_chapter=payload["selected_chapter"] or None, review_scope=payload["review_scope"],
+            selected_chapter=payload["selected_chapter"] or None,
+            combined_chapter_end=payload.get("combined_chapter_end") or None,
+            review_scope=payload["review_scope"],
             document_type=payload["document_type"], context_documents=payload["context_documents"],
             submission_stage=payload["submission_stage"], supervisor_comment_documents=payload["supervisor_comment_documents"],
             supervisor_comments_text=payload["supervisor_comments_text"], original_document=payload["original_document"],
@@ -688,7 +690,10 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
 async def create_review(
     request: Request,
     file: UploadFile = File(...), academic_level: str = Form(...), research_approach: str = Form(...),
-    review_scope: str = Form("chapter"), selected_chapter: int = Form(0), document_type: str = Form("chapter_one"),
+    review_scope: str = Form("chapter"),
+    selected_chapter: int = Form(0),
+    combined_chapter_end: int = Form(0),
+    document_type: str = Form("chapter_one"),
     submission_stage: str = Form("initial"), review_depth: str = Form("standard"), csrf_token: str = Form(...),
     previous_files: Optional[List[UploadFile]] = File(None), supervisor_comment_files: Optional[List[UploadFile]] = File(None),
     supervisor_comments_text: str = Form(""), original_file: Optional[UploadFile] = File(None),
@@ -702,6 +707,13 @@ async def create_review(
         raise HTTPException(status_code=403, detail="Change your temporary password before submitting a review.")
     if review_depth not in {"light", "standard", "advanced"}:
         raise HTTPException(status_code=400, detail="Choose Light Review, Standard Review or Advanced Review.")
+    if review_scope not in {"chapter", "chapter_range", "full_thesis"}:
+        raise HTTPException(status_code=400, detail="Choose Single chapter, Combined chapters or Complete thesis.")
+    if review_scope == "chapter_range" and combined_chapter_end not in {2, 3, 4, 5}:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose Chapters 1–2, 1–3, 1–4 or 1–5.",
+        )
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
 
@@ -747,7 +759,11 @@ async def create_review(
         academic_level=academic_level,
         research_approach=research_approach,
         review_scope=review_scope,
-        selected_chapter=selected_chapter or None,
+        selected_chapter=(
+            combined_chapter_end
+            if review_scope == "chapter_range"
+            else selected_chapter or None
+        ),
         review_depth=review_depth,
         submission_stage=submission_stage,
         status="queued",
@@ -760,7 +776,10 @@ async def create_review(
     JOB_CACHE[job_id] = {"job_id": job_id, "user_id": user.id, "status": "queued", "progress": 2, "message": "Review queued", "created_at": time.time(), "updated_at": time.time()}
     payload = {
         "filename": filename, "data": data, "academic_level": academic_level, "research_approach": research_approach,
-        "review_scope": review_scope, "selected_chapter": selected_chapter, "document_type": document_type,
+        "review_scope": review_scope,
+        "selected_chapter": selected_chapter,
+        "combined_chapter_end": combined_chapter_end,
+        "document_type": document_type,
         "submission_stage": submission_stage, "review_depth": review_depth, "context_documents": context_documents,
         "supervisor_comment_documents": supervisor_comment_documents, "supervisor_comments_text": supervisor_comments_text,
         "original_document": original_document, "user_id": user.id,

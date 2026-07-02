@@ -13,11 +13,13 @@ from .document_parser import (
     CHAPTER_EXPECTED_COMPONENTS,
     clean_text,
     detect_document_chapter_profile,
+    detect_doctoral_functional_coverage,
     detect_standard_chapter_coverage,
     infer_primary_chapter,
     normalised,
     parse_document,
 )
+from .statistical_review import build_statistical_review
 from .review_rules import (
     CHAPTERS,
     RULES,
@@ -113,17 +115,43 @@ def _candidate_paragraphs(
     rule: Dict[str, Any],
     selected_chapter: Optional[int],
     full_thesis: bool,
+    *,
+    flexible_structure: bool = False,
+    review_chapters: Optional[set[int]] = None,
 ) -> List[Dict[str, Any]]:
     chapter_number = rule.get("chapter_number") or 0
     candidates = paragraphs
 
-    if chapter_number and not full_thesis:
+    if chapter_number and full_thesis and flexible_structure:
+        # Doctoral structures may locate a research function in any chapter.
+        candidates = paragraphs
+    elif (
+        chapter_number
+        and review_chapters
+        and len(review_chapters) > 1
+        and chapter_number in review_chapters
+    ):
+        # A combined submission reviews every chapter in the selected range.
+        # Each checklist rule must search its own chapter, not only the last one.
+        chapter_specific = [
+            paragraph for paragraph in paragraphs
+            if paragraph.get("chapter_number") == chapter_number
+        ]
+        if chapter_specific:
+            candidates = chapter_specific
+    elif chapter_number and not full_thesis:
         target = selected_chapter or chapter_number
-        chapter_specific = [p for p in paragraphs if p.get("chapter_number") in {None, target}]
+        chapter_specific = [
+            p for p in paragraphs
+            if p.get("chapter_number") in {None, target}
+        ]
         if chapter_specific:
             candidates = chapter_specific
     elif chapter_number:
-        chapter_specific = [p for p in paragraphs if p.get("chapter_number") == chapter_number]
+        chapter_specific = [
+            p for p in paragraphs
+            if p.get("chapter_number") == chapter_number
+        ]
         if chapter_specific:
             candidates = chapter_specific
 
@@ -140,6 +168,9 @@ def evaluate_rule(
     selected_chapter: Optional[int],
     research_approach: str,
     full_thesis: bool,
+    *,
+    flexible_structure: bool = False,
+    review_chapters: Optional[set[int]] = None,
 ) -> Dict[str, Any]:
     if not is_applicable(rule, research_approach):
         status = STATUS_NA
@@ -150,7 +181,14 @@ def evaluate_rule(
             "evidence": [], "comment": comment, "required_action": action,
         }
 
-    candidates = _candidate_paragraphs(paragraphs, rule, selected_chapter, full_thesis)
+    candidates = _candidate_paragraphs(
+        paragraphs,
+        rule,
+        selected_chapter,
+        full_thesis,
+        flexible_structure=flexible_structure,
+        review_chapters=review_chapters,
+    )
     ranked: List[Dict[str, Any]] = []
     max_hits = 0
     max_adequacy = 0
@@ -217,24 +255,79 @@ def _select_rules(
     *,
     proposal_mode: bool = False,
     current_chapters: Optional[set[int]] = None,
+    combined_scope: bool = False,
 ) -> List[Dict[str, Any]]:
     if full_thesis:
         return RULES
+
+    detected = current_chapters or (
+        {selected_chapter} if selected_chapter else set()
+    )
+
+    if combined_scope:
+        allowed_keys = {
+            key
+            for key, metadata in CHAPTERS.items()
+            if metadata["number"] in detected and metadata["number"] > 0
+        }
+        selected = [
+            rule for rule in RULES
+            if rule["chapter_key"] in allowed_keys
+        ]
+
+        # Add only the whole-study checks that can be assessed from the
+        # submitted range. Later-stage checks are introduced as later chapters
+        # become available.
+        coherence_codes = {"A1", "A2"}
+        if max(detected or {0}) >= 2:
+            coherence_codes.add("A4")
+        if max(detected or {0}) >= 4:
+            coherence_codes.add("A3")
+        if max(detected or {0}) >= 5:
+            coherence_codes.add("A5")
+        selected.extend(
+            rule for rule in RULES
+            if rule["code"] in coherence_codes
+        )
+
+        output: List[Dict[str, Any]] = []
+        seen = set()
+        for rule in selected:
+            if rule["code"] in seen:
+                continue
+            seen.add(rule["code"])
+            output.append(rule)
+        return output
+
     if proposal_mode:
-        detected = current_chapters or {1}
         allowed_keys = {"B"}
         if 2 in detected:
             allowed_keys.add("C")
         if 3 in detected:
             allowed_keys.add("D")
-        selected = [r for r in RULES if r["chapter_key"] in allowed_keys]
-        # A1-A4 are useful proposal-level coherence checks. A5 requires Chapter Five.
-        selected.extend(r for r in RULES if r["code"] in {"A1", "A2", "A3", "A4"})
+        selected = [
+            rule for rule in RULES
+            if rule["chapter_key"] in allowed_keys
+        ]
+        selected.extend(
+            rule for rule in RULES
+            if rule["code"] in {"A1", "A2", "A3", "A4"}
+        )
         return selected
-    chapter_key = next((k for k, v in CHAPTERS.items() if v["number"] == selected_chapter), None)
+
+    chapter_key = next(
+        (
+            key for key, value in CHAPTERS.items()
+            if value["number"] == selected_chapter
+        ),
+        None,
+    )
     if not chapter_key:
         return []
-    return [r for r in RULES if r["chapter_key"] == chapter_key]
+    return [
+        rule for rule in RULES
+        if rule["chapter_key"] == chapter_key
+    ]
 
 def _score_results(results: List[Dict[str, Any]]) -> Tuple[float, Dict[str, float]]:
     by_group = defaultdict(list)
@@ -302,6 +395,16 @@ def _tag_paragraphs(
     return tagged
 
 
+def _is_doctoral_level(academic_level: str) -> bool:
+    value = normalised(academic_level)
+    return (
+        value == "phd"
+        or "professional doctorate" in value
+        or value.startswith("doctor of ")
+        or value.startswith("doctoral")
+    )
+
+
 def _chapter_name(number: int) -> str:
     return CHAPTER_DISPLAY_NAMES.get(number, f"Chapter {number}")
 
@@ -316,20 +419,72 @@ def _partition_submission_for_review(
     selected_chapter: Optional[int],
     full_thesis: bool,
     filename: str,
+    academic_level: str = "",
+    combined_chapter_end: Optional[int] = None,
 ) -> Dict[str, Any]:
     profile = detect_document_chapter_profile(paragraphs)
     detected = list(profile["detected_chapters"])
-    coverage = detect_standard_chapter_coverage(paragraphs)
+    standard_coverage = detect_standard_chapter_coverage(paragraphs)
+    doctoral_coverage = detect_doctoral_functional_coverage(paragraphs)
+    flexible_doctoral = bool(
+        full_thesis and _is_doctoral_level(academic_level)
+    )
 
     if full_thesis:
-        if not coverage["complete"]:
-            uploaded = ", ".join(coverage["detected_chapter_labels"]) or "no reliably identified chapter title"
-            missing = "; ".join(coverage["missing_functions"])
+        if flexible_doctoral:
+            if not doctoral_coverage["complete"]:
+                uploaded = (
+                    ", ".join(profile["detected_labels"])
+                    or "a custom doctoral chapter structure"
+                )
+                missing = "; ".join(
+                    doctoral_coverage["missing_functions"]
+                )
+                raise ValueError(
+                    "The doctoral thesis may use custom chapter titles, order "
+                    "and number, but the uploaded document does not yet demonstrate "
+                    "the complete set of core research functions. "
+                    f"Detected structure: {uploaded}. "
+                    f"Functional areas requiring confirmation: {missing}. "
+                    "Upload the complete doctoral thesis. A fixed five-chapter "
+                    "sequence is not required."
+                )
+
+            return {
+                "review_paragraphs": paragraphs,
+                "embedded_context_paragraphs": [],
+                "uploaded_chapters": detected,
+                "uploaded_chapter_labels": profile["detected_labels"],
+                "reviewed_chapters": detected,
+                "embedded_alignment_chapters": [],
+                "coverage": standard_coverage,
+                "doctoral_coverage": doctoral_coverage,
+                "chapter_profile": profile,
+                "structure_mode": "flexible_doctoral",
+                "structure_label": (
+                    "Flexible doctoral structure with custom chapter titles"
+                ),
+                "fixed_five_chapter_required": False,
+                "structure_complete": True,
+            }
+
+        if not standard_coverage["complete"]:
+            uploaded = (
+                ", ".join(
+                    standard_coverage["detected_chapter_labels"]
+                )
+                or "no reliably identified chapter title"
+            )
+            missing = "; ".join(
+                standard_coverage["missing_functions"]
+            )
             raise ValueError(
-                "The uploaded thesis is not complete, so the review has not started. "
+                "The uploaded thesis is not complete, so the review has not "
+                "started. "
                 f"Detected: {uploaded}. Missing standard coverage: {missing}. "
                 "Upload the complete thesis or choose the correct chapter review."
             )
+
         return {
             "review_paragraphs": paragraphs,
             "embedded_context_paragraphs": [],
@@ -337,8 +492,87 @@ def _partition_submission_for_review(
             "uploaded_chapter_labels": profile["detected_labels"],
             "reviewed_chapters": detected,
             "embedded_alignment_chapters": [],
-            "coverage": coverage,
+            "coverage": standard_coverage,
+            "doctoral_coverage": doctoral_coverage,
             "chapter_profile": profile,
+            "structure_mode": "standard_five_chapter",
+            "structure_label": "Standard five-chapter structure",
+            "fixed_five_chapter_required": True,
+            "structure_complete": True,
+        }
+
+    if combined_chapter_end is not None:
+        if combined_chapter_end not in {2, 3, 4, 5}:
+            raise ValueError(
+                "Select Chapters 1–2, 1–3, 1–4 or 1–5 for the combined review."
+            )
+
+        required_chapters = list(range(1, combined_chapter_end + 1))
+        detected_set = set(detected)
+        missing_chapters = [
+            chapter
+            for chapter in required_chapters
+            if chapter not in detected_set
+        ]
+
+        if missing_chapters:
+            detected_text = (
+                ", ".join(profile["detected_labels"])
+                or "no reliably identified chapters"
+            )
+            missing_text = ", ".join(
+                _chapter_name(chapter)
+                for chapter in missing_chapters
+            )
+            raise ValueError(
+                f"You selected Chapters 1–{combined_chapter_end}, but the "
+                f"uploaded document was identified as {detected_text}. "
+                f"Missing from the selected range: {missing_text}. "
+                "The review has not started. Upload one composite document "
+                "containing every chapter from Chapter One through the selected "
+                "ending chapter."
+            )
+
+        review_paragraphs = [
+            paragraph
+            for paragraph in paragraphs
+            if paragraph.get("chapter_number") in required_chapters
+        ]
+        embedded_context = [
+            dict(paragraph)
+            for paragraph in paragraphs
+            if isinstance(paragraph.get("chapter_number"), int)
+            and paragraph.get("chapter_number") not in required_chapters
+        ]
+
+        if not review_paragraphs:
+            raise ValueError(
+                f"No readable content was isolated for Chapters "
+                f"1–{combined_chapter_end}."
+            )
+
+        return {
+            "review_paragraphs": review_paragraphs,
+            "embedded_context_paragraphs": embedded_context,
+            "uploaded_chapters": detected,
+            "uploaded_chapter_labels": profile["detected_labels"],
+            "reviewed_chapters": required_chapters,
+            "embedded_alignment_chapters": sorted({
+                int(paragraph["chapter_number"])
+                for paragraph in embedded_context
+                if isinstance(paragraph.get("chapter_number"), int)
+            }),
+            "coverage": standard_coverage,
+            "doctoral_coverage": doctoral_coverage,
+            "chapter_profile": profile,
+            "structure_mode": "combined_chapters",
+            "structure_label": (
+                f"Combined Chapters 1–{combined_chapter_end}"
+            ),
+            "fixed_five_chapter_required": False,
+            "structure_complete": True,
+            "combined_chapter_end": combined_chapter_end,
+            "required_combined_chapters": required_chapters,
         }
 
     if selected_chapter not in {1, 2, 3, 4, 5}:
@@ -397,8 +631,13 @@ def _partition_submission_for_review(
             int(row["chapter_number"]) for row in embedded_context
             if isinstance(row.get("chapter_number"), int)
         }),
-        "coverage": coverage,
+        "coverage": standard_coverage,
+        "doctoral_coverage": doctoral_coverage,
         "chapter_profile": profile,
+        "structure_mode": "selected_chapter",
+        "structure_label": "Selected chapter review",
+        "fixed_five_chapter_required": False,
+        "structure_complete": True,
     }
 
 
@@ -409,6 +648,7 @@ def analyse(
     academic_level: str,
     research_approach: str,
     selected_chapter: Optional[int] = None,
+    combined_chapter_end: Optional[int] = None,
     review_scope: str = "chapter",
     document_type: str = "chapter_one",
     context_documents: Optional[List[Dict[str, Any]]] = None,
@@ -426,10 +666,13 @@ def analyse(
         raise ValueError("No readable text was extracted from the document.")
 
     full_thesis = review_scope == "full_thesis"
+    combined_scope = review_scope == "chapter_range"
     revised_mode = submission_stage == "revised"
     inferred = infer_primary_chapter(uploaded_paragraphs)
 
-    if not full_thesis:
+    if combined_scope:
+        selected_chapter = combined_chapter_end
+    elif not full_thesis:
         selected_chapter = selected_chapter or inferred
 
     partition = _partition_submission_for_review(
@@ -437,11 +680,38 @@ def analyse(
         selected_chapter=selected_chapter,
         full_thesis=full_thesis,
         filename=filename,
+        academic_level=academic_level,
+        combined_chapter_end=(
+            combined_chapter_end if combined_scope else None
+        ),
     )
     current_paragraphs = partition["review_paragraphs"]
-    statistical_chapters = [3, 4] if full_thesis else ([selected_chapter] if selected_chapter in {3, 4} else [])
+    flexible_doctoral_structure = (
+        full_thesis
+        and partition["structure_mode"] == "flexible_doctoral"
+    )
+    if flexible_doctoral_structure:
+        statistical_chapters = partition["reviewed_chapters"]
+    elif full_thesis:
+        statistical_chapters = [3, 4]
+    elif combined_scope:
+        statistical_chapters = [
+            chapter
+            for chapter in partition["reviewed_chapters"]
+            if chapter in {3, 4}
+        ]
+    else:
+        statistical_chapters = (
+            [selected_chapter]
+            if selected_chapter in {3, 4}
+            else []
+        )
+
     statistical_review = (
-        build_statistical_review(current_paragraphs, chapter_numbers=statistical_chapters)
+        build_statistical_review(
+            current_paragraphs,
+            chapter_numbers=statistical_chapters,
+        )
         if statistical_chapters
         else {
             "chapter_numbers": [],
@@ -453,6 +723,7 @@ def analyse(
     )
     proposal_mode = bool(
         not full_thesis
+        and not combined_scope
         and selected_chapter == 1
         and document_type == "proposal"
     )
@@ -502,6 +773,7 @@ def analyse(
 
     if (
         not full_thesis
+        and not combined_scope
         and selected_chapter
         and selected_chapter >= 2
         and not prepared_context
@@ -555,17 +827,64 @@ def analyse(
         full_thesis,
         proposal_mode=proposal_mode,
         current_chapters=current_chapters,
+        combined_scope=combined_scope,
     )
     if not rules:
         raise ValueError("No review rules were selected.")
 
     results = [
-        evaluate_rule(rule, current_paragraphs, selected_chapter, research_approach, full_thesis or proposal_mode)
+        evaluate_rule(
+            rule,
+            current_paragraphs,
+            selected_chapter,
+            research_approach,
+            full_thesis or proposal_mode,
+            flexible_structure=flexible_doctoral_structure,
+            review_chapters=(
+                current_chapters if combined_scope else None
+            ),
+        )
         for rule in rules
     ]
 
     alignment_results: List[Dict[str, Any]] = []
-    if not full_thesis and selected_chapter and selected_chapter >= 2:
+    if combined_scope:
+        for target_chapter in range(2, combined_chapter_end + 1):
+            target_paragraphs = [
+                paragraph
+                for paragraph in current_paragraphs
+                if paragraph.get("chapter_number") == target_chapter
+            ]
+            preceding_paragraphs = [
+                paragraph
+                for paragraph in current_paragraphs
+                if isinstance(paragraph.get("chapter_number"), int)
+                and paragraph.get("chapter_number") < target_chapter
+            ]
+            alignment_context = [{
+                "filename": (
+                    f"{filename} — Chapters 1 to "
+                    f"{target_chapter - 1}"
+                ),
+                "detected_chapters": list(
+                    range(1, target_chapter)
+                ),
+                "paragraphs_extracted": len(preceding_paragraphs),
+                "source": "combined_main_upload",
+            }]
+            rows = evaluate_alignment(
+                selected_chapter=target_chapter,
+                current_paragraphs=target_paragraphs,
+                context_paragraphs=preceding_paragraphs,
+                context_documents=alignment_context,
+            )
+            for row in rows:
+                row["code"] = (
+                    f"R{target_chapter}-{row.get('code', 'ALIGN')}"
+                )
+                row["alignment_target_chapter"] = target_chapter
+            alignment_results.extend(rows)
+    elif not full_thesis and selected_chapter and selected_chapter >= 2:
         alignment_results = evaluate_alignment(
             selected_chapter=selected_chapter,
             current_paragraphs=current_paragraphs,
@@ -612,10 +931,26 @@ def analyse(
         counts[row["status"]] += 1
 
     review_id = uuid.uuid4().hex
-    expected_previous = list(range(1, selected_chapter)) if selected_chapter and selected_chapter >= 2 else []
-    detected_previous = sorted({chapter for doc in prepared_context for chapter in doc.get("detected_chapters", [])})
+    if combined_scope:
+        expected_previous = list(range(1, combined_chapter_end))
+        detected_previous = list(range(1, combined_chapter_end))
+    else:
+        expected_previous = (
+            list(range(1, selected_chapter))
+            if selected_chapter and selected_chapter >= 2
+            else []
+        )
+        detected_previous = sorted({
+            chapter
+            for document in prepared_context
+            for chapter in document.get("detected_chapters", [])
+        })
+
     base_label = "Research proposal" if proposal_mode else (
-        "Complete thesis" if full_thesis else f"Chapter {selected_chapter}"
+        "Complete thesis" if full_thesis
+        else f"Combined Chapters 1–{combined_chapter_end}"
+        if combined_scope
+        else f"Chapter {selected_chapter}"
     )
     document_label = f"Revised {base_label.lower()}" if revised_mode else base_label
     comment_sources = list(dict.fromkeys(
@@ -635,6 +970,19 @@ def analyse(
             "submission_stage": submission_stage,
             "revised_mode": revised_mode,
             "selected_chapter": selected_chapter,
+            "combined_chapter_end": (
+                combined_chapter_end if combined_scope else None
+            ),
+            "combined_chapters": (
+                list(range(1, combined_chapter_end + 1))
+                if combined_scope
+                else []
+            ),
+            "reviewed_chapter_range": (
+                f"Chapters 1–{combined_chapter_end}"
+                if combined_scope
+                else None
+            ),
             "inferred_chapter": inferred,
             "uploaded_chapters_detected": sorted(uploaded_chapters),
             "uploaded_chapter_labels": partition["uploaded_chapter_labels"],
@@ -642,14 +990,38 @@ def analyse(
             "current_chapters_detected": sorted(current_chapters),
             "embedded_alignment_chapters": partition["embedded_alignment_chapters"],
             "reviewed_only_selected_chapter": bool(
-                not full_thesis and len(uploaded_chapters) > 1
+                not full_thesis
+                and not combined_scope
+                and len(uploaded_chapters) > 1
             ),
-            "standard_chapter_coverage": partition["coverage"]["covered_functions"],
-            "missing_standard_chapter_coverage": partition["coverage"]["missing_functions"],
+            "combined_chapters_reviewed_together": combined_scope,
+            "thesis_structure_mode": partition["structure_mode"],
+            "thesis_structure_label": partition["structure_label"],
+            "fixed_five_chapter_required": partition[
+                "fixed_five_chapter_required"
+            ],
+            "standard_chapter_coverage": (
+                []
+                if flexible_doctoral_structure
+                else partition["coverage"]["covered_functions"]
+            ),
+            "missing_standard_chapter_coverage": (
+                []
+                if flexible_doctoral_structure
+                else partition["coverage"]["missing_functions"]
+            ),
+            "doctoral_functional_coverage": partition[
+                "doctoral_coverage"
+            ]["covered_functions"],
+            "missing_doctoral_functional_coverage": partition[
+                "doctoral_coverage"
+            ]["missing_functions"],
             "complete_thesis_structure_validated": bool(
-                full_thesis and partition["coverage"]["complete"]
+                full_thesis and partition["structure_complete"]
             ),
-            "optional_chapters_detected": partition["coverage"]["optional_chapters"],
+            "optional_chapters_detected": partition[
+                "coverage"
+            ]["optional_chapters"],
             "paragraphs_extracted": len(current_paragraphs),
             "uploaded_paragraphs_extracted": len(uploaded_paragraphs),
             "rules_checked": len(combined_results),

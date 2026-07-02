@@ -138,6 +138,16 @@ def _review_profile(depth: str) -> Dict[str, Any]:
     return REVIEW_LEVEL_PROFILES.get(depth, REVIEW_LEVEL_PROFILES["standard"])
 
 
+def _is_doctoral_level(academic_level: Any) -> bool:
+    value = normalised(str(academic_level or ""))
+    return (
+        value == "phd"
+        or "professional doctorate" in value
+        or value.startswith("doctor of ")
+        or value.startswith("doctoral")
+    )
+
+
 def _pid(paragraph: Dict[str, Any]) -> str:
     role = paragraph.get("document_role", "current")
     number = int(paragraph.get("paragraph") or 0)
@@ -288,6 +298,65 @@ def _batch_prompt(
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
             "extra_context": section.get("extra_context") or {},
         })
+    doctoral_structure = bool(
+        summary.get("thesis_structure_mode")
+        == "flexible_doctoral"
+        or _is_doctoral_level(summary.get("academic_level"))
+    )
+
+    if doctoral_structure:
+        structure_contract = {
+            "structure_mode": "flexible_doctoral",
+            "fixed_five_chapter_sequence_required": False,
+            "custom_chapter_numbers_order_and_titles_allowed": True,
+            "acceptable_architectures": [
+                "monograph",
+                "article-based thesis",
+                "essay-based thesis",
+                "portfolio or practice-based thesis",
+                "discipline-specific doctoral structure",
+            ],
+            "required_research_functions": [
+                "research problem, purpose, objectives and questions",
+                "literature, theory and scholarly positioning",
+                "methodology and research design",
+                "evidence, analysis, results or findings",
+                "discussion, synthesis and interpretation",
+                "conclusions, original contribution and implications",
+            ],
+            "review_requirement": (
+                "Assess functional completeness, scholarly logic, integration "
+                "and contribution across the actual submitted architecture. "
+                "Do not criticise the thesis merely for departing from a "
+                "five-chapter sequence."
+            ),
+        }
+        complete_structure_instruction = (
+            "For this Professional Doctorate or PhD thesis, accept the actual "
+            "chapter architecture and titles. Review every chapter and section "
+            "as submitted, then test whether the core research functions are "
+            "complete, logically ordered, mutually consistent and integrated "
+            "into a defensible doctoral contribution. "
+        )
+    else:
+        structure_contract = {
+            "structure_mode": "standard_five_chapter",
+            "fixed_five_chapter_sequence_required": True,
+            "default_complete_thesis_structure": [
+                "Chapter One: Introduction",
+                "Chapter Two: Literature Review",
+                "Chapter Three: Research Methods",
+                "Chapter Four: Results and Discussion",
+                "Chapter Five: Summary, Conclusions and Recommendations",
+            ],
+            "discipline_specific_additional_chapters_are_allowed": True,
+            "additional_chapters_must_align_with_the_problem_objectives_methods_results_and_conclusions": True,
+        }
+        complete_structure_instruction = (
+            "For a complete non-doctoral thesis, examine all standard research "
+            "chapters and any approved additional chapters. "
+        )
+
     packet = {
         "review_context": {
             "declared_academic_level": summary.get("academic_level"),
@@ -297,6 +366,8 @@ def _batch_prompt(
             "review_stage": summary.get("submission_stage"),
             "review_depth": depth,
             "review_scope": summary.get("review_scope"),
+            "combined_chapters": summary.get("combined_chapters", []),
+            "reviewed_chapter_range": summary.get("reviewed_chapter_range"),
             "uploaded_chapters_detected": summary.get("uploaded_chapters_detected", []),
             "reviewed_chapters": summary.get("current_chapters_detected", []),
             "selected_chapter_isolated_from_composite": summary.get(
@@ -331,6 +402,8 @@ def _batch_prompt(
             "distinguish_missing_from_weak_content": True,
             "make_method_advice_conditional_when_design_is_unknown": True,
             "do_not_review_context_only_chapters_as_the_selected_chapter": True,
+            "when_combined_chapters_are_selected_review_every_chapter_in_the_range": True,
+            "verify_alignment_sequentially_from_chapter_one_to_the_last_selected_chapter": True,
             "verify_objective_question_hypothesis_method_result_conclusion_alignment": True,
             "verify_model_specific_diagnostics_in_methods_and_results": True,
             "verify_statistical_values_against_tables_and_interpretations": True,
@@ -338,15 +411,7 @@ def _batch_prompt(
         },
         "statistical_review_audit": review.get("statistical_review") or {},
         "institutional_structure_contract": {
-            "default_complete_thesis_structure": [
-                "Chapter One: Introduction",
-                "Chapter Two: Literature Review",
-                "Chapter Three: Research Methods",
-                "Chapter Four: Results and Discussion",
-                "Chapter Five: Summary, Conclusions and Recommendations",
-            ],
-            "discipline_specific_additional_chapters_are_allowed": True,
-            "additional_chapters_must_align_with_the_problem_objectives_methods_results_and_conclusions": True,
+            **structure_contract,
             "the_guideline_strengthens_but_does_not_replace_the_existing_academic_review": True,
         },
         "instruction": (
@@ -354,8 +419,8 @@ def _batch_prompt(
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate sections. "
             "A section may have zero issues only after a substantive assessment. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
-            "For a complete thesis, examine all standard chapters and any optional chapters, and test whether optional chapters integrate coherently with the rest of the study. "
-            "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
+            + complete_structure_instruction
+            + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied."
         ),

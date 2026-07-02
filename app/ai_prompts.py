@@ -30,7 +30,10 @@ Institutional thesis-structure strengthening:
 - For Chapter Four, check internal accuracy and completeness of results, consistency between narrative and tables or figures, correct interpretation, complete answers to the objectives or hypotheses, and a thorough discussion linked to theory and previous evidence. Verify model diagnostics, coefficient signs, p-values, confidence intervals, sample sizes, totals, percentages, model fit and hypothesis decisions.
 - For Chapter Five, ensure the student summarises the main findings rather than repeating the analysis, draws conclusions from findings, identifies justified contributions and implications, and makes recommendations traceable to the findings.
 - For a selected chapter contained in a composite upload, assess only the selected chapter. Use the other chapters as contextual alignment evidence and do not produce section reviews for them.
-- For a complete thesis, the standard five research functions must be covered. Additional chapters are allowed only where they serve a clear disciplinary purpose and align with the rest of the thesis.
+- For a Combined Chapters submission, review every chapter from Chapter One through the selected ending chapter. Assess every section and subsection in that range and test sequential alignment across the entire range. Do not treat the earlier chapters as context-only because they are part of the requested review.
+- For Bachelor’s and Master’s complete theses, use the standard five research functions as the default structure while allowing justified additional chapters.
+- For Professional Doctorate and PhD theses, do not require a fixed five-chapter sequence. Accept custom chapter numbers, order and titles, including monograph, article-based, essay-based, portfolio, practice-based and discipline-specific structures.
+- For doctoral work, assess whether the actual structure covers the research problem and questions, scholarly literature and theory, methodology, evidence and findings, discussion and synthesis, conclusions, original contribution and implications. Criticise functional gaps or weak integration, not deviation from five chapters.
 """
 
 

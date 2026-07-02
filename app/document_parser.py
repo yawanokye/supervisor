@@ -50,6 +50,68 @@ STANDARD_CHAPTER_FUNCTIONS = {
     "summary_conclusions_recommendations": CHAPTER_DISPLAY_NAMES[5],
 }
 
+
+DOCTORAL_RESEARCH_FUNCTIONS = {
+    "problem_purpose_and_questions": {
+        "label": "Research problem, purpose, objectives and questions",
+        "terms": [
+            "statement of the problem", "problem statement", "research problem",
+            "research gap", "purpose of the study", "aim of the study",
+            "research objective", "research objectives", "research question",
+            "research questions", "research hypothesis", "research hypotheses",
+        ],
+    },
+    "literature_theory_and_positioning": {
+        "label": "Literature, theory and scholarly positioning",
+        "terms": [
+            "literature review", "review of literature", "theoretical framework",
+            "theoretical review", "conceptual framework", "conceptual review",
+            "theory", "scholarly positioning", "state of the art",
+        ],
+    },
+    "methodology_and_research_design": {
+        "label": "Methodology and research design",
+        "terms": [
+            "research methodology", "research methods", "methodology",
+            "research design", "research approach", "data collection",
+            "sampling procedure", "analytical method", "analysis method",
+            "estimation technique", "research procedure",
+        ],
+    },
+    "evidence_results_or_findings": {
+        "label": "Evidence, analysis, results or findings",
+        "terms": [
+            "research findings", "empirical findings", "empirical results",
+            "results and findings", "results", "findings", "data analysis",
+            "thematic findings", "model estimates", "analysis of evidence",
+        ],
+    },
+    "discussion_synthesis_and_interpretation": {
+        "label": "Discussion, synthesis and interpretation",
+        "terms": [
+            "discussion of findings", "discussion of results", "discussion",
+            "integrative discussion", "synthesis", "interpretation of findings",
+            "interpretation of results", "alternative explanations",
+        ],
+    },
+    "conclusions_contribution_and_implications": {
+        "label": "Conclusions, contribution and implications",
+        "terms": [
+            "contribution to knowledge", "original contribution",
+            "theoretical contribution", "professional contribution",
+            "conclusion", "conclusions", "implications", "recommendations",
+            "future research", "suggestions for further research",
+        ],
+    },
+}
+
+DOCTORAL_ESSENTIAL_FUNCTIONS = {
+    "problem_purpose_and_questions",
+    "methodology_and_research_design",
+    "evidence_results_or_findings",
+    "conclusions_contribution_and_implications",
+}
+
 CHAPTER_WORD_NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -496,6 +558,104 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
         "optional_chapters": [number for number in profile["detected_chapters"] if number > 5],
         "chapter_profile": profile,
         "complete": not missing_keys,
+    }
+
+
+
+def detect_doctoral_functional_coverage(
+    paragraphs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Validate a flexible doctoral thesis by research function, not chapter order.
+
+    Professional Doctorate and PhD theses may use article-based, essay-based,
+    portfolio, monograph, practice-based or discipline-specific architectures.
+    The chapter names and sequence are therefore unrestricted. The document
+    must still demonstrate the core research functions.
+    """
+    searchable_rows = [
+        row for row in paragraphs
+        if clean_text(row.get("text", ""))
+    ]
+    full_text = "\n".join(
+        normalised(row.get("text", ""))
+        for row in searchable_rows
+    )
+
+    evidence: Dict[str, List[Dict[str, Any]]] = {
+        key: [] for key in DOCTORAL_RESEARCH_FUNCTIONS
+    }
+
+    for key, specification in DOCTORAL_RESEARCH_FUNCTIONS.items():
+        matched_terms = [
+            term for term in specification["terms"]
+            if normalised(term) in full_text
+        ]
+        if not matched_terms:
+            continue
+
+        for row in searchable_rows:
+            row_text = normalised(row.get("text", ""))
+            row_hits = [
+                term for term in matched_terms
+                if normalised(term) in row_text
+            ]
+            if not row_hits:
+                continue
+            evidence[key].append({
+                "heading": clean_text(
+                    row.get("heading")
+                    or row.get("text", "")
+                )[:240],
+                "paragraph": row.get("paragraph"),
+                "page": row.get("page"),
+                "chapter_number": row.get("chapter_number"),
+                "matched_terms": row_hits[:5],
+            })
+            if len(evidence[key]) >= 5:
+                break
+
+    covered_keys = [
+        key for key, rows in evidence.items() if rows
+    ]
+    missing_keys = [
+        key for key in DOCTORAL_RESEARCH_FUNCTIONS
+        if key not in covered_keys
+    ]
+    essential_missing = [
+        key for key in DOCTORAL_ESSENTIAL_FUNCTIONS
+        if key not in covered_keys
+    ]
+
+    # A flexible doctoral thesis must contain every essential function and at
+    # least five of the six broad research functions. The expert review still
+    # examines the adequacy and integration of each function.
+    complete = (
+        not essential_missing
+        and len(covered_keys) >= 5
+    )
+
+    return {
+        "covered_function_keys": covered_keys,
+        "covered_functions": [
+            DOCTORAL_RESEARCH_FUNCTIONS[key]["label"]
+            for key in covered_keys
+        ],
+        "missing_function_keys": missing_keys,
+        "missing_functions": [
+            DOCTORAL_RESEARCH_FUNCTIONS[key]["label"]
+            for key in missing_keys
+        ],
+        "essential_missing_keys": essential_missing,
+        "essential_missing_functions": [
+            DOCTORAL_RESEARCH_FUNCTIONS[key]["label"]
+            for key in essential_missing
+        ],
+        "function_evidence": evidence,
+        "functions_covered_count": len(covered_keys),
+        "functions_required_minimum": 5,
+        "fixed_chapter_sequence_required": False,
+        "custom_chapter_titles_allowed": True,
+        "complete": complete,
     }
 
 
