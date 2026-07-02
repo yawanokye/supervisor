@@ -15,6 +15,8 @@ const resultsState = document.getElementById("resultsState");
 const submitButton = document.getElementById("submitButton");
 const chapterField = document.getElementById("chapterField");
 const chapterSelect = document.getElementById("chapterSelect");
+const combinedChapterField = document.getElementById("combinedChapterField");
+const combinedChapterEnd = document.getElementById("combinedChapterEnd");
 const documentTypeField = document.getElementById("documentTypeField");
 const previousChaptersField = document.getElementById("previousChaptersField");
 const previousUploadTitle = document.getElementById("previousUploadTitle");
@@ -33,6 +35,7 @@ const lightReviewNote = document.getElementById("lightReviewNote");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
+const scopeStructureHelp = document.getElementById("scopeStructureHelp");
 
 function updateDepthGuidance() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(academicLevelSelect.value);
@@ -47,7 +50,10 @@ function updateDepthGuidance() {
     reviewDepthHelp.textContent = "Standard Review examines every section and subsection at Research Master’s or MPhil level, with stronger critical synthesis and methodological scrutiny.";
   }
 }
-academicLevelSelect.addEventListener("change", updateDepthGuidance);
+academicLevelSelect.addEventListener("change", () => {
+  updateDepthGuidance();
+  updateUploadWorkflow();
+});
 form.querySelectorAll('input[name="review_depth"]').forEach(input => input.addEventListener("change", updateDepthGuidance));
 updateDepthGuidance();
 
@@ -67,17 +73,43 @@ function updateUploadWorkflow() {
   const scope = selectedScope();
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
+  const rangeEnd = Number(combinedChapterEnd.value || 0);
+  const combined = scope === "chapter_range";
   const fullThesis = scope === "full_thesis";
   const revised = stage === "revised";
+  const doctoral = ["Professional Doctorate", "PhD"].includes(
+    academicLevelSelect.value
+  );
 
-  chapterField.classList.toggle("hidden", fullThesis);
-  chapterSelect.required = !fullThesis;
-  chapterSelect.disabled = fullThesis;
+  if (scopeStructureHelp) {
+    if (combined) {
+      scopeStructureHelp.textContent =
+        "Choose the last chapter in the range. The composite upload must contain every chapter in the selected range, beginning with Chapter One. All chapters in the range are reviewed together.";
+    } else {
+      scopeStructureHelp.textContent = doctoral
+        ? "Professional Doctorate and PhD theses may use custom chapter numbers, order and titles. Complete-thesis review checks core research functions, integration and contribution rather than enforcing five chapters."
+        : "Bachelor’s and Master’s complete theses are checked against the standard research structure, with justified additional chapters allowed.";
+    }
+  }
 
-  documentTypeField.classList.toggle("hidden", fullThesis || chapter !== 1);
-  previousChaptersField.classList.toggle("hidden", fullThesis || chapter < 2);
+  chapterField.classList.toggle("hidden", fullThesis || combined);
+  chapterSelect.required = !fullThesis && !combined;
+  chapterSelect.disabled = fullThesis || combined;
+
+  combinedChapterField.classList.toggle("hidden", !combined);
+  combinedChapterEnd.required = combined;
+  combinedChapterEnd.disabled = !combined;
+
+  documentTypeField.classList.toggle(
+    "hidden",
+    fullThesis || combined || chapter !== 1
+  );
+  previousChaptersField.classList.toggle(
+    "hidden",
+    fullThesis || combined || chapter < 2
+  );
   previousFilesInput.required = false;
-  previousFilesInput.disabled = fullThesis || chapter < 2;
+  previousFilesInput.disabled = fullThesis || combined || chapter < 2;
 
   revisionReviewFields.classList.toggle("hidden", !revised);
   supervisorCommentFilesInput.disabled = !revised;
@@ -86,7 +118,22 @@ function updateUploadWorkflow() {
 
   const prefix = revised ? "Choose the revised " : "Choose ";
   if (fullThesis) {
-    mainUploadTitle.textContent = revised ? "Choose the revised complete thesis" : "Choose the complete thesis";
+    if (doctoral) {
+      mainUploadTitle.textContent = revised
+        ? "Choose the revised complete doctoral thesis"
+        : "Choose the complete doctoral thesis";
+    } else {
+      mainUploadTitle.textContent = revised
+        ? "Choose the revised complete thesis"
+        : "Choose the complete thesis";
+    }
+    return;
+  }
+
+  if (combined) {
+    mainUploadTitle.textContent = rangeEnd
+      ? `${revised ? "Choose the revised" : "Choose"} combined Chapters 1 to ${rangeEnd}`
+      : `${revised ? "Choose the revised" : "Choose"} combined chapter document`;
     return;
   }
 
@@ -135,6 +182,7 @@ document.querySelectorAll('input[name="review_scope"], input[name="document_type
 });
 
 chapterSelect.addEventListener("change", updateUploadWorkflow);
+combinedChapterEnd.addEventListener("change", updateUploadWorkflow);
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({
@@ -471,7 +519,15 @@ form.addEventListener("submit", async event => {
   const scope = selectedScope();
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
-  if (scope === "chapter" && !chapter) { chapterSelect.focus(); return; }
+  const rangeEnd = Number(combinedChapterEnd.value || 0);
+  if (scope === "chapter" && !chapter) {
+    chapterSelect.focus();
+    return;
+  }
+  if (scope === "chapter_range" && !rangeEnd) {
+    combinedChapterEnd.focus();
+    return;
+  }
   if (stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
     showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields); return;
   }
@@ -482,7 +538,19 @@ form.addEventListener("submit", async event => {
 
   try {
     const body = new FormData(form);
-    if (scope === "full_thesis") { body.set("selected_chapter", "0"); body.set("document_type", "full_thesis"); body.delete("previous_files"); }
+    if (scope === "full_thesis") {
+      body.set("selected_chapter", "0");
+      body.set("combined_chapter_end", "0");
+      body.set("document_type", "full_thesis");
+      body.delete("previous_files");
+    } else if (scope === "chapter_range") {
+      body.set("selected_chapter", String(rangeEnd));
+      body.set("combined_chapter_end", String(rangeEnd));
+      body.set("document_type", "combined_chapters");
+      body.delete("previous_files");
+    } else {
+      body.set("combined_chapter_end", "0");
+    }
     if (stage !== "revised") { body.delete("supervisor_comment_files"); body.delete("supervisor_comments_text"); body.delete("original_file"); }
     const response = await fetch("/api/review", { method: "POST", body, headers: { "Accept": "application/json" } });
     const queued = await readJsonSafely(response);

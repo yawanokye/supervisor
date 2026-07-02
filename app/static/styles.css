@@ -269,3 +269,14 @@ input[type="text"]:focus,input[type="password"]:focus,input[type="email"]:focus,
   .access-role-tabs{padding:4px}
   .access-role-tab{min-width:0;padding:7px 10px}
 }
+
+
+/* v1.5.7 combined chapter range */
+.scope-segmented{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+@media(max-width:720px){
+  .scope-segmented{
+    grid-template-columns:1fr;
+  }
+}
