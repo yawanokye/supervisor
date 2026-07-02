@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Review Summary | Virtual Professor</title><link rel="stylesheet" href="/static/styles.css">
+  <title>Review Summary | AI Professor</title><link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <header class="topbar portal-topbar"><a class="brand" href="{{ '/admin' if user.role == 'admin' else '/portal' }}"><span class="brand-mark">Virtual</span><span><strong>Virtual Professor</strong><small>Review Summary</small></span></a><nav class="portal-nav"><a class="nav-link" href="{{ '/admin' if user.role == 'admin' else '/portal' }}">Back to portal</a></nav></header>
+  <header class="topbar portal-topbar"><a class="brand" href="{{ '/admin' if user.role == 'admin' else '/portal' }}"><span class="brand-mark">PR</span><span><strong>AI Professor</strong><small>Review Summary</small></span></a><nav class="portal-nav"><a class="nav-link" href="{{ '/admin' if user.role == 'admin' else '/portal' }}">Back to portal</a></nav></header>
   <main class="portal-shell detail-shell">
     <section class="portal-card review-summary-card">
       <p class="eyebrow">Completed academic review</p><h1>{{ record.filename }}</h1>

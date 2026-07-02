@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Virtual Professor Extraordinary Supervisor</title>
+  <title>AI Professor Extraordinary Supervisor</title>
   <meta name="description" content="Evidence-linked expert review for thesis chapters, research proposals, and complete theses.">
   <link rel="stylesheet" href="/static/styles.css">
 </head> 
 <body>
   <header class="topbar">
     <a class="brand" href="/portal">
-      <span class="brand-mark">VProf</span>
+      <span class="brand-mark">PR</span>
       <span>
-        <strong>Virtual Professor</strong>
+        <strong>AI Professor</strong>
         <small> Extraordinary Supervisor</small>
       </span>
     </a>
@@ -28,8 +28,8 @@
       <div>
         <h1>Hello!</h1>
         <h2>
-          Meet <span class="v-prof-name">V-Prof. {{ user.full_name }}</span>, a virtual Professor,
-          a colleague Co-Supervision and Assessment Assistant.
+          Meet <span class="v-prof-name">V-Prof {{ user.full_name }}</span>, a virtual Professor,
+          your Co-Academic Supervision and Assessment Assistant.
         </h2>
       </div>
     </section>
@@ -77,15 +77,17 @@
             </div>
             <p class="field-help" id="reviewDepthHelp">Standard Review examines every section and subsection at the level expected of a Research Master’s or MPhil dissertation.</p>
             <div class="light-note hidden" id="lightReviewNote">Light Review still examines every section and subsection. It applies the foundational standard expected of a Bachelor’s dissertation or non-research Master’s project, with practical guidance and examples where needed.</div>
-            <div class="doctoral-note hidden" id="doctoralNote">Advanced Review examines every section and subsection at Professional Doctorate or PhD level, including originality, theoretical contribution, methodological defensibility and contribution to knowledge.</div>
+            <div class="doctoral-note hidden" id="doctoralNote">Advanced Review examines every section and subsection at Professional Doctorate or PhD level, including originality, theoretical contribution, methodological defensibility and contribution to knowledge. A doctoral thesis may use custom chapter numbers, order and titles. The review assesses functional completeness and cross-thesis coherence rather than requiring five chapters.</div>
           </div>
 
           <div class="field">
             <span>Review scope</span>
-            <div class="segmented">
+            <div class="segmented scope-segmented">
               <label><input type="radio" name="review_scope" value="chapter" checked><span>Single chapter</span></label>
+              <label><input type="radio" name="review_scope" value="chapter_range"><span>Combined chapters</span></label>
               <label><input type="radio" name="review_scope" value="full_thesis"><span>Complete thesis</span></label>
             </div>
+            <p class="field-help" id="scopeStructureHelp">Bachelor’s and Master’s complete theses are checked against the standard research structure.</p>
           </div>
 
           <div class="field" id="submissionStageField">
@@ -107,6 +109,21 @@
               <option value="4">Chapter Four: Results and Discussion</option>
               <option value="5">Chapter Five: Conclusions and Recommendations</option>
             </select>
+          </label>
+
+          <label class="field hidden" id="combinedChapterField">
+            <span>Combined chapters being submitted</span>
+            <select name="combined_chapter_end" id="combinedChapterEnd">
+              <option value="" selected disabled>Select the chapter range</option>
+              <option value="2">Chapters One to Two</option>
+              <option value="3">Chapters One to Three</option>
+              <option value="4">Chapters One to Four</option>
+              <option value="5">Chapters One to Five</option>
+            </select>
+            <small class="field-help">
+              The range always starts with Chapter One. Upload one composite
+              DOCX or PDF containing every chapter in the selected range.
+            </small>
           </label>
 
           <div class="field hidden" id="documentTypeField">
