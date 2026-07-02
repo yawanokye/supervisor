@@ -1,3 +1,32 @@
+## v1.5.7
+
+- Added a Combined Chapters review scope.
+- Users can select Chapters 1–2, 1–3, 1–4 or 1–5.
+- The selected range always begins with Chapter One and must contain every preceding chapter.
+- The review is rejected before AI processing when any chapter in the selected range is missing.
+- Every chapter, section and subsection in the selected range is reviewed.
+- Sequential cross-chapter alignment is checked for Chapter Two and each later chapter in the selected range.
+- Any chapters outside the selected range are used only as alignment context.
+- Statistical diagnostics and accuracy checks run automatically when the combined range includes Chapter Three or Chapter Four.
+- Added combined-range labels and metadata to the review output and AI review packet.
+
+## v1.5.6
+
+- Made complete-thesis structure validation level-sensitive.
+- Retained the standard five-chapter completeness gate for Bachelor’s and Master’s theses.
+- Allowed Professional Doctorate and PhD theses to use custom chapter numbers, order and titles.
+- Added flexible doctoral functional-completeness validation covering the research problem, literature and theory, methodology, evidence and findings, discussion and synthesis, and conclusions and contribution.
+- Prevented a doctoral thesis from being rejected merely because it does not follow five chapters.
+- Retained rejection of genuinely incomplete doctoral uploads that omit essential research functions.
+- Changed local checklist searching for doctoral complete theses from chapter-number positions to document-wide research functions.
+- Added doctoral structure guidance to the interface, AI review contract and supervisor report.
+
+## v1.5.5
+
+- Added the missing `build_statistical_review` import in `app/review_engine.py`.
+- Prevented the Chapter Three and Chapter Four review workflow from failing with `NameError`.
+- Added a regression test that imports the live review engine and confirms the statistical review function is available.
+
 ## v1.5.4
 
 - Updated the landing-page hero to show “Hello!” followed by the V-Prof introduction.
