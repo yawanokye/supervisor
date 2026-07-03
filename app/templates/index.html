@@ -38,7 +38,7 @@
       <div class="panel setup-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Submit your work for review</p>
+            <p class="eyebrow">Submit your work for review or examination</p>
             <h2>Upload and configure</h2>
           </div>
           <span class="step">Step 1</span>
@@ -46,6 +46,98 @@
 
         <form id="reviewForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+          <div class="field workflow-selector">
+            <span>Academic workflow</span>
+            <div class="segmented">
+              <label><input type="radio" name="workflow_type" value="supervisory_review" checked><span>Supervisory Review</span></label>
+              <label><input type="radio" name="workflow_type" value="external_assessment"><span>External Assessment</span></label>
+            </div>
+            <p class="field-help" id="workflowHelp">Provides detailed developmental guidance, annotated comments and a supervisor review report.</p>
+          </div>
+
+          <div class="context-card assessment-metadata hidden" id="assessmentMetadataFields">
+            <div class="context-heading">
+              <div>
+                <span class="required-badge">External examination</span>
+                <h3>Examination information</h3>
+              </div>
+              <span class="context-icon">§</span>
+            </div>
+            <p>These details appear in the external examination report. Candidate name and number may be omitted for blind examination.</p>
+            <div class="form-grid two-column">
+              <label class="field compact-field">
+                <span>Candidate name</span>
+                <input type="text" name="candidate_name" id="candidateName" placeholder="Optional for blind examination">
+              </label>
+              <label class="field compact-field">
+                <span>Candidate number</span>
+                <input type="text" name="candidate_number" id="candidateNumber" placeholder="Optional">
+              </label>
+              <label class="field compact-field">
+                <span>Degree programme</span>
+                <input type="text" name="degree_programme" id="degreeProgramme" placeholder="e.g. MPhil Finance" required disabled>
+              </label>
+              <label class="field compact-field">
+                <span>Candidate department</span>
+                <input type="text" name="candidate_department" id="candidateDepartment" placeholder="Department or School">
+              </label>
+              <label class="field compact-field">
+                <span>Institution</span>
+                <input type="text" name="institution" id="institution" value="University of Cape Coast">
+              </label>
+              <label class="field compact-field">
+                <span>Examination stage</span>
+                <select name="assessment_stage" id="assessmentStage" disabled>
+                  <option value="initial_examination">Initial examination</option>
+                  <option value="re_examination">Re-examination</option>
+                  <option value="corrected_thesis_verification">Corrected thesis verification</option>
+                </select>
+              </label>
+            </div>
+            <label class="field compact-field">
+              <span>Thesis or dissertation title</span>
+              <textarea name="thesis_title" id="thesisTitle" rows="3" placeholder="Enter the approved title" required disabled></textarea>
+            </label>
+            <div class="external-output-note">
+              <strong>Four examiner-ready outputs</strong>
+              <span>Full examination report · corrections schedule · confidential recommendation · oral examination questions</span>
+            </div>
+
+            <div class="context-card revision-card hidden" id="priorExaminerFields">
+              <div class="context-heading">
+                <div>
+                  <span class="required-badge">Required for re-examination or verification</span>
+                  <h3>Earlier examiner report or correction schedule</h3>
+                </div>
+                <span class="context-icon">✓</span>
+              </div>
+              <p>Upload the earlier examiner report or correction schedule, paste the required corrections, or use both. The assessment will verify every extracted correction against the current thesis.</p>
+              <label class="upload-box context-upload">
+                <input type="file" name="prior_examiner_files" id="priorExaminerFilesInput" accept=".docx,.pdf" multiple disabled>
+                <span class="upload-icon">＋</span>
+                <strong>Choose earlier examiner file(s)</strong>
+                <small>DOCX or PDF. Up to 5 files, combined limit 50 MB.</small>
+                <em id="priorExaminerFileNames">No earlier examiner file selected</em>
+              </label>
+              <label class="field compact-field">
+                <span>Or paste the earlier examiner corrections</span>
+                <textarea name="prior_examiner_comments_text" id="priorExaminerCommentsText" rows="5" placeholder="Paste each correction on a separate line..." disabled></textarea>
+              </label>
+              <div class="optional-upload">
+                <span class="optional-badge">Optional</span>
+                <p>Upload the earlier thesis version for direct before-and-after comparison.</p>
+                <label class="upload-box context-upload">
+                  <input type="file" name="prior_version_file" id="priorVersionFileInput" accept=".docx,.pdf" disabled>
+                  <span class="upload-icon">↺</span>
+                  <strong>Choose the earlier thesis version</strong>
+                  <small>Used only for correction verification.</small>
+                  <em id="priorVersionFileName">No earlier thesis selected</em>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <label class="field">
             <span>Academic level</span>
             <select name="academic_level" required>
@@ -80,7 +172,7 @@
             <div class="doctoral-note hidden" id="doctoralNote">Advanced Review examines every section and subsection at Professional Doctorate or PhD level, including originality, theoretical contribution, methodological defensibility and contribution to knowledge. A doctoral thesis may use custom chapter numbers, order and titles. The review assesses functional completeness and cross-thesis coherence rather than requiring five chapters.</div>
           </div>
 
-          <div class="field">
+          <div class="field" id="reviewScopeField">
             <span>Review scope</span>
             <div class="segmented scope-segmented">
               <label><input type="radio" name="review_scope" value="chapter" checked><span>Single chapter</span></label>
@@ -200,17 +292,17 @@
           </div>
 
           <button class="primary-button" type="submit" id="submitButton">
-            <span>Submit your work for expert review</span>
+            <span id="submitButtonLabel">Submit your work for expert review</span>
           </button>
-          <p class="form-note">For revised chapters, the assistant checks every extracted supervisor comment and reports whether it is addressed, partly addressed, not addressed, or requires manual confirmation.</p>
+          <p class="form-note" id="workflowFormNote">For revised chapters, the assistant checks every extracted supervisor comment and reports whether it is addressed, partly addressed, not addressed, or requires manual confirmation.</p>
         </form>
       </div>
 
       <div class="panel result-panel">
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">✓</div>
-          <h2>Your review dashboard will appear here</h2>
-          <p>Results will include a complete academic assessment, strengths, priority revisions, cross-chapter alignment, supervisor-comment follow-up, evidence locations, and annotated guidance.</p>
+          <h2>Your review or examination dashboard will appear here</h2>
+          <p>Supervisory Review provides developmental guidance and annotations. External Assessment provides an independent examination judgement, formal correction schedule, confidential recommendation and oral examination questions.</p>
         </div>
 
         <div id="loadingState" class="loading-state hidden">
@@ -236,17 +328,41 @@
 
           <div class="metrics" id="metrics"></div>
 
+          <section class="result-section external-assessment-result hidden" id="externalAssessmentSection">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Independent examination judgement</p>
+                <h3>External assessment</h3>
+              </div>
+              <span class="alignment-score" id="chapterOneGateBadge">—</span>
+            </div>
+            <div class="external-recommendation-card">
+              <span>Final recommendation</span>
+              <strong id="externalRecommendation">Pending</strong>
+              <p id="externalRationale"></p>
+            </div>
+            <div id="externalDomainList" class="assessment-domain-list"></div>
+            <div class="section-title compact-title">
+              <div><p class="eyebrow">Formal correction schedule</p><h3>Corrections required</h3></div>
+            </div>
+            <div id="externalCorrectionsList" class="correction-list"></div>
+          </section>
+
           <div class="result-actions">
             <button class="secondary-button" id="annotatedButton">Download annotated document</button>
             <button class="ghost-button" id="downloadButton">Download review report</button>
+            <button class="ghost-button hidden" id="externalReportButton">Full examination report</button>
+            <button class="ghost-button hidden" id="correctionsScheduleButton">Corrections schedule</button>
+            <button class="ghost-button hidden" id="confidentialRecommendationButton">Confidential recommendation</button>
+            <button class="ghost-button hidden" id="oralQuestionsButton">Oral examination questions</button>
             <button class="ghost-button" id="showAllButton">Show all findings</button>
           </div>
 
           <section class="result-section hidden" id="revisionSection">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Revised chapter follow-up</p>
-                <h3>Supervisor comment compliance</h3>
+                <p class="eyebrow" id="revisionEyebrow">Revised chapter follow-up</p>
+                <h3 id="revisionHeading">Supervisor comment compliance</h3>
               </div>
               <span class="alignment-score" id="revisionScore">—</span>
             </div>

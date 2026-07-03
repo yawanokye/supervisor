@@ -8,11 +8,35 @@
   <header class="topbar portal-topbar"><a class="brand" href="{{ '/admin' if user.role == 'admin' else '/portal' }}"><span class="brand-mark">Vprof</span><span><strong>Virtual Professor</strong><small>Review Summary</small></span></a><nav class="portal-nav"><a class="nav-link" href="{{ '/admin' if user.role == 'admin' else '/portal' }}">Back to portal</a></nav></header>
   <main class="portal-shell detail-shell">
     <section class="portal-card review-summary-card">
-      <p class="eyebrow">Completed academic review</p><h1>{{ record.filename }}</h1>
-      <div class="review-summary-grid"><div><span>Review depth</span><strong>{{ record.review_depth|title }}</strong></div><div><span>Academic level</span><strong>{{ record.academic_level }}</strong></div><div><span>Score</span><strong>{{ ('%.1f'|format(record.overall_score)) + '%' if record.overall_score is not none else '—' }}</strong></div><div><span>Judgement</span><strong>{{ record.readiness_label or 'Completed' }}</strong></div></div>
+      <p class="eyebrow">{{ "Completed external assessment" if record.workflow_type == "external_assessment" else "Completed academic review" }}</p><h1>{{ record.filename }}</h1>
+      <div class="review-summary-grid"><div><span>Workflow</span><strong>{{ "External Assessment" if record.workflow_type == "external_assessment" else "Supervisory Review" }}</strong></div><div><span>Academic level</span><strong>{{ record.academic_level }}</strong></div><div><span>{{ "Evidence score" if record.workflow_type == "external_assessment" else "Score" }}</span><strong>{{ ('%.1f'|format(record.overall_score)) + '%' if record.overall_score is not none else '—' }}</strong></div><div><span>Judgement</span><strong>{{ record.readiness_label or 'Completed' }}</strong></div></div>
       {% if review and review.summary %}<p class="review-meaning">{{ review.summary.readiness_meaning or '' }}</p>{% endif %}
-      <div class="result-actions"><a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/export.docx">Download supervisor report</a>{% if record.annotated_available %}<a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated.docx">Download annotated document</a>{% endif %}</div>
+      <div class="result-actions">
+        {% if record.workflow_type == "external_assessment" %}
+          <a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/external-report.docx">Full examination report</a>
+          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/corrections-schedule.docx">Corrections schedule</a>
+          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/confidential-recommendation.docx">Confidential recommendation</a>
+          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/oral-questions.docx">Oral questions</a>
+        {% else %}
+          <a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/export.docx">Download supervisor report</a>
+          {% if record.annotated_available %}<a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated.docx">Download annotated document</a>{% endif %}
+        {% endif %}
+      </div>
     </section>
+
+    {% if review and review.external_assessment %}
+    <section class="portal-card">
+      <p class="eyebrow">Independent examination judgement</p>
+      <h2>{{ review.external_assessment.recommendation_label }}</h2>
+      <p class="review-meaning">{{ review.external_assessment.recommendation_rationale }}</p>
+      <div class="review-summary-grid">
+        <div><span>Chapter One gate</span><strong>{{ review.external_assessment.chapter_one_gate_status|replace('_',' ')|title }}</strong></div>
+        <div><span>Recommendation confidence</span><strong>{{ review.external_assessment.recommendation_confidence|title }}</strong></div>
+        <div><span>Viva</span><strong>{{ review.external_assessment.viva_recommendation|replace('_',' ')|title }}</strong></div>
+        <div><span>Corrections</span><strong>{{ review.external_assessment.corrections|length }}</strong></div>
+      </div>
+    </section>
+    {% endif %}
     {% if review and review.priority_actions %}<section class="portal-card"><p class="eyebrow">Priority guidance</p><h2>Corrections before resubmission</h2><div class="action-list">{% for action in review.priority_actions[:12] %}<article class="action-item {{ action.severity or 'moderate' }}"><strong>{{ action.section or 'Academic review' }}</strong><p>{{ action.action }}</p></article>{% endfor %}</div></section>{% endif %}
   </main>
 </body>

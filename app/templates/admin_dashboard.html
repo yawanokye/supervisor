@@ -56,8 +56,8 @@
 
     <section class="portal-card">
       <div class="portal-card-heading"><div><p class="eyebrow">Institutional activity</p><h2>Recent reviews</h2></div></div>
-      {% if recent_reviews %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Supervisor</th><th>Document</th><th>Depth</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
-      {% for item in recent_reviews %}<tr><td>{{ item.lecturer.full_name }}</td><td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }}</small></td><td>{{ item.review_depth|title }}</td><td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span></td><td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td><td>{% if item.status == 'completed' and item.review_id %}<a href="/reviews/{{ item.review_id }}">View</a>{% else %}<span class="muted-text">—</span>{% endif %}</td></tr>{% endfor %}
+      {% if recent_reviews %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Supervisor</th><th>Document</th><th>Workflow</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
+      {% for item in recent_reviews %}<tr><td>{{ item.lecturer.full_name }}</td><td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }}</small></td><td>{{ "External Assessment" if item.workflow_type == "external_assessment" else "Supervisory Review" }}<small>{{ item.review_depth|title }}</small></td><td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span></td><td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td><td>{% if item.status == 'completed' and item.review_id %}<a href="/reviews/{{ item.review_id }}">View</a>{% else %}<span class="muted-text">—</span>{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="muted-text">No review activity has been recorded.</p>{% endif %}
     </section>
   </main>
