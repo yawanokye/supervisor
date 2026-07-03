@@ -231,3 +231,29 @@ The workflow supports initial examination, re-examination and corrected-thesis v
 ## Staged External Assessment generation
 
 Long PhD and Professional Doctorate external assessments are generated in four validated stages rather than one oversized response. This reduces output-token truncation and provides targeted recovery for an individual stage without weakening the examiner report.
+
+## Durable checkpoint and resume workflow
+
+Version 1.7.0 stores the uploaded review payload and each completed processing unit before the next unit begins. The following work is reusable after a timeout, provider interruption, Render restart or manual resume:
+
+- document extraction and thesis structure analysis
+- deterministic statistical and alignment preparation
+- every completed academic section batch
+- the compact doctoral quality audit
+- each of the four External Assessment stages
+- the final assembled review before document export
+
+A recoverable interruption is shown as **Paused**. The service automatically retries up to `MAX_AUTO_RESUMES`, and the lecturer can also select **Resume** in the portal. The same job identifier and completed checkpoints are retained. A final report is not produced until all compulsory stages have completed.
+
+For restart-safe operation, configure PostgreSQL and persistent shared storage. The included Render blueprint mounts a persistent disk at `/var/data` and sets:
+
+```env
+REVIEW_STORAGE_DIR=/var/data/reviews
+AUTO_RESUME_JOBS=true
+MAX_AUTO_RESUMES=3
+JOB_HEARTBEAT_SECONDS=45
+JOB_LEASE_SECONDS=240
+AI_MAX_PARALLEL_CALLS=4
+```
+
+The temporary fallback path permits the app to remain available but cannot preserve uploaded files across a redeploy. For horizontal scaling beyond one Render instance, replace the disk-backed payload store with S3-compatible object storage because a Render disk is attached to only one service instance.

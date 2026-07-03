@@ -134,3 +134,29 @@ AI_ADVANCED_AUDIT_MAX_FINDINGS=24
 ```
 
 For a typical Chapter One with about 15 detected review units, Advanced Review should normally require about four primary requests and one compact audit, plus a grouped recovery request only when a section is omitted.
+
+## Checkpoint and resume deployment requirements
+
+The v1.7.0 pipeline persists original uploads, extracted thesis maps, completed AI section groups and final-stage data. For the checkpoints to survive a Render restart or redeploy:
+
+1. Use Render PostgreSQL through `DATABASE_URL`.
+2. Mount persistent storage at `/var/data` and set `REVIEW_STORAGE_DIR=/var/data/reviews`.
+3. Keep `AUTO_RESUME_JOBS=true`.
+4. Use one web instance while relying on a Render persistent disk. A persistent disk is not shared between horizontally scaled instances.
+5. For multiple web or worker instances, move the payload/checkpoint files to S3-compatible shared object storage before scaling horizontally.
+
+Recommended environment values:
+
+```env
+AUTO_RESUME_JOBS=true
+MAX_AUTO_RESUMES=3
+JOB_HEARTBEAT_SECONDS=45
+JOB_LEASE_SECONDS=240
+JOB_STALE_AFTER_SECONDS=180
+AI_MAX_PARALLEL_CALLS=4
+AI_JOB_MAX_SECONDS=7200
+REVIEW_STORAGE_DIR=/var/data/reviews
+REVIEW_STORAGE_FALLBACK_DIR=/tmp/projectready-supervisor/reviews
+```
+
+On startup, queued, paused and interrupted processing jobs with saved payloads are reclaimed. Completed document-analysis, section-review and External Assessment checkpoints are skipped. Only the unfinished unit is repeated.

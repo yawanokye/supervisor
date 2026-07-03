@@ -1,3 +1,28 @@
+## v1.7.0
+
+- Added durable job payload storage so uploaded theses, context chapters and examiner documents can be reloaded after a process interruption.
+- Added database-backed checkpoints for document analysis, each academic-review batch, the doctoral quality audit, every External Assessment stage and the final assembled review.
+- Added automatic resume on service startup and automatic retry of recoverable provider or timeout interruptions.
+- Added worker leases and heartbeats to reduce duplicate processing when a service restarts or more than one instance is active.
+- Added a manual Resume action in the lecturer portal for paused jobs.
+- Interrupted jobs now remain Paused and recoverable instead of being marked as permanently failed.
+- Final candidate-facing or examiner reports are generated only after every compulsory stage is complete. No partial final report is issued.
+- Restored checkpoints are skipped, preventing repeated model calls and repeated token charges.
+- Moved synchronous document extraction and annotated-DOCX generation off the event loop.
+- Increased controlled academic-review parallelism from three to four calls by default.
+- Ran the independent foundation/methodology and evidence/contribution External Assessment stages concurrently, while retaining the corrections and final-decision dependency chain.
+- Added persistent Render disk configuration at `/var/data` for saved payloads, checkpoints and reports.
+
+## v1.6.2
+
+- Made review-job progress monotonic in both the server and browser.
+- Delayed progress callbacks from concurrent AI stages can no longer reduce the stored percentage.
+- A delayed earlier-stage callback can no longer replace the current later-stage progress message.
+- Persisted database progress now retains the highest percentage reached.
+- Browser polling retains the highest percentage displayed even when a stale response arrives.
+- Active-job progress is saved in local storage and restored after refresh or reconnection instead of resetting to 4%.
+- Starting a genuinely new review still resets the progress indicator to 2%.
+
 ## v1.6.1
 
 - Replaced the single very large External Assessment model response with a four-stage examiner workflow.

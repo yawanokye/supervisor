@@ -14,6 +14,20 @@ services:
       - key: COOKIE_SECURE
         value: true
       - key: REVIEW_STORAGE_DIR
-        value: /tmp/projectready-supervisor/reviews
+        value: /var/data/reviews
       - key: REVIEW_STORAGE_FALLBACK_DIR
         value: /tmp/projectready-supervisor/reviews
+      - key: AUTO_RESUME_JOBS
+        value: true
+      - key: MAX_AUTO_RESUMES
+        value: 3
+      - key: JOB_HEARTBEAT_SECONDS
+        value: 45
+      - key: JOB_LEASE_SECONDS
+        value: 240
+      - key: AI_MAX_PARALLEL_CALLS
+        value: 4
+    disk:
+      name: supervisor-review-checkpoints
+      mountPath: /var/data
+      sizeGB: 10
