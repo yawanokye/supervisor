@@ -36,10 +36,44 @@ const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
 const scopeStructureHelp = document.getElementById("scopeStructureHelp");
+const workflowHelp = document.getElementById("workflowHelp");
+const assessmentMetadataFields = document.getElementById("assessmentMetadataFields");
+const degreeProgramme = document.getElementById("degreeProgramme");
+const thesisTitle = document.getElementById("thesisTitle");
+const assessmentStage = document.getElementById("assessmentStage");
+const reviewScopeField = document.getElementById("reviewScopeField");
+const submissionStageField = document.getElementById("submissionStageField");
+const reviewDepthField = document.getElementById("reviewDepthField");
+const submitButtonLabel = document.getElementById("submitButtonLabel");
+const externalAssessmentSection = document.getElementById("externalAssessmentSection");
+const externalReportButton = document.getElementById("externalReportButton");
+const correctionsScheduleButton = document.getElementById("correctionsScheduleButton");
+const confidentialRecommendationButton = document.getElementById("confidentialRecommendationButton");
+const oralQuestionsButton = document.getElementById("oralQuestionsButton");
+const priorExaminerFields = document.getElementById("priorExaminerFields");
+const priorExaminerFilesInput = document.getElementById("priorExaminerFilesInput");
+const priorExaminerFileNames = document.getElementById("priorExaminerFileNames");
+const priorExaminerCommentsText = document.getElementById("priorExaminerCommentsText");
+const priorVersionFileInput = document.getElementById("priorVersionFileInput");
+const priorVersionFileName = document.getElementById("priorVersionFileName");
+const workflowFormNote = document.getElementById("workflowFormNote");
 
 function updateDepthGuidance() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(academicLevelSelect.value);
-  doctoralNote.classList.toggle("hidden", !doctoral);
+  const external = selectedWorkflow() === "external_assessment";
+  doctoralNote.classList.toggle("hidden", !doctoral || external);
+  if (external) {
+    const targetDepth = doctoral
+      ? "advanced"
+      : academicLevelSelect.value === "Research Masters / MPhil"
+        ? "standard"
+        : "light";
+    const depthInput = form.querySelector(`input[name="review_depth"][value="${targetDepth}"]`);
+    if (depthInput) depthInput.checked = true;
+    reviewDepthHelp.textContent = "External Assessment automatically applies the examination standard appropriate to the selected academic level.";
+    lightReviewNote.classList.add("hidden");
+    return;
+  }
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
   lightReviewNote.classList.toggle("hidden", depth !== "light");
   if (depth === "light") {
@@ -55,7 +89,12 @@ academicLevelSelect.addEventListener("change", () => {
   updateUploadWorkflow();
 });
 form.querySelectorAll('input[name="review_depth"]').forEach(input => input.addEventListener("change", updateDepthGuidance));
+form.querySelectorAll('input[name="workflow_type"]').forEach(input => input.addEventListener("change", () => { updateDepthGuidance(); updateUploadWorkflow(); }));
 updateDepthGuidance();
+
+function selectedWorkflow() {
+  return document.querySelector('input[name="workflow_type"]:checked')?.value || "supervisory_review";
+}
 
 function selectedScope() {
   return document.querySelector('input[name="review_scope"]:checked')?.value || "chapter";
@@ -70,6 +109,11 @@ function selectedStage() {
 }
 
 function updateUploadWorkflow() {
+  const external = selectedWorkflow() === "external_assessment";
+  if (external) {
+    const fullScope = form.querySelector('input[name="review_scope"][value="full_thesis"]');
+    if (fullScope) fullScope.checked = true;
+  }
   const scope = selectedScope();
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
@@ -80,6 +124,32 @@ function updateUploadWorkflow() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(
     academicLevelSelect.value
   );
+
+  assessmentMetadataFields.classList.toggle("hidden", !external);
+  assessmentStage.disabled = !external;
+  const correctionVerification = external && assessmentStage.value !== "initial_examination";
+  priorExaminerFields.classList.toggle("hidden", !correctionVerification);
+  priorExaminerFilesInput.disabled = !correctionVerification;
+  priorExaminerCommentsText.disabled = !correctionVerification;
+  priorVersionFileInput.disabled = !correctionVerification;
+  degreeProgramme.disabled = !external;
+  thesisTitle.disabled = !external;
+  degreeProgramme.required = external;
+  thesisTitle.required = external;
+  reviewScopeField.classList.toggle("hidden", external);
+  submissionStageField.classList.toggle("hidden", external);
+  reviewDepthField.classList.toggle("hidden", external);
+  if (workflowHelp) {
+    workflowHelp.textContent = external
+      ? "Produces an independent external examiner judgement, correction schedule, confidential recommendation and oral examination questions."
+      : "Provides detailed developmental guidance, annotated comments and a supervisor review report.";
+  }
+  submitButtonLabel.textContent = external
+    ? "Submit thesis for external assessment"
+    : "Submit your work for expert review";
+  workflowFormNote.textContent = external
+    ? "The external assessment is an examiner-ready draft. The authorised external examiner must review, confirm and sign the final institutional report."
+    : "For revised chapters, the assistant checks every extracted supervisor comment and reports whether it is addressed, partly addressed, not addressed, or requires manual confirmation.";
 
   if (scopeStructureHelp) {
     if (combined) {
@@ -92,31 +162,36 @@ function updateUploadWorkflow() {
     }
   }
 
-  chapterField.classList.toggle("hidden", fullThesis || combined);
-  chapterSelect.required = !fullThesis && !combined;
-  chapterSelect.disabled = fullThesis || combined;
+  chapterField.classList.toggle("hidden", external || fullThesis || combined);
+  chapterSelect.required = !external && !fullThesis && !combined;
+  chapterSelect.disabled = external || fullThesis || combined;
 
-  combinedChapterField.classList.toggle("hidden", !combined);
+  combinedChapterField.classList.toggle("hidden", external || !combined);
   combinedChapterEnd.required = combined;
-  combinedChapterEnd.disabled = !combined;
+  if (external) combinedChapterEnd.required = false;
+  combinedChapterEnd.disabled = external || !combined;
 
   documentTypeField.classList.toggle(
     "hidden",
-    fullThesis || combined || chapter !== 1
+    external || fullThesis || combined || chapter !== 1
   );
   previousChaptersField.classList.toggle(
     "hidden",
-    fullThesis || combined || chapter < 2
+    external || fullThesis || combined || chapter < 2
   );
   previousFilesInput.required = false;
-  previousFilesInput.disabled = fullThesis || combined || chapter < 2;
+  previousFilesInput.disabled = external || fullThesis || combined || chapter < 2;
 
-  revisionReviewFields.classList.toggle("hidden", !revised);
-  supervisorCommentFilesInput.disabled = !revised;
-  supervisorCommentsText.disabled = !revised;
-  originalFileInput.disabled = !revised;
+  revisionReviewFields.classList.toggle("hidden", external || !revised);
+  supervisorCommentFilesInput.disabled = external || !revised;
+  supervisorCommentsText.disabled = external || !revised;
+  originalFileInput.disabled = external || !revised;
 
   const prefix = revised ? "Choose the revised " : "Choose ";
+  if (external) {
+    mainUploadTitle.textContent = "Choose the complete thesis or dissertation for external examination";
+    return;
+  }
   if (fullThesis) {
     if (doctoral) {
       mainUploadTitle.textContent = revised
@@ -177,7 +252,17 @@ originalFileInput.addEventListener("change", () => {
   originalFileName.textContent = originalFileInput.files[0]?.name || "No original chapter selected";
 });
 
-document.querySelectorAll('input[name="review_scope"], input[name="document_type"], input[name="submission_stage"]').forEach(input => {
+priorExaminerFilesInput.addEventListener("change", () => {
+  setFileNames(priorExaminerFilesInput, priorExaminerFileNames, "No earlier examiner file selected");
+});
+
+priorVersionFileInput.addEventListener("change", () => {
+  priorVersionFileName.textContent = priorVersionFileInput.files[0]?.name || "No earlier thesis selected";
+});
+
+assessmentStage.addEventListener("change", updateUploadWorkflow);
+
+document.querySelectorAll('input[name="review_scope"], input[name="document_type"], input[name="submission_stage"], input[name="workflow_type"]').forEach(input => {
   input.addEventListener("change", updateUploadWorkflow);
 });
 
@@ -242,7 +327,7 @@ function categoryLabel(value) {
 
 function findingHtml(item) {
   const category = item.review_type === "supervisor_comment"
-    ? "Supervisor Follow-up"
+    ? (currentReview?.external_assessment ? "Earlier Examiner Correction" : "Supervisor Follow-up")
     : item.review_type === "alignment"
       ? "Cross-Chapter Alignment"
       : categoryLabel(item.category);
@@ -299,9 +384,10 @@ function renderContextSummary(review) {
 
 function renderRevisionSourceSummary(review) {
   const sources = review.supervisor_comment_sources || [];
+  const external = Boolean(review.external_assessment);
   const original = review.original_document;
   const sourceRows = sources.map(source =>
-    `<div class="context-file"><strong>${escapeHtml(source)}</strong><span>Supervisor comments</span></div>`
+    `<div class="context-file"><strong>${escapeHtml(source)}</strong><span>${external ? "Earlier examiner report" : "Supervisor comments"}</span></div>`
   );
   if (original) {
     sourceRows.push(`<div class="context-file"><strong>${escapeHtml(original.filename)}</strong><span>Original version used for comparison</span></div>`);
@@ -309,15 +395,86 @@ function renderRevisionSourceSummary(review) {
   return sourceRows.join("");
 }
 
+const EXTERNAL_DOMAIN_LABELS = {
+  chapter_one_assessment: "Chapter One or Foundational Chapter",
+  research_problem_and_purpose: "Research Problem and Purpose",
+  literature_and_theoretical_foundation: "Literature and Theoretical Foundation",
+  methodology_and_procedures: "Methodology and Procedures",
+  results_or_findings: "Results or Findings",
+  discussion_and_interpretation: "Discussion and Interpretation",
+  conclusions_recommendations_and_contribution: "Conclusions, Recommendations and Contribution",
+  structural_coherence_and_alignment: "Structural Coherence and Alignment",
+  academic_writing_and_presentation: "Academic Writing and Presentation",
+  ethics_and_research_integrity: "Ethics and Research Integrity",
+  originality_and_contribution: "Originality and Contribution",
+};
+
+function externalJudgementLabel(value) {
+  return String(value || "Not assessed")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function renderExternalAssessment(review) {
+  const assessment = review.external_assessment;
+  const isExternal = Boolean(assessment);
+  externalAssessmentSection.classList.toggle("hidden", !isExternal);
+  [externalReportButton, correctionsScheduleButton, confidentialRecommendationButton, oralQuestionsButton]
+    .forEach(button => button.classList.toggle("hidden", !isExternal));
+  if (!isExternal) return;
+
+  document.getElementById("externalRecommendation").textContent = assessment.recommendation_label || "External recommendation pending";
+  document.getElementById("externalRationale").textContent = assessment.recommendation_rationale || "";
+  document.getElementById("chapterOneGateBadge").textContent = `Chapter One: ${externalJudgementLabel(assessment.chapter_one_gate_status)}`;
+
+  const domains = (assessment.domain_order || Object.keys(EXTERNAL_DOMAIN_LABELS))
+    .map(key => [key, assessment[key]])
+    .filter(([, value]) => value && typeof value === "object");
+  document.getElementById("externalDomainList").innerHTML = domains.map(([key, domain]) => `
+    <article class="assessment-domain">
+      <div><strong>${escapeHtml(EXTERNAL_DOMAIN_LABELS[key] || key)}</strong><span class="domain-judgement judgement-${escapeHtml(domain.judgement)}">${escapeHtml(externalJudgementLabel(domain.judgement))}</span></div>
+      <p>${escapeHtml(domain.assessment)}</p>
+      ${(domain.concerns || []).length ? `<details><summary>Material concerns</summary><ul>${domain.concerns.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : ""}
+    </article>`).join("");
+
+  const corrections = assessment.corrections || [];
+  document.getElementById("externalCorrectionsList").innerHTML = corrections.length
+    ? corrections.map(item => `
+      <article class="correction-item ${escapeHtml(item.classification)}">
+        <div><strong>${escapeHtml(String(item.number))}. ${escapeHtml(item.chapter_or_section)}</strong><span>${escapeHtml(item.classification)}</span></div>
+        <small>${escapeHtml(item.location || "Location to be confirmed")}</small>
+        <p><b>Issue:</b> ${escapeHtml(item.issue)}</p>
+        <p><b>Required correction:</b> ${escapeHtml(item.required_correction)}</p>
+      </article>`).join("")
+    : `<p class="form-note">No formal corrections were recorded.</p>`;
+
+  const id = encodeURIComponent(review.review_id);
+  externalReportButton.onclick = () => { window.location.href = `/api/review/${id}/external-report.docx`; };
+  correctionsScheduleButton.onclick = () => { window.location.href = `/api/review/${id}/corrections-schedule.docx`; };
+  confidentialRecommendationButton.onclick = () => { window.location.href = `/api/review/${id}/confidential-recommendation.docx`; };
+  oralQuestionsButton.onclick = () => { window.location.href = `/api/review/${id}/oral-questions.docx`; };
+}
+
 function renderReview(review) {
   currentReview = review;
   const s = review.summary;
-  document.getElementById("resultTitle").textContent = `${s.document_label}: ${s.filename}`;
-  document.getElementById("overallScore").textContent = `${s.overall_score}%`;
+  const isExternal = Boolean(review.external_assessment);
+  document.getElementById("resultTitle").textContent = isExternal
+    ? `External assessment: ${s.filename}`
+    : `${s.document_label}: ${s.filename}`;
+  document.getElementById("overallScore").textContent = isExternal ? "EXAM" : `${s.overall_score}%`;
   document.getElementById("readinessLabel").textContent = s.readiness_label;
   document.getElementById("readinessMeaning").textContent = s.readiness_meaning;
 
-  const metricRows = [
+  const correctionCounts = review.external_assessment?.correction_counts || {};
+  const metricRows = isExternal ? [
+    metric("Chapter One gate", externalJudgementLabel(s.chapter_one_gate_status)),
+    metric("Critical corrections", correctionCounts.critical || 0),
+    metric("Major corrections", correctionCounts.major || 0),
+    metric("Moderate corrections", correctionCounts.moderate || 0),
+    metric("Minor corrections", correctionCounts.minor || 0),
+    metric("Academic evidence review", `${s.academic_review_score}%`),
+  ] : [
     metric("Academic review", `${s.academic_review_score}%`),
     metric("Alignment", s.alignment_score == null ? "N/A" : `${s.alignment_score}%`),
     metric("Critical issues", s.critical_issues || 0),
@@ -351,6 +508,12 @@ function renderReview(review) {
     `<p class="form-note">No priority actions were generated.</p>`;
 
   const revisionRows = review.revision_results || [];
+  document.getElementById("revisionEyebrow").textContent = isExternal
+    ? "Earlier examiner correction follow-up"
+    : "Revised chapter follow-up";
+  document.getElementById("revisionHeading").textContent = isExternal
+    ? "Correction verification"
+    : "Supervisor comment compliance";
   const revisionSection = document.getElementById("revisionSection");
   revisionSection.classList.toggle("hidden", !revisionRows.length);
   if (revisionRows.length) {
@@ -368,6 +531,7 @@ function renderReview(review) {
     document.getElementById("alignmentList").innerHTML = alignmentRows.map(findingHtml).join("");
   }
 
+  renderExternalAssessment(review);
   const annotatedButton = document.getElementById("annotatedButton");
   if (s.annotated_document_available) {
     annotatedButton.classList.remove("hidden");
@@ -379,7 +543,9 @@ function renderReview(review) {
     annotatedButton.classList.add("hidden");
   }
 
-  document.getElementById("downloadButton").onclick = () => {
+  const downloadButton = document.getElementById("downloadButton");
+  downloadButton.classList.toggle("hidden", isExternal);
+  downloadButton.onclick = () => {
     window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/export.docx`;
   };
   applyFilter();
@@ -516,6 +682,7 @@ form.addEventListener("submit", async event => {
   const oldError = document.querySelector(".error-banner");
   if (oldError) oldError.remove();
 
+  const external = selectedWorkflow() === "external_assessment";
   const scope = selectedScope();
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
@@ -528,17 +695,41 @@ form.addEventListener("submit", async event => {
     combinedChapterEnd.focus();
     return;
   }
-  if (stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
+  if (external && !degreeProgramme.value.trim()) {
+    showFormError("Enter the degree programme for the external examination report.", assessmentMetadataFields);
+    degreeProgramme.focus();
+    return;
+  }
+  if (external && !thesisTitle.value.trim()) {
+    showFormError("Enter the thesis or dissertation title for the external examination report.", assessmentMetadataFields);
+    thesisTitle.focus();
+    return;
+  }
+  if (external && assessmentStage.value !== "initial_examination" && !(priorExaminerFilesInput.files || []).length && !priorExaminerCommentsText.value.trim()) {
+    showFormError("Upload the earlier examiner report or paste the correction schedule before re-examination or corrected-thesis verification.", priorExaminerFields);
+    return;
+  }
+  if (!external && stage === "revised" && !(supervisorCommentFilesInput.files || []).length && !supervisorCommentsText.value.trim()) {
     showFormError("Upload the supervisor comments or paste them into the comments box before reviewing a revised chapter.", revisionReviewFields); return;
   }
 
   emptyState.classList.add("hidden"); resultsState.classList.add("hidden"); loadingState.classList.remove("hidden");
-  progressBar.style.width = "2%"; progressText.textContent = "2%"; loadingMessage.textContent = "Uploading and queuing the review";
-  submitButton.disabled = true; submitButton.querySelector("span").textContent = "Review in progress…";
+  progressBar.style.width = "2%"; progressText.textContent = "2%"; loadingMessage.textContent = external ? "Uploading and queuing the external assessment" : "Uploading and queuing the review";
+  submitButton.disabled = true; submitButton.querySelector("span").textContent = external ? "External assessment in progress…" : "Review in progress…";
 
   try {
     const body = new FormData(form);
-    if (scope === "full_thesis") {
+    if (external) {
+      body.set("review_scope", "full_thesis");
+      body.set("selected_chapter", "0");
+      body.set("combined_chapter_end", "0");
+      body.set("document_type", "full_thesis");
+      body.set("submission_stage", "initial");
+      body.delete("previous_files");
+      body.delete("supervisor_comment_files");
+      body.delete("supervisor_comments_text");
+      body.delete("original_file");
+    } else if (scope === "full_thesis") {
       body.set("selected_chapter", "0");
       body.set("combined_chapter_end", "0");
       body.set("document_type", "full_thesis");
@@ -551,7 +742,7 @@ form.addEventListener("submit", async event => {
     } else {
       body.set("combined_chapter_end", "0");
     }
-    if (stage !== "revised") { body.delete("supervisor_comment_files"); body.delete("supervisor_comments_text"); body.delete("original_file"); }
+    if (external || stage !== "revised") { body.delete("supervisor_comment_files"); body.delete("supervisor_comments_text"); body.delete("original_file"); }
     const response = await fetch("/api/review", { method: "POST", body, headers: { "Accept": "application/json" } });
     const queued = await readJsonSafely(response);
     updateProgress(queued);
@@ -568,7 +759,7 @@ form.addEventListener("submit", async event => {
   } catch (error) {
     loadingState.classList.add("hidden"); emptyState.classList.remove("hidden"); showFormError(error.message);
   } finally {
-    submitButton.disabled = false; submitButton.querySelector("span").textContent = "Run expert review";
+    submitButton.disabled = false; submitButton.querySelector("span").textContent = selectedWorkflow() === "external_assessment" ? "Submit thesis for external assessment" : "Run expert review";
   }
 });
 
