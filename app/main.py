@@ -34,6 +34,14 @@ from .auth import (
     verify_secret,
 )
 from .database import ReviewRecord, SessionLocal, User, get_db, init_db
+from .document_parser import clean_text
+from .external_assessment import enrich_with_external_assessment
+from .external_assessment_exporter import (
+    build_confidential_recommendation,
+    build_corrections_schedule,
+    build_external_examination_report,
+    build_oral_examination_questions,
+)
 from .report_exporter import build_docx_report
 from .review_engine import analyse
 from .storage import ensure_storage, load_annotated, load_review_json, save_annotated, save_review_json
@@ -51,7 +59,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.1.0",
+    version="1.6.0",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -91,6 +99,7 @@ def startup() -> None:
 def _strip_internal_ai_metadata(review: dict) -> dict:
     review.pop("ai_review", None)
     review.pop("ai_document_map", None)
+    review.pop("external_assessment_usage", None)
     review.pop("results", None)
     review.pop("chapter_scores", None)
     review.pop("critical_gates", None)
@@ -213,7 +222,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.5.7"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.6.0"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -584,6 +593,15 @@ def _job_update(job_id: str, *, status: Optional[str] = None, progress: Optional
     _persist_job_update(job_id, status=status, progress=progress, message=message, error=extra.get("error"), review_id=extra.get("review_id"))
 
 
+def _assessment_review_depth(academic_level: str) -> str:
+    value = clean_text(academic_level).lower()
+    if value in {"phd", "professional doctorate"} or "doctor" in value:
+        return "advanced"
+    if "research masters" in value or "mphil" in value:
+        return "standard"
+    return "light"
+
+
 async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
     try:
         _job_update(job_id, status="processing", progress=8, message="Reading and organising the uploaded documents")
@@ -614,10 +632,31 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
             ),
             timeout=AI_JOB_MAX_SECONDS,
         )
+        if payload.get("workflow_type") == "external_assessment":
+            review = await asyncio.wait_for(
+                enrich_with_external_assessment(
+                    review,
+                    runtime_context,
+                    metadata=payload.get("assessment_metadata") or {},
+                    config=config,
+                    progress_callback=progress_callback,
+                ),
+                timeout=AI_JOB_MAX_SECONDS,
+            )
+        else:
+            review.setdefault("summary", {}).update({
+                "workflow_type": "supervisory_review",
+                "workflow_label": "Supervisory Review",
+                "external_assessment_available": False,
+            })
+
         if review.get("ai_review"):
             AI_USAGE_CACHE[review["review_id"]] = dict(review["ai_review"])
         review = _strip_internal_ai_metadata(review)
-        review["summary"]["annotated_document_available"] = payload["filename"].lower().endswith(".docx")
+        is_external = payload.get("workflow_type") == "external_assessment"
+        review["summary"]["annotated_document_available"] = (
+            not is_external and payload["filename"].lower().endswith(".docx")
+        )
 
         annotated_data = None
         if review["summary"]["annotated_document_available"]:
@@ -639,7 +678,11 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
                 record.review_id = review["review_id"]
                 record.status = "completed"
                 record.progress = 100
-                record.message = "Review complete"
+                record.message = (
+                    "External assessment complete"
+                    if payload.get("workflow_type") == "external_assessment"
+                    else "Review complete"
+                )
                 record.overall_score = float(summary.get("overall_score") or 0)
                 record.readiness_label = summary.get("readiness_label")
                 record.annotated_available = bool(summary.get("annotated_document_available"))
@@ -649,7 +692,11 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
             job_id,
             status="completed",
             progress=100,
-            message="Review complete",
+            message=(
+                "External assessment complete"
+                if payload.get("workflow_type") == "external_assessment"
+                else "Review complete"
+            ),
             review_id=review["review_id"],
             result_url=f'/api/review/{review["review_id"]}',
         )
@@ -690,6 +737,14 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
 async def create_review(
     request: Request,
     file: UploadFile = File(...), academic_level: str = Form(...), research_approach: str = Form(...),
+    workflow_type: str = Form("supervisory_review"),
+    assessment_stage: str = Form("initial_examination"),
+    candidate_name: str = Form(""),
+    candidate_number: str = Form(""),
+    degree_programme: str = Form(""),
+    candidate_department: str = Form(""),
+    institution: str = Form("University of Cape Coast"),
+    thesis_title: str = Form(""),
     review_scope: str = Form("chapter"),
     selected_chapter: int = Form(0),
     combined_chapter_end: int = Form(0),
@@ -697,6 +752,9 @@ async def create_review(
     submission_stage: str = Form("initial"), review_depth: str = Form("standard"), csrf_token: str = Form(...),
     previous_files: Optional[List[UploadFile]] = File(None), supervisor_comment_files: Optional[List[UploadFile]] = File(None),
     supervisor_comments_text: str = Form(""), original_file: Optional[UploadFile] = File(None),
+    prior_examiner_files: Optional[List[UploadFile]] = File(None),
+    prior_examiner_comments_text: str = Form(""),
+    prior_version_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     _verify_csrf(request, csrf_token)
@@ -705,6 +763,50 @@ async def create_review(
         raise HTTPException(status_code=401, detail="Sign in to submit a review.")
     if user.must_change_password:
         raise HTTPException(status_code=403, detail="Change your temporary password before submitting a review.")
+    if workflow_type not in {"supervisory_review", "external_assessment"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose Supervisory Review or External Assessment.",
+        )
+    if workflow_type == "external_assessment":
+        if assessment_stage not in {
+            "initial_examination",
+            "re_examination",
+            "corrected_thesis_verification",
+        }:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose Initial Examination, Re-examination or Corrected Thesis Verification.",
+            )
+        if not clean_text(thesis_title):
+            raise HTTPException(
+                status_code=400,
+                detail="Enter the thesis or dissertation title for the external examination report.",
+            )
+        if not clean_text(degree_programme):
+            raise HTTPException(
+                status_code=400,
+                detail="Enter the degree programme for the external examination report.",
+            )
+        review_scope = "full_thesis"
+        selected_chapter = 0
+        combined_chapter_end = 0
+        document_type = "full_thesis"
+        submission_stage = (
+            "initial"
+            if assessment_stage == "initial_examination"
+            else "revised"
+        )
+        review_depth = _assessment_review_depth(academic_level)
+        previous_files = None
+        if submission_stage == "revised":
+            supervisor_comment_files = prior_examiner_files
+            supervisor_comments_text = prior_examiner_comments_text
+            original_file = prior_version_file
+        else:
+            supervisor_comment_files = None
+            supervisor_comments_text = ""
+            original_file = None
     if review_depth not in {"light", "standard", "advanced"}:
         raise HTTPException(status_code=400, detail="Choose Light Review, Standard Review or Advanced Review.")
     if review_scope not in {"chapter", "chapter_range", "full_thesis"}:
@@ -737,19 +839,41 @@ async def create_review(
 
     comment_uploads = [item for item in (supervisor_comment_files or []) if item and item.filename]
     if submission_stage == "revised" and not comment_uploads and not supervisor_comments_text.strip():
-        raise HTTPException(status_code=400, detail="For a revised chapter, upload or paste the supervisor comments.")
+        detail = (
+            "For re-examination or corrected-thesis verification, upload the earlier examiner report or paste the correction schedule."
+            if workflow_type == "external_assessment"
+            else "For a revised chapter, upload or paste the supervisor comments."
+        )
+        raise HTTPException(status_code=400, detail=detail)
     supervisor_comment_documents = []
     total_comments = 0
     for index, upload in enumerate(comment_uploads, start=1):
-        value = await _read_upload(upload, f"Supervisor-comment file {index}")
+        value = await _read_upload(
+            upload,
+            f"Earlier examiner file {index}"
+            if workflow_type == "external_assessment"
+            else f"Supervisor-comment file {index}",
+        )
         total_comments += len(value)
         if total_comments > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="The combined supervisor-comment uploads exceed 50 MB.")
-        supervisor_comment_documents.append({"filename": upload.filename or f"supervisor-comments-{index}", "data": value})
+        supervisor_comment_documents.append({"filename": upload.filename or (
+            f"earlier-examiner-report-{index}"
+            if workflow_type == "external_assessment"
+            else f"supervisor-comments-{index}"
+        ), "data": value})
 
     original_document = None
     if original_file and original_file.filename:
-        original_document = {"filename": original_file.filename, "data": await _read_upload(original_file, "The original chapter file")}
+        original_document = {
+            "filename": original_file.filename,
+            "data": await _read_upload(
+                original_file,
+                "The earlier thesis version"
+                if workflow_type == "external_assessment"
+                else "The original chapter file",
+            ),
+        }
 
     job_id = uuid.uuid4().hex
     record = ReviewRecord(
@@ -766,6 +890,10 @@ async def create_review(
         ),
         review_depth=review_depth,
         submission_stage=submission_stage,
+        workflow_type=workflow_type,
+        assessment_stage=(
+            assessment_stage if workflow_type == "external_assessment" else None
+        ),
         status="queued",
         progress=2,
         message="Review queued",
@@ -776,6 +904,19 @@ async def create_review(
     JOB_CACHE[job_id] = {"job_id": job_id, "user_id": user.id, "status": "queued", "progress": 2, "message": "Review queued", "created_at": time.time(), "updated_at": time.time()}
     payload = {
         "filename": filename, "data": data, "academic_level": academic_level, "research_approach": research_approach,
+        "workflow_type": workflow_type,
+        "assessment_stage": assessment_stage,
+        "assessment_metadata": {
+            "candidate_name": candidate_name,
+            "candidate_number": candidate_number,
+            "degree_programme": degree_programme,
+            "candidate_department": candidate_department,
+            "institution": institution,
+            "thesis_title": thesis_title,
+            "assessment_stage": assessment_stage,
+            "examiner_name": user.full_name,
+            "examiner_department": user.department or "",
+        },
         "review_scope": review_scope,
         "selected_chapter": selected_chapter,
         "combined_chapter_end": combined_chapter_end,
@@ -865,4 +1006,97 @@ async def export_review(review_id: str, request: Request, db: Session = Depends(
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found or expired.")
-    return Response(content=build_docx_report(review), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": 'attachment; filename="supervisor-review-report.docx"'})
+    if review.get("external_assessment"):
+        content = build_external_examination_report(review)
+        filename = "external-examination-report.docx"
+    else:
+        content = build_docx_report(review)
+        filename = "supervisor-review-report.docx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _external_review_or_404(
+    db: Session,
+    user: User,
+    review_id: str,
+) -> dict:
+    _authorised_review_record(db, user, review_id)
+    review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
+    if not review or not review.get("external_assessment"):
+        raise HTTPException(
+            status_code=404,
+            detail="External assessment output is not available for this review.",
+        )
+    return review
+
+
+@app.get("/api/review/{review_id}/external-report.docx")
+async def export_external_report(
+    review_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    review = _external_review_or_404(db, user, review_id)
+    return Response(
+        content=build_external_examination_report(review),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="external-examination-report.docx"'},
+    )
+
+
+@app.get("/api/review/{review_id}/corrections-schedule.docx")
+async def export_corrections_schedule(
+    review_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    review = _external_review_or_404(db, user, review_id)
+    return Response(
+        content=build_corrections_schedule(review),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="external-examination-corrections-schedule.docx"'},
+    )
+
+
+@app.get("/api/review/{review_id}/confidential-recommendation.docx")
+async def export_confidential_recommendation(
+    review_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    review = _external_review_or_404(db, user, review_id)
+    return Response(
+        content=build_confidential_recommendation(review),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="confidential-examiner-recommendation.docx"'},
+    )
+
+
+@app.get("/api/review/{review_id}/oral-questions.docx")
+async def export_oral_questions(
+    review_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    review = _external_review_or_404(db, user, review_id)
+    return Response(
+        content=build_oral_examination_questions(review),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="oral-examination-question-bank.docx"'},
+    )

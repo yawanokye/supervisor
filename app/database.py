@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Generator, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -71,6 +71,8 @@ class ReviewRecord(Base):
     selected_chapter: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     review_depth: Mapped[str] = mapped_column(String(30), nullable=False)
     submission_stage: Mapped[str] = mapped_column(String(30), nullable=False)
+    workflow_type: Mapped[str] = mapped_column(String(40), default="supervisory_review", nullable=False)
+    assessment_stage: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True, nullable=False)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     message: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -84,8 +86,34 @@ class ReviewRecord(Base):
     lecturer: Mapped[User] = relationship(back_populates="reviews")
 
 
+def _ensure_review_record_columns() -> None:
+    """Add workflow columns for existing SQLite or PostgreSQL deployments."""
+    inspector = inspect(engine)
+    if "review_records" not in inspector.get_table_names():
+        return
+    existing = {column["name"] for column in inspector.get_columns("review_records")}
+    statements = []
+    if "workflow_type" not in existing:
+        statements.append(
+            "ALTER TABLE review_records ADD COLUMN workflow_type VARCHAR(40) DEFAULT 'supervisory_review'"
+        )
+    if "assessment_stage" not in existing:
+        statements.append(
+            "ALTER TABLE review_records ADD COLUMN assessment_stage VARCHAR(50)"
+        )
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(
+            text("UPDATE review_records SET workflow_type='supervisory_review' WHERE workflow_type IS NULL OR workflow_type=''")
+        )
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_review_record_columns()
 
 
 def get_db() -> Generator[Session, None, None]:
