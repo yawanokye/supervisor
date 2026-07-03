@@ -110,6 +110,10 @@ class HybridAIConfig:
     openai_advanced_input_price: float = 2.50
     openai_advanced_cached_input_price: float = 0.25
     openai_advanced_output_price: float = 15.00
+    external_assessment_foundation_max_output_tokens: int = 4600
+    external_assessment_evidence_max_output_tokens: int = 4600
+    external_assessment_corrections_max_output_tokens: int = 4200
+    external_assessment_decision_max_output_tokens: int = 3000
 
     @classmethod
     def from_env(cls) -> "HybridAIConfig":
@@ -175,6 +179,22 @@ class HybridAIConfig:
             openai_advanced_reasoning_effort=openai_effort,
             mini_max_output_tokens=standard_tokens,
             review_max_output_tokens=advanced_tokens,
+            external_assessment_foundation_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS",
+                4600,
+            ),
+            external_assessment_evidence_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS",
+                4600,
+            ),
+            external_assessment_corrections_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_CORRECTIONS_MAX_OUTPUT_TOKENS",
+                4200,
+            ),
+            external_assessment_decision_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_DECISION_MAX_OUTPUT_TOKENS",
+                3000,
+            ),
         )
 
     @property

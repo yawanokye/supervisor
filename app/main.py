@@ -59,7 +59,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.6.0",
+    version="1.6.1",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -222,7 +222,7 @@ async def root(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "projectready-supervisor", "version": "1.6.0"}
+    return {"status": "ok", "service": "projectready-supervisor", "version": "1.6.1"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -715,11 +715,18 @@ async def _run_review_job(job_id: str, payload: Dict[str, Any]) -> None:
     except AIProviderError as exc:
         logger.exception("Expert review provider failure")
         detail = clean_text(str(exc))
-        safe_detail = (
-            detail
-            if detail and len(detail) <= 700
-            else "The expert review could not be completed. Please retry in a few minutes."
-        )
+        if "output-token limit" in detail.lower() or "truncated" in detail.lower():
+            safe_detail = (
+                "One external-assessment section reached the provider output limit. "
+                "The staged generator will retry that section concisely. Please retry "
+                "the assessment once."
+            )
+        else:
+            safe_detail = (
+                detail
+                if detail and len(detail) <= 700
+                else "The expert review could not be completed. Please retry in a few minutes."
+            )
         _job_update(
             job_id,
             status="failed",

@@ -6,7 +6,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .ai_config import HybridAIConfig
 from .ai_providers import AIProviderError, DeepSeekProvider
-from .assessment_schemas import ExternalAssessmentReport
+from .assessment_schemas import (
+    ExternalAssessmentCorrections,
+    ExternalAssessmentDecision,
+    ExternalAssessmentEvidence,
+    ExternalAssessmentFoundation,
+    ExternalAssessmentReport,
+)
 from .document_parser import clean_text, normalised
 
 
@@ -38,7 +44,7 @@ Corrections must be concrete, prioritised and traceable to a chapter, section,
 page, paragraph or table where the evidence permits. The confidential comments
 must be suitable for the university and must not appear in the candidate-facing
 report. Recommendations must be proportionate to the academic defects and the
-institutional stage. Return a complete external assessment matching the schema.
+institutional stage. Return the requested external-assessment stage matching the supplied schema.
 """.strip()
 
 
@@ -141,6 +147,7 @@ def _source_extract(
     paragraphs: Sequence[Dict[str, Any]],
     *,
     max_chars: int = 42000,
+    chapter_numbers: Optional[set[Optional[int]]] = None,
 ) -> List[Dict[str, Any]]:
     """Select balanced examination evidence with a protected Chapter One budget."""
     key_terms = (
@@ -191,6 +198,9 @@ def _source_extract(
     chapter_one_candidates = []
     other_candidates = []
     for index, paragraph in enumerate(paragraphs):
+        chapter_number = paragraph.get("chapter_number")
+        if chapter_numbers is not None and chapter_number not in chapter_numbers:
+            continue
         text = clean_text(paragraph.get("text", ""))
         if not text:
             continue
@@ -229,13 +239,12 @@ def _metadata_payload(metadata: Dict[str, Any], summary: Dict[str, Any]) -> Dict
     }
 
 
-def _prompt(
+def _shared_payload(
     review: Dict[str, Any],
-    runtime_context: Dict[str, Any],
     metadata: Dict[str, Any],
-) -> str:
+) -> Dict[str, Any]:
     summary = review.get("summary") or {}
-    payload = {
+    return {
         "examination_information": _metadata_payload(metadata, summary),
         "assessment_rules": {
             "independent_external_examination": True,
@@ -259,21 +268,22 @@ def _prompt(
             )
         },
         "overall_academic_review": _compact_text(
-            review.get("overall_academic_assessment", ""), 5000
+            review.get("overall_academic_assessment", ""),
+            4200,
         ),
         "study_context": review.get("study_context") or {},
         "statistical_review": review.get("statistical_review") or {},
         "academic_strengths": _compact_rows(
             review.get("academic_strengths") or [],
             fields=("category", "section", "observation", "evidence"),
-            limit=24,
-            text_limit=700,
+            limit=20,
+            text_limit=600,
         ),
         "priority_actions": _compact_rows(
             review.get("priority_actions") or [],
             fields=("section", "severity", "issue", "action"),
-            limit=40,
-            text_limit=850,
+            limit=36,
+            text_limit=700,
         ),
         "material_findings": _compact_rows(
             review.get("academic_findings") or [],
@@ -281,8 +291,8 @@ def _prompt(
                 "category", "section", "item", "severity", "comment",
                 "required_action", "problematic_quote", "evidence",
             ),
-            limit=70,
-            text_limit=900,
+            limit=60,
+            text_limit=720,
         ),
         "section_reviews": _compact_rows(
             review.get("academic_section_reviews") or [],
@@ -290,31 +300,151 @@ def _prompt(
                 "heading", "section_score", "section_assessment",
                 "coverage_warning",
             ),
-            limit=80,
-            text_limit=1000,
+            limit=65,
+            text_limit=780,
         ),
         "previous_examiner_correction_follow_up": _compact_rows(
             review.get("revision_results") or [],
-            fields=("section", "item", "status_label", "severity", "comment", "required_action", "supervisor_comment_source"),
-            limit=50,
-            text_limit=900,
+            fields=(
+                "section", "item", "status_label", "severity", "comment",
+                "required_action", "supervisor_comment_source",
+            ),
+            limit=45,
+            text_limit=720,
         ),
         "alignment_findings": _compact_rows(
             review.get("alignment_results") or [],
-            fields=("section", "item", "status", "severity", "comment", "required_action"),
-            limit=30,
-            text_limit=800,
-        ),
-        "selected_source_evidence": _source_extract(
-            runtime_context.get("current_paragraphs") or []
+            fields=(
+                "section", "item", "status", "severity", "comment",
+                "required_action",
+            ),
+            limit=28,
+            text_limit=650,
         ),
     }
+
+
+def _stage_prompt(
+    stage: str,
+    review: Dict[str, Any],
+    runtime_context: Dict[str, Any],
+    metadata: Dict[str, Any],
+    *,
+    prior_outputs: Optional[Dict[str, Any]] = None,
+    concise_retry: bool = False,
+) -> str:
+    shared = _shared_payload(review, metadata)
+    paragraphs = runtime_context.get("current_paragraphs") or []
+
+    if stage == "foundation":
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "review_summary": shared["review_summary"],
+            "overall_academic_review": shared["overall_academic_review"],
+            "study_context": shared["study_context"],
+            "alignment_findings": shared["alignment_findings"],
+            "material_findings": shared["material_findings"][:32],
+            "section_reviews": shared["section_reviews"][:35],
+            "selected_source_evidence": _source_extract(
+                paragraphs,
+                max_chars=26000 if not concise_retry else 15000,
+                chapter_numbers={None, 1, 2, 3},
+            ),
+        }
+        instruction = (
+            "Prepare only the foundation and methods part of the external "
+            "examination. Produce a concise study summary, degree-standard "
+            "judgement, the Chapter One critical-gate judgement, and rigorous "
+            "assessments of the research problem, literature/theory and methods. "
+            "Each domain assessment should normally remain below 220 words and "
+            "each strengths, concerns and corrections list should contain no more "
+            "than six concise items."
+        )
+    elif stage == "evidence":
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "review_summary": shared["review_summary"],
+            "overall_academic_review": shared["overall_academic_review"],
+            "study_context": shared["study_context"],
+            "statistical_review": shared["statistical_review"],
+            "academic_strengths": shared["academic_strengths"],
+            "material_findings": shared["material_findings"],
+            "section_reviews": shared["section_reviews"],
+            "alignment_findings": shared["alignment_findings"],
+            "selected_source_evidence": _source_extract(
+                paragraphs,
+                max_chars=28000 if not concise_retry else 16000,
+                chapter_numbers=None,
+            ),
+        }
+        instruction = (
+            "Prepare only the evidence, interpretation and contribution part of "
+            "the external examination. Assess results/findings, discussion, "
+            "conclusions, structural coherence, writing, ethics, originality and "
+            "publication potential. Scrutinise statistical accuracy and model "
+            "diagnostics where relevant. Each domain assessment should normally "
+            "remain below 220 words and lists should contain no more than six "
+            "concise items."
+        )
+    elif stage == "corrections":
+        payload = {
+            "examination_information": shared["examination_information"],
+            "review_summary": shared["review_summary"],
+            "foundation_assessment": (prior_outputs or {}).get("foundation", {}),
+            "evidence_assessment": (prior_outputs or {}).get("evidence", {}),
+            "priority_actions": shared["priority_actions"],
+            "material_findings": shared["material_findings"],
+            "previous_examiner_correction_follow_up": shared[
+                "previous_examiner_correction_follow_up"
+            ],
+            "alignment_findings": shared["alignment_findings"],
+        }
+        instruction = (
+            "Prepare only the formal corrections schedule, priority corrections, "
+            "correction-verification assessment and oral examination questions. "
+            "Consolidate duplicates. Include no more than 35 material corrections "
+            "and 18 thesis-specific oral questions. Make every correction concise, "
+            "traceable, classified and suitable for institutional verification."
+        )
+    elif stage == "decision":
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "review_summary": shared["review_summary"],
+            "foundation_assessment": (prior_outputs or {}).get("foundation", {}),
+            "evidence_assessment": (prior_outputs or {}).get("evidence", {}),
+            "corrections_and_questions": (prior_outputs or {}).get(
+                "corrections", {}
+            ),
+            "previous_examiner_correction_follow_up": shared[
+                "previous_examiner_correction_follow_up"
+            ],
+        }
+        instruction = (
+            "Make the final independent examiner decision only. Produce the "
+            "overall academic judgement, recommendation and rationale, confidential "
+            "comments to the university, confidence, correction-verification "
+            "authority, viva recommendation and declaration. The recommendation "
+            "must follow the Chapter One gate and correction severity. Keep the "
+            "candidate-facing rationale below 320 words and confidential comments "
+            "below 260 words."
+        )
+    else:
+        raise ValueError(f"Unknown external-assessment stage: {stage}")
+
+    retry_note = (
+        " This is a concise recovery attempt. Use shorter sentences, remove "
+        "repetition and stay well within the requested limits."
+        if concise_retry
+        else ""
+    )
     return (
-        "Prepare the complete external examination report from the following "
-        "thesis evidence. Use formal British English. The chapter_one_assessment "
-        "must be detailed and must state whether the foundational chapter sets a "
-        "defensible direction for the whole thesis. The final recommendation must "
-        "be consistent with the severity and extent of the corrections. For re-examination or corrected-thesis verification, assess every supplied earlier examiner correction and state clearly whether it has been addressed.\n\n"
+        instruction
+        + retry_note
+        + " Use formal British English. Treat only the supplied evidence as "
+          "authoritative. Return the requested JSON object only.\n\n"
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )
 
@@ -395,6 +525,81 @@ def prepare_external_assessment(
     return value
 
 
+async def _complete_assessment_stage(
+    provider: DeepSeekProvider,
+    *,
+    stage: str,
+    schema_model: type,
+    review: Dict[str, Any],
+    runtime_context: Dict[str, Any],
+    metadata: Dict[str, Any],
+    config: HybridAIConfig,
+    prior_outputs: Optional[Dict[str, Any]],
+    max_output_tokens: int,
+    reasoning_effort: str,
+) -> Any:
+    last_error: Optional[Exception] = None
+    for concise_retry in (False, True):
+        try:
+            return await provider.complete_json(
+                model=config.deepseek_advanced_model,
+                system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
+                user_prompt=_stage_prompt(
+                    stage,
+                    review,
+                    runtime_context,
+                    metadata,
+                    prior_outputs=prior_outputs,
+                    concise_retry=concise_retry,
+                ),
+                schema_model=schema_model,
+                purpose=f"external_thesis_assessment_{stage}",
+                reasoning_effort=reasoning_effort,
+                max_output_tokens=max_output_tokens,
+            )
+        except AIProviderError as exc:
+            last_error = exc
+            message = normalised(str(exc))
+            recoverable = any(
+                phrase in message
+                for phrase in (
+                    "output token",
+                    "truncated",
+                    "timeout",
+                    "timed out",
+                    "empty json",
+                    "schema validation",
+                    "invalid json",
+                )
+            )
+            if not recoverable or concise_retry:
+                break
+    raise AIProviderError(
+        f"External assessment stage '{stage}' could not be completed: "
+        f"{last_error or 'provider request failed'}"
+    )
+
+
+def _costed_usage(result: Any, config: HybridAIConfig) -> tuple[Any, float]:
+    uncached = max(
+        0,
+        result.usage.input_tokens - result.usage.cached_input_tokens,
+    )
+    estimated_cost = (
+        uncached / 1_000_000 * config.deepseek_pro_input_price
+        + result.usage.cached_input_tokens
+        / 1_000_000
+        * config.deepseek_pro_cached_input_price
+        + result.usage.output_tokens
+        / 1_000_000
+        * config.deepseek_pro_output_price
+    )
+    usage = result.usage.model_copy(
+        update={"estimated_cost_usd": round(estimated_cost, 6)}
+    )
+    return usage, estimated_cost
+
+
 async def enrich_with_external_assessment(
     review: Dict[str, Any],
     runtime_context: Dict[str, Any],
@@ -408,49 +613,128 @@ async def enrich_with_external_assessment(
             "DeepSeek is required to prepare the external examination report."
         )
 
-    if progress_callback is not None:
-        result = progress_callback(
-            88,
-            "Preparing the independent external examiner judgement",
-        )
+    async def progress(value: int, message: str) -> None:
+        if progress_callback is None:
+            return
+        result = progress_callback(value, message)
         if hasattr(result, "__await__"):
             await result
 
     provider = DeepSeekProvider(config)
-    response = await provider.complete_json(
-        model=config.deepseek_advanced_model,
-        system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
-        user_prompt=_prompt(review, runtime_context, metadata),
-        schema_model=ExternalAssessmentReport,
-        purpose="external_thesis_assessment",
-        reasoning_effort=config.deepseek_advanced_reasoning_effort,
-        max_output_tokens=max(config.advanced_max_output_tokens, 9000),
+    outputs: Dict[str, Any] = {}
+    results: List[Any] = []
+
+    await progress(87, "Assessing the thesis foundation and methodology")
+    foundation = await _complete_assessment_stage(
+        provider,
+        stage="foundation",
+        schema_model=ExternalAssessmentFoundation,
+        review=review,
+        runtime_context=runtime_context,
+        metadata=metadata,
+        config=config,
+        prior_outputs=None,
+        max_output_tokens=config.external_assessment_foundation_max_output_tokens,
+        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
     )
+    outputs["foundation"] = foundation.data
+    results.append(foundation)
+
+    await progress(90, "Assessing findings, interpretation and contribution")
+    evidence = await _complete_assessment_stage(
+        provider,
+        stage="evidence",
+        schema_model=ExternalAssessmentEvidence,
+        review=review,
+        runtime_context=runtime_context,
+        metadata=metadata,
+        config=config,
+        prior_outputs=outputs,
+        max_output_tokens=config.external_assessment_evidence_max_output_tokens,
+        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
+    )
+    outputs["evidence"] = evidence.data
+    results.append(evidence)
+
+    await progress(93, "Preparing corrections and oral examination questions")
+    corrections = await _complete_assessment_stage(
+        provider,
+        stage="corrections",
+        schema_model=ExternalAssessmentCorrections,
+        review=review,
+        runtime_context=runtime_context,
+        metadata=metadata,
+        config=config,
+        prior_outputs=outputs,
+        max_output_tokens=config.external_assessment_corrections_max_output_tokens,
+        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
+    )
+    outputs["corrections"] = corrections.data
+    results.append(corrections)
+
+    await progress(95, "Finalising the independent examiner recommendation")
+    decision = await _complete_assessment_stage(
+        provider,
+        stage="decision",
+        schema_model=ExternalAssessmentDecision,
+        review=review,
+        runtime_context=runtime_context,
+        metadata=metadata,
+        config=config,
+        prior_outputs=outputs,
+        max_output_tokens=config.external_assessment_decision_max_output_tokens,
+        reasoning_effort=config.deepseek_advanced_reasoning_effort,
+    )
+    outputs["decision"] = decision.data
+    results.append(decision)
+
+    merged = {
+        **outputs["foundation"],
+        **outputs["evidence"],
+        **outputs["corrections"],
+        **outputs["decision"],
+    }
+    try:
+        validated = ExternalAssessmentReport.model_validate(merged)
+    except Exception as exc:
+        raise AIProviderError(
+            f"The staged external assessment could not be assembled: {exc}"
+        ) from exc
+
     assessment = prepare_external_assessment(
-        response.data,
+        validated.model_dump(),
         metadata,
         review,
     )
-    uncached = max(0, response.usage.input_tokens - response.usage.cached_input_tokens)
-    estimated_cost = (
-        uncached / 1_000_000 * config.deepseek_pro_input_price
-        + response.usage.cached_input_tokens / 1_000_000 * config.deepseek_pro_cached_input_price
-        + response.usage.output_tokens / 1_000_000 * config.deepseek_pro_output_price
-    )
-    usage = response.usage.model_copy(
-        update={"estimated_cost_usd": round(estimated_cost, 6)}
-    )
+
+    usage_records = []
+    total_cost = 0.0
+    for result in results:
+        usage, estimated_cost = _costed_usage(result, config)
+        usage_records.append(usage.model_dump())
+        total_cost += estimated_cost
+
     review["external_assessment"] = assessment
-    review["external_assessment_usage"] = usage.model_dump()
+    review["external_assessment_usage"] = {
+        "generation_mode": "staged",
+        "api_call_count": len(usage_records),
+        "estimated_cost_usd": round(total_cost, 6),
+        "calls": usage_records,
+    }
     ai_review = review.get("ai_review") or {}
     if ai_review:
-        ai_review.setdefault("usage", []).append(usage.model_dump())
+        ai_review.setdefault("usage", []).extend(usage_records)
         ai_review["estimated_cost_usd"] = round(
-            float(ai_review.get("estimated_cost_usd") or 0) + estimated_cost,
+            float(ai_review.get("estimated_cost_usd") or 0) + total_cost,
             6,
         )
-        ai_review["api_call_count"] = int(ai_review.get("api_call_count") or 0) + 1
+        ai_review["api_call_count"] = (
+            int(ai_review.get("api_call_count") or 0)
+            + len(usage_records)
+        )
         ai_review["external_assessment_call"] = True
+        ai_review["external_assessment_generation_mode"] = "staged"
+
     summary = review.setdefault("summary", {})
     summary.update({
         "workflow_type": "external_assessment",
@@ -462,11 +746,11 @@ async def enrich_with_external_assessment(
         "external_recommendation_label": assessment["recommendation_label"],
         "chapter_one_gate_status": assessment["chapter_one_gate_status"],
         "external_assessment_available": True,
+        "external_assessment_generation_mode": "staged",
+        "external_assessment_stage_count": 4,
         "readiness_label": assessment["recommendation_label"],
         "readiness_meaning": assessment["recommendation_rationale"],
     })
-    if progress_callback is not None:
-        result = progress_callback(96, "Finalising the external examination reports")
-        if hasattr(result, "__await__"):
-            await result
+    await progress(97, "Generating the external examination documents")
     return review
+

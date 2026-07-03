@@ -37,9 +37,9 @@ class AssessmentDomain(StrictAssessmentModel):
     domain: str
     judgement: DomainJudgement
     assessment: str
-    strengths: List[str] = Field(default_factory=list)
-    concerns: List[str] = Field(default_factory=list)
-    required_corrections: List[str] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list, max_length=8)
+    concerns: List[str] = Field(default_factory=list, max_length=8)
+    required_corrections: List[str] = Field(default_factory=list, max_length=8)
 
 
 class CorrectionItem(StrictAssessmentModel):
@@ -57,6 +57,57 @@ class OralExaminationQuestion(StrictAssessmentModel):
     category: str
     question: str
     rationale: str
+
+
+class ExternalAssessmentFoundation(StrictAssessmentModel):
+    study_summary: str
+    degree_standard_judgement: str
+    chapter_one_gate_status: Literal[
+        "passed",
+        "major_concern",
+        "fundamentally_deficient",
+        "not_applicable",
+    ]
+    chapter_one_assessment: AssessmentDomain
+    research_problem_and_purpose: AssessmentDomain
+    literature_and_theoretical_foundation: AssessmentDomain
+    methodology_and_procedures: AssessmentDomain
+
+
+class ExternalAssessmentEvidence(StrictAssessmentModel):
+    results_or_findings: AssessmentDomain
+    discussion_and_interpretation: AssessmentDomain
+    conclusions_recommendations_and_contribution: AssessmentDomain
+    structural_coherence_and_alignment: AssessmentDomain
+    academic_writing_and_presentation: AssessmentDomain
+    ethics_and_research_integrity: AssessmentDomain
+    originality_and_contribution: AssessmentDomain
+    major_strengths: List[str] = Field(default_factory=list, max_length=12)
+    publication_potential: str
+
+
+class ExternalAssessmentCorrections(StrictAssessmentModel):
+    corrections: List[CorrectionItem] = Field(default_factory=list, max_length=40)
+    oral_examination_questions: List[OralExaminationQuestion] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    priority_corrections_before_award: List[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    corrections_verification_assessment: str
+
+
+class ExternalAssessmentDecision(StrictAssessmentModel):
+    overall_academic_judgement: str
+    final_recommendation: FinalRecommendation
+    recommendation_rationale: str
+    confidential_comments_to_university: str
+    recommendation_confidence: Literal["high", "moderate", "low"]
+    corrections_verification_by: str
+    viva_recommendation: VivaRecommendation
+    examiner_declaration: str
 
 
 class ExternalAssessmentReport(StrictAssessmentModel):
@@ -80,13 +131,13 @@ class ExternalAssessmentReport(StrictAssessmentModel):
     academic_writing_and_presentation: AssessmentDomain
     ethics_and_research_integrity: AssessmentDomain
     originality_and_contribution: AssessmentDomain
-    major_strengths: List[str] = Field(default_factory=list)
+    major_strengths: List[str] = Field(default_factory=list, max_length=12)
     publication_potential: str
-    corrections: List[CorrectionItem] = Field(default_factory=list)
-    oral_examination_questions: List[OralExaminationQuestion] = Field(default_factory=list)
+    corrections: List[CorrectionItem] = Field(default_factory=list, max_length=40)
+    oral_examination_questions: List[OralExaminationQuestion] = Field(default_factory=list, max_length=20)
     final_recommendation: FinalRecommendation
     recommendation_rationale: str
-    priority_corrections_before_award: List[str] = Field(default_factory=list)
+    priority_corrections_before_award: List[str] = Field(default_factory=list, max_length=20)
     corrections_verification_assessment: str
     confidential_comments_to_university: str
     recommendation_confidence: Literal["high", "moderate", "low"]
