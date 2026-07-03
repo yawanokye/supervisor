@@ -58,6 +58,34 @@ const priorVersionFileInput = document.getElementById("priorVersionFileInput");
 const priorVersionFileName = document.getElementById("priorVersionFileName");
 const workflowFormNote = document.getElementById("workflowFormNote");
 
+let highestDisplayedProgress = 2;
+
+function setProgress(value, message = "", { reset = false } = {}) {
+  const incoming = Math.max(
+    2,
+    Math.min(100, Number(value || 2))
+  );
+
+  if (reset) {
+    highestDisplayedProgress = incoming;
+  } else {
+    highestDisplayedProgress = Math.max(
+      highestDisplayedProgress,
+      incoming
+    );
+  }
+
+  progressBar.style.width = `${highestDisplayedProgress}%`;
+  progressBar.dataset.progress = String(highestDisplayedProgress);
+  progressText.textContent = `${highestDisplayedProgress}%`;
+
+  if (message) {
+    loadingMessage.textContent = message;
+  }
+
+  return highestDisplayedProgress;
+}
+
 function updateDepthGuidance() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(academicLevelSelect.value);
   const external = selectedWorkflow() === "external_assessment";
@@ -583,10 +611,10 @@ async function readJsonSafely(response) {
 }
 
 function updateProgress(job) {
-  const value = Math.max(2, Math.min(100, Number(job.progress || 2)));
-  progressBar.style.width = `${value}%`;
-  progressText.textContent = `${value}%`;
-  loadingMessage.textContent = job.message || "Reviewing the document";
+  return setProgress(
+    job.progress || 2,
+    job.message || "Reviewing the document"
+  );
 }
 
 async function fetchCompletedReview(job) {
@@ -597,11 +625,26 @@ async function fetchCompletedReview(job) {
   return await readJsonSafely(response);
 }
 
+async function requestJobResume(resumeUrl) {
+  if (!resumeUrl) return false;
+  const csrf = form.querySelector('input[name="csrf_token"]')?.value || "";
+  const body = new FormData();
+  body.set("csrf_token", csrf);
+  const response = await fetch(resumeUrl, {
+    method: "POST",
+    body,
+    headers: { "Accept": "application/json" },
+  });
+  if (!response.ok) return false;
+  return true;
+}
+
 async function waitForReview(pollUrl, options = {}) {
   const started = Number(options.startedAt || Date.now());
   const maximumWait = 2 * 60 * 60 * 1000;
   let temporaryFailures = 0;
   let pollDelay = 2500;
+  let resumeRequested = false;
 
   while (Date.now() - started < maximumWait) {
     await new Promise(resolve => setTimeout(resolve, pollDelay));
@@ -627,13 +670,14 @@ async function waitForReview(pollUrl, options = {}) {
       const job = await readJsonSafely(response);
       temporaryFailures = 0;
       pollDelay = Date.now() - started > 30 * 60 * 1000 ? 10000 : 2500;
-      updateProgress(job);
+      const highestProgress = updateProgress(job);
 
       localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify({
         pollUrl,
         jobId: job.job_id || options.jobId || "",
         startedAt: started,
-        filename: options.filename || ""
+        filename: options.filename || "",
+        highestProgress
       }));
 
       if (job.status === "completed") {
@@ -648,6 +692,26 @@ async function waitForReview(pollUrl, options = {}) {
         );
         terminalError.terminal = true;
         throw terminalError;
+      }
+      if (job.status === "paused" && job.recoverable) {
+        const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
+        loadingMessage.textContent = savedUnits
+          ? `Review paused safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Resuming from the last saved point…`
+          : "Review paused safely. Resuming from the last saved point…";
+        if (!resumeRequested && job.resume_url) {
+          resumeRequested = true;
+          try {
+            await requestJobResume(job.resume_url);
+          } catch (_) {
+            // The server-side automatic recovery may still resume the job.
+          }
+        }
+        pollDelay = 5000;
+        continue;
+      }
+
+      if (job.current_stage && job.checkpoint_count) {
+        loadingMessage.textContent = `${job.message || "Reviewing the document"} · ${job.checkpoint_count} checkpoint${job.checkpoint_count === 1 ? "" : "s"} saved`;
       }
 
       if (Date.now() - started > 30 * 60 * 1000) {
@@ -714,7 +778,13 @@ form.addEventListener("submit", async event => {
   }
 
   emptyState.classList.add("hidden"); resultsState.classList.add("hidden"); loadingState.classList.remove("hidden");
-  progressBar.style.width = "2%"; progressText.textContent = "2%"; loadingMessage.textContent = external ? "Uploading and queuing the external assessment" : "Uploading and queuing the review";
+  setProgress(
+    2,
+    external
+      ? "Uploading and queuing the external assessment"
+      : "Uploading and queuing the review",
+    { reset: true }
+  );
   submitButton.disabled = true; submitButton.querySelector("span").textContent = external ? "External assessment in progress…" : "Review in progress…";
 
   try {
@@ -750,7 +820,8 @@ form.addEventListener("submit", async event => {
       pollUrl: queued.poll_url,
       jobId: queued.job_id,
       startedAt: Date.now(),
-      filename: fileInput.files[0]?.name || ""
+      filename: fileInput.files[0]?.name || "",
+      highestProgress: highestDisplayedProgress
     };
     localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify(activeJob));
     const review = await waitForReview(queued.poll_url, activeJob);
@@ -790,11 +861,13 @@ async function resumeActiveReviewJob() {
   emptyState.classList.add("hidden");
   resultsState.classList.add("hidden");
   loadingState.classList.remove("hidden");
-  progressBar.style.width = "4%";
-  progressText.textContent = "4%";
-  loadingMessage.textContent = activeJob.filename
-    ? `Reconnecting to the review of ${activeJob.filename}…`
-    : "Reconnecting to the active review…";
+  setProgress(
+    Math.max(4, Number(activeJob.highestProgress || 4)),
+    activeJob.filename
+      ? `Reconnecting to the review of ${activeJob.filename}…`
+      : "Reconnecting to the active review…",
+    { reset: true }
+  );
 
   try {
     const review = await waitForReview(activeJob.pollUrl, activeJob);
