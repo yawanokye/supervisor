@@ -226,3 +226,8 @@ External Assessment produces four DOCX files:
 
 The workflow supports initial examination, re-examination and corrected-thesis verification. Chapter One, or the equivalent foundational chapter, is treated as a critical examination gate. Professional Doctorate and PhD theses may use custom chapter titles, sequence and architecture.
 
+
+
+## Staged External Assessment generation
+
+Long PhD and Professional Doctorate external assessments are generated in four validated stages rather than one oversized response. This reduces output-token truncation and provides targeted recovery for an individual stage without weakening the examiner report.

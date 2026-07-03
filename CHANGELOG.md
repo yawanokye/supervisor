@@ -1,3 +1,12 @@
+## v1.6.1
+
+- Replaced the single very large External Assessment model response with a four-stage examiner workflow.
+- Generates foundation and methodology, findings and contribution, corrections and oral questions, and the final confidential recommendation separately before merging them into one validated report.
+- Added concise automatic recovery for truncated, timed-out, empty, invalid or schema-incomplete assessment stages.
+- Added stage-specific output-token settings so long PhD and Professional Doctorate assessments do not depend on one 9,000-token response.
+- Added progress messages for each assessment stage and records staged generation in internal usage metadata.
+- Limited repetitive lists and consolidated corrections to reduce token exhaustion while retaining examiner-ready depth.
+
 ## v1.6.0
 
 - Added External Assessment as a separate workflow from Supervisory Review.
