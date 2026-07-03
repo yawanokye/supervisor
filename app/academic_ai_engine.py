@@ -13,6 +13,7 @@ from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PR
 from .ai_providers import AIProviderError, DeepSeekProvider, OpenAIProvider, ProviderResult
 from .academic_review_guide import guide_for_heading
 from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
+from .checkpointing import CheckpointManager, stable_hash
 from .ai_schemas import (
     AIUsageRecord,
     AcademicIssue,
@@ -848,6 +849,7 @@ def _overall_assessment(
 async def enrich_review_with_academic_ai(
     review: Dict[str, Any], runtime: Dict[str, Any], *, requested_mode: str = "standard",
     config: Optional[HybridAIConfig] = None, progress_callback: Any = None,
+    checkpoint_manager: Optional[CheckpointManager] = None,
 ) -> Dict[str, Any]:
     config = config or HybridAIConfig.from_env()
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
@@ -977,17 +979,54 @@ async def enrich_review_with_academic_ai(
         track_primary_progress: bool = False,
     ) -> ProviderResult:
         nonlocal completed_primary_batches
-        result = await provider.complete_json(
-            model=model,
-            system_prompt=primary_system_prompt,
-            user_prompt=_batch_prompt(
-                review, batch, supervisor_comments, context_lock, depth
-            ),
-            schema_model=AcademicReviewBatch,
-            purpose=purpose,
-            reasoning_effort=effort,
-            max_output_tokens=tokens,
+        user_prompt = _batch_prompt(
+            review, batch, supervisor_comments, context_lock, depth
         )
+        section_keys = [str(item.get("section_key") or "") for item in batch]
+        input_hash = stable_hash({
+            "pipeline": "academic-review-v1.7.0",
+            "model": model,
+            "effort": effort,
+            "purpose": purpose,
+            "tokens": tokens,
+            "system_prompt": primary_system_prompt,
+            "user_prompt": user_prompt,
+            "section_keys": section_keys,
+        })
+        stage_key = f"academic-primary-{input_hash[:20]}"
+        result: Optional[ProviderResult] = None
+        if checkpoint_manager is not None:
+            result = checkpoint_manager.load_provider_result(
+                stage_key,
+                expected_input_hash=input_hash,
+            )
+
+        if result is None:
+            if checkpoint_manager is not None:
+                checkpoint_manager.mark_running(
+                    stage_key,
+                    input_hash=input_hash,
+                    progress=35,
+                    message=f"Reviewing section group containing {len(batch)} unit(s)",
+                )
+            result = await provider.complete_json(
+                model=model,
+                system_prompt=primary_system_prompt,
+                user_prompt=user_prompt,
+                schema_model=AcademicReviewBatch,
+                purpose=purpose,
+                reasoning_effort=effort,
+                max_output_tokens=tokens,
+            )
+            if checkpoint_manager is not None:
+                checkpoint_manager.save_provider_result(
+                    stage_key,
+                    result,
+                    input_hash=input_hash,
+                    progress=53,
+                    message="Academic section group completed",
+                )
+
         if track_primary_progress:
             async with progress_lock:
                 completed_primary_batches += 1
@@ -1285,15 +1324,48 @@ async def enrich_review_with_academic_ai(
         )
 
         try:
-            result = await deepseek.complete_json(
-                model=config.deepseek_advanced_model,
-                system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                user_prompt=audit_prompt,
-                schema_model=AcademicVerificationBatch,
-                purpose="advanced_compact_doctoral_audit",
-                reasoning_effort=config.deepseek_advanced_reasoning_effort,
-                max_output_tokens=config.advanced_audit_max_output_tokens,
+            audit_hash = stable_hash({
+                "pipeline": "academic-audit-v1.7.0",
+                "model": config.deepseek_advanced_model,
+                "effort": config.deepseek_advanced_reasoning_effort,
+                "tokens": config.advanced_audit_max_output_tokens,
+                "system_prompt": ACADEMIC_VERIFY_SYSTEM_PROMPT,
+                "user_prompt": audit_prompt,
+            })
+            audit_stage_key = f"academic-audit-{audit_hash[:20]}"
+            result = (
+                checkpoint_manager.load_provider_result(
+                    audit_stage_key,
+                    expected_input_hash=audit_hash,
+                )
+                if checkpoint_manager is not None
+                else None
             )
+            if result is None:
+                if checkpoint_manager is not None:
+                    checkpoint_manager.mark_running(
+                        audit_stage_key,
+                        input_hash=audit_hash,
+                        progress=68,
+                        message="Conducting the doctoral quality audit",
+                    )
+                result = await deepseek.complete_json(
+                    model=config.deepseek_advanced_model,
+                    system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
+                    user_prompt=audit_prompt,
+                    schema_model=AcademicVerificationBatch,
+                    purpose="advanced_compact_doctoral_audit",
+                    reasoning_effort=config.deepseek_advanced_reasoning_effort,
+                    max_output_tokens=config.advanced_audit_max_output_tokens,
+                )
+                if checkpoint_manager is not None:
+                    checkpoint_manager.save_provider_result(
+                        audit_stage_key,
+                        result,
+                        input_hash=audit_hash,
+                        progress=76,
+                        message="Doctoral quality audit completed",
+                    )
             usage_records.append(_usage_cost(result.usage, config))
             merged = _apply_verification(all_primary, result.data)
 

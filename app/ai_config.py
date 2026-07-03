@@ -151,7 +151,7 @@ class HybridAIConfig:
             advanced_max_output_tokens=advanced_tokens,
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 180),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
-            max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 3),
+            max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 4),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
             light_section_batch_size=_env_int("AI_LIGHT_SECTION_BATCH_SIZE", 6),
             advanced_section_batch_size=_env_int("AI_ADVANCED_SECTION_BATCH_SIZE", 4),

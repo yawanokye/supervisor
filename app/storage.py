@@ -116,3 +116,14 @@ def save_annotated(review_id: str, data: bytes) -> None:
 def load_annotated(review_id: str) -> Optional[bytes]:
     target = _path(review_id, "-annotated.docx")
     return target.read_bytes() if target.exists() else None
+
+
+def storage_status() -> Dict[str, Any]:
+    root = ensure_storage()
+    path_text = str(root)
+    return {
+        "path": path_text,
+        "configured_path": str(CONFIGURED_ROOT),
+        "using_fallback": root == FALLBACK_ROOT and CONFIGURED_ROOT != FALLBACK_ROOT,
+        "persistent_hint": not path_text.startswith("/tmp/"),
+    }

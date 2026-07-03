@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .ai_config import HybridAIConfig
 from .ai_providers import AIProviderError, DeepSeekProvider
+from .checkpointing import CheckpointManager, stable_hash
 from .assessment_schemas import (
     ExternalAssessmentCorrections,
     ExternalAssessmentDecision,
@@ -537,26 +539,60 @@ async def _complete_assessment_stage(
     prior_outputs: Optional[Dict[str, Any]],
     max_output_tokens: int,
     reasoning_effort: str,
+    checkpoint_manager: Optional[CheckpointManager] = None,
 ) -> Any:
     last_error: Optional[Exception] = None
     for concise_retry in (False, True):
+        user_prompt = _stage_prompt(
+            stage,
+            review,
+            runtime_context,
+            metadata,
+            prior_outputs=prior_outputs,
+            concise_retry=concise_retry,
+        )
+        input_hash = stable_hash({
+            "pipeline": "external-assessment-v1.7.0",
+            "stage": stage,
+            "concise_retry": concise_retry,
+            "model": config.deepseek_advanced_model,
+            "reasoning_effort": reasoning_effort,
+            "max_output_tokens": max_output_tokens,
+            "system_prompt": EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
+            "user_prompt": user_prompt,
+            "schema": schema_model.__name__,
+        })
+        stage_key = f"external-{stage}-{input_hash[:20]}"
+        if checkpoint_manager is not None:
+            cached = checkpoint_manager.load_provider_result(
+                stage_key,
+                expected_input_hash=input_hash,
+            )
+            if cached is not None:
+                return cached
+            checkpoint_manager.mark_running(
+                stage_key,
+                input_hash=input_hash,
+                message=f"Preparing external assessment stage: {stage}",
+            )
         try:
-            return await provider.complete_json(
+            result = await provider.complete_json(
                 model=config.deepseek_advanced_model,
                 system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
-                user_prompt=_stage_prompt(
-                    stage,
-                    review,
-                    runtime_context,
-                    metadata,
-                    prior_outputs=prior_outputs,
-                    concise_retry=concise_retry,
-                ),
+                user_prompt=user_prompt,
                 schema_model=schema_model,
                 purpose=f"external_thesis_assessment_{stage}",
                 reasoning_effort=reasoning_effort,
                 max_output_tokens=max_output_tokens,
             )
+            if checkpoint_manager is not None:
+                checkpoint_manager.save_provider_result(
+                    stage_key,
+                    result,
+                    input_hash=input_hash,
+                    message=f"External assessment stage completed: {stage}",
+                )
+            return result
         except AIProviderError as exc:
             last_error = exc
             message = normalised(str(exc))
@@ -607,6 +643,7 @@ async def enrich_with_external_assessment(
     metadata: Dict[str, Any],
     config: HybridAIConfig,
     progress_callback: Optional[Any] = None,
+    checkpoint_manager: Optional[CheckpointManager] = None,
 ) -> Dict[str, Any]:
     if not config.deepseek_configured:
         raise AIProviderError(
@@ -624,8 +661,11 @@ async def enrich_with_external_assessment(
     outputs: Dict[str, Any] = {}
     results: List[Any] = []
 
-    await progress(87, "Assessing the thesis foundation and methodology")
-    foundation = await _complete_assessment_stage(
+    await progress(
+        87,
+        "Assessing the thesis foundation, methods, findings and contribution in parallel",
+    )
+    foundation_task = _complete_assessment_stage(
         provider,
         stage="foundation",
         schema_model=ExternalAssessmentFoundation,
@@ -636,12 +676,9 @@ async def enrich_with_external_assessment(
         prior_outputs=None,
         max_output_tokens=config.external_assessment_foundation_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
+        checkpoint_manager=checkpoint_manager,
     )
-    outputs["foundation"] = foundation.data
-    results.append(foundation)
-
-    await progress(90, "Assessing findings, interpretation and contribution")
-    evidence = await _complete_assessment_stage(
+    evidence_task = _complete_assessment_stage(
         provider,
         stage="evidence",
         schema_model=ExternalAssessmentEvidence,
@@ -649,12 +686,19 @@ async def enrich_with_external_assessment(
         runtime_context=runtime_context,
         metadata=metadata,
         config=config,
-        prior_outputs=outputs,
+        prior_outputs=None,
         max_output_tokens=config.external_assessment_evidence_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
+        checkpoint_manager=checkpoint_manager,
     )
+    foundation, evidence = await asyncio.gather(
+        foundation_task,
+        evidence_task,
+    )
+    outputs["foundation"] = foundation.data
     outputs["evidence"] = evidence.data
-    results.append(evidence)
+    results.extend([foundation, evidence])
+    await progress(91, "Foundation and evidence assessment completed")
 
     await progress(93, "Preparing corrections and oral examination questions")
     corrections = await _complete_assessment_stage(
@@ -668,6 +712,7 @@ async def enrich_with_external_assessment(
         prior_outputs=outputs,
         max_output_tokens=config.external_assessment_corrections_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
+        checkpoint_manager=checkpoint_manager,
     )
     outputs["corrections"] = corrections.data
     results.append(corrections)
@@ -684,6 +729,7 @@ async def enrich_with_external_assessment(
         prior_outputs=outputs,
         max_output_tokens=config.external_assessment_decision_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_reasoning_effort,
+        checkpoint_manager=checkpoint_manager,
     )
     outputs["decision"] = decision.data
     results.append(decision)

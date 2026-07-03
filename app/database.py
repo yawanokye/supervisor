@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Generator, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, func, inspect, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -80,10 +80,41 @@ class ReviewRecord(Base):
     overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     readiness_label: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
     annotated_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    document_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    current_stage: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
+    checkpoint_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    recoverable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    payload_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    resume_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     lecturer: Mapped[User] = relationship(back_populates="reviews")
+
+
+class ReviewCheckpoint(Base):
+    __tablename__ = "review_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("job_id", "stage_key", name="uq_review_checkpoint_job_stage"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    stage_key: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    input_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True, nullable=False)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    result_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def _ensure_review_record_columns() -> None:
@@ -101,6 +132,23 @@ def _ensure_review_record_columns() -> None:
         statements.append(
             "ALTER TABLE review_records ADD COLUMN assessment_stage VARCHAR(50)"
         )
+    migration_columns = {
+        "document_hash": "VARCHAR(64)",
+        "current_stage": "VARCHAR(180)",
+        "checkpoint_count": "INTEGER DEFAULT 0",
+        "recoverable": "BOOLEAN DEFAULT TRUE",
+        "payload_available": "BOOLEAN DEFAULT FALSE",
+        "resume_count": "INTEGER DEFAULT 0",
+        "last_heartbeat_at": "TIMESTAMP",
+        "lease_owner": "VARCHAR(160)",
+        "lease_expires_at": "TIMESTAMP",
+        "started_at": "TIMESTAMP",
+    }
+    for column_name, definition in migration_columns.items():
+        if column_name not in existing:
+            statements.append(
+                f"ALTER TABLE review_records ADD COLUMN {column_name} {definition}"
+            )
     if not statements:
         return
     with engine.begin() as connection:
@@ -108,6 +156,18 @@ def _ensure_review_record_columns() -> None:
             connection.execute(text(statement))
         connection.execute(
             text("UPDATE review_records SET workflow_type='supervisory_review' WHERE workflow_type IS NULL OR workflow_type=''")
+        )
+        connection.execute(
+            text("UPDATE review_records SET checkpoint_count=0 WHERE checkpoint_count IS NULL")
+        )
+        connection.execute(
+            text("UPDATE review_records SET resume_count=0 WHERE resume_count IS NULL")
+        )
+        connection.execute(
+            text("UPDATE review_records SET recoverable=TRUE WHERE recoverable IS NULL")
+        )
+        connection.execute(
+            text("UPDATE review_records SET payload_available=FALSE WHERE payload_available IS NULL")
         )
 
 
