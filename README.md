@@ -210,3 +210,19 @@ The shared access interface has two tabs:
 - `/admin/login` opens the Admin tab.
 
 The tabs change the active portal and form action without combining the permission systems. Supervisor and administrator authentication remain separately enforced by the backend.
+## External Assessment workflow
+
+The workspace now provides two independent academic workflows:
+
+- **Supervisory Review** for developmental, section-by-section guidance and annotated DOCX feedback.
+- **External Assessment** for independent examination of a complete thesis or dissertation.
+
+External Assessment produces four DOCX files:
+
+1. Full external examination report
+2. Formal corrections schedule
+3. Confidential recommendation to the university
+4. Oral examination question bank
+
+The workflow supports initial examination, re-examination and corrected-thesis verification. Chapter One, or the equivalent foundational chapter, is treated as a critical examination gate. Professional Doctorate and PhD theses may use custom chapter titles, sequence and architecture.
+

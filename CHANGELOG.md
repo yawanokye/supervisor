@@ -1,3 +1,18 @@
+## v1.6.0
+
+- Added External Assessment as a separate workflow from Supervisory Review.
+- External Assessment accepts complete theses and dissertations across Bachelor’s, taught Master’s, Research Master’s/MPhil, Professional Doctorate and PhD levels.
+- The assessment standard is selected automatically from the academic level while remaining sensitive to quantitative, qualitative, mixed-method, SEM and econometric approaches.
+- Added a critical Chapter One or foundational-chapter examination gate covering the problem, gap, purpose, objectives, questions or hypotheses, significance, scope and whole-thesis direction.
+- Added degree-level judgements for literature and theory, methodology, results, discussion, conclusions, originality, coherence, presentation, ethics and research integrity.
+- Added formal external examiner recommendations, prioritised corrections, publication potential, viva questions and confidential comments to the university.
+- Added Initial Examination, Re-examination and Corrected Thesis Verification stages.
+- Re-examination and corrected-thesis verification can ingest earlier examiner reports, correction schedules and an optional earlier thesis version.
+- Added four DOCX outputs: full external examination report, corrections schedule, confidential recommendation and oral examination question bank.
+- Doctoral external assessment accepts custom chapter titles, order and structures and judges functional completeness rather than enforcing five chapters.
+- Added workflow persistence and a database migration for existing deployments.
+- Added portal and completed-review links for all external examination outputs.
+
 ## v1.5.7
 
 - Added a Combined Chapters review scope.
