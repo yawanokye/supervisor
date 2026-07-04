@@ -1296,15 +1296,35 @@ async def _run_review_job(
     except ExternalAssessmentValidationError as exc:
         detail = clean_text(str(exc))
         checkpoints.mark_failed(current_stage, detail)
+        saved_payload_available = payload_available(job_id)
         _job_update(
             job_id,
-            status="failed",
-            message="External assessment stopped by evidence validation",
-            error=detail,
+            status="paused" if saved_payload_available else "failed",
+            message=(
+                "External assessment paused at the evidence-validation check"
+                if saved_payload_available
+                else "External assessment stopped by evidence validation"
+            ),
+            error=(
+                detail
+                + (
+                    " The original upload and completed checkpoints are saved. "
+                    "Select Recover to retry the failed stage with the current "
+                    "validation rules."
+                    if saved_payload_available
+                    else ""
+                )
+            ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=False,
-            recoverable=False,
+            retryable=saved_payload_available,
+            recoverable=saved_payload_available,
+            payload_available=saved_payload_available,
+            resume_url=(
+                f"/api/review/jobs/{job_id}/resume"
+                if saved_payload_available
+                else None
+            ),
         )
     except (ValueError, AIConfigurationError) as exc:
         checkpoints.mark_failed(current_stage, str(exc))
@@ -1675,7 +1695,11 @@ async def resume_review_job(
             "message": "The review is already running.",
             "poll_url": f"/api/review/jobs/{job_id}",
         }
-    if not record.recoverable or not payload_available(job_id):
+    saved_payload_available = payload_available(job_id)
+    can_recover_failed_job = (
+        record.status == "failed" and saved_payload_available
+    )
+    if (not record.recoverable and not can_recover_failed_job) or not saved_payload_available:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1735,6 +1759,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             "checkpoint_count": int(record.checkpoint_count or 0),
             "completed_units": int(record.checkpoint_count or 0),
             "recoverable": bool(record.recoverable),
+            "payload_available": bool(record.payload_available),
             "resume_count": int(record.resume_count or 0),
             "last_heartbeat_at": (
                 record.last_heartbeat_at.isoformat()
@@ -1747,7 +1772,10 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
                 "result_url",
                 f'/api/review/{response["review_id"]}',
             )
-        elif record.recoverable and record.status in {"paused", "queued"}:
+        elif (
+            (record.recoverable and record.status in {"paused", "queued"})
+            or (record.status == "failed" and bool(record.payload_available))
+        ):
             response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
         return response
     response = {
@@ -1761,6 +1789,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
         "checkpoint_count": int(record.checkpoint_count or 0),
         "completed_units": int(record.checkpoint_count or 0),
         "recoverable": bool(record.recoverable),
+        "payload_available": bool(record.payload_available),
         "resume_count": int(record.resume_count or 0),
         "last_heartbeat_at": (
             record.last_heartbeat_at.isoformat()
@@ -1776,7 +1805,10 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     }
     if record.status == "completed" and record.review_id:
         response["result_url"] = f"/api/review/{record.review_id}"
-    elif record.recoverable and record.status in {"paused", "queued"}:
+    elif (
+        (record.recoverable and record.status in {"paused", "queued"})
+        or (record.status == "failed" and bool(record.payload_available))
+    ):
         response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
     return response
 
