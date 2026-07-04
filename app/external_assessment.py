@@ -52,7 +52,10 @@ state that the component could not be fully assessed from the supplied evidence
 and do not penalise the candidate for its alleged absence.
 
 Every assessment domain must report its coverage status. Every fully or partly
-assessed domain must cite only evidence IDs supplied in the current stage. Evidence IDs must support the actual point
+assessed domain must cite only evidence IDs supplied in the current stage. Copy
+each token exactly from allowed_evidence_ids. Evidence IDs are opaque source
+tokens, not page or paragraph numbers, so never construct an ID from a page,
+paragraph, table or chapter number. Evidence IDs must support the actual point
 being made. A technical term appearing in the thesis is not proof that the
 method is adequate. Examine the reported procedures, values, diagnostics,
 interpretations and limitations.
@@ -375,6 +378,76 @@ def _shared_payload(
         },
     }
 
+def _selected_evidence_for_stage(
+    stage: str,
+    runtime_context: Dict[str, Any],
+    manifest: Dict[str, Any],
+    *,
+    concise_retry: bool,
+    additional_evidence_ids: Sequence[str] = (),
+) -> List[Dict[str, Any]]:
+    """Select the exact source excerpts available to a generation stage.
+
+    Any valid manifest IDs cited by a failed attempt are added to the next
+    attempt together with their source text. This converts a recoverable
+    selection mismatch into a grounded retry instead of repeatedly rejecting
+    the same otherwise valid identifier.
+    """
+
+    paragraphs = runtime_context.get("current_paragraphs") or []
+    if stage == "foundation":
+        selected = select_balanced_evidence(
+            paragraphs,
+            manifest,
+            target_roles=("foundation", "literature_theory", "methodology"),
+            max_chars=30000 if not concise_retry else 19000,
+            concise=concise_retry,
+        )
+    elif stage == "evidence":
+        selected = select_balanced_evidence(
+            paragraphs,
+            manifest,
+            target_roles=("results", "discussion", "conclusions", "ethics", "references"),
+            max_chars=38000 if not concise_retry else 23000,
+            concise=concise_retry,
+        )
+    else:
+        return []
+
+    valid_ids = set(manifest.get("valid_evidence_ids") or [])
+    requested = [
+        clean_text(value)
+        for value in additional_evidence_ids
+        if clean_text(value) in valid_ids
+    ]
+    if requested:
+        extras = evidence_catalog(
+            paragraphs,
+            requested,
+            text_limit=900 if concise_retry else 1500,
+        )
+        selected_ids = {item.get("id") for item in selected}
+        selected.extend(item for item in extras if item.get("id") not in selected_ids)
+
+    return selected
+
+
+def _feedback_for_prompt(feedback: Sequence[str]) -> List[str]:
+    """Redact unsupported tokens so a retry is not primed to repeat them."""
+
+    output: List[str] = []
+    for item in feedback:
+        value = clean_text(item)
+        if value.startswith("Unsupported evidence IDs were used:"):
+            output.append(
+                "One or more evidence IDs were outside allowed_evidence_ids. "
+                "Delete them and copy only exact tokens from allowed_evidence_ids."
+            )
+        elif value:
+            output.append(value)
+    return output
+
+
 def _stage_prompt(
     stage: str,
     review: Dict[str, Any],
@@ -385,17 +458,18 @@ def _stage_prompt(
     prior_outputs: Optional[Dict[str, Any]] = None,
     concise_retry: bool = False,
     validation_feedback: Optional[List[str]] = None,
+    additional_evidence_ids: Sequence[str] = (),
 ) -> str:
     shared = _shared_payload(review, metadata, manifest)
     paragraphs = runtime_context.get("current_paragraphs") or []
 
     if stage == "foundation":
-        selected_evidence = select_balanced_evidence(
-            paragraphs,
+        selected_evidence = _selected_evidence_for_stage(
+            stage,
+            runtime_context,
             manifest,
-            target_roles=("foundation", "literature_theory", "methodology"),
-            max_chars=30000 if not concise_retry else 19000,
-            concise=concise_retry,
+            concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
         )
         payload = {
             "examination_information": shared["examination_information"],
@@ -418,17 +492,18 @@ def _stage_prompt(
             "Produce a concise study summary, degree-standard judgement, the "
             "foundational critical-gate judgement, and rigorous assessments of the "
             "research problem, literature/theory and methods. Each domain must set "
-            "coverage_status. Every fully or partly assessed domain must cite one or more allowed evidence_ids. Each domain "
+            "coverage_status. Every fully or partly assessed domain must cite one or more allowed evidence_ids. Copy each "
+            "ID exactly from allowed_evidence_ids and never derive it from a page or paragraph number. Each domain "
             "assessment should normally remain below 240 words and each list should "
             "contain no more than six concise items."
         )
     elif stage == "evidence":
-        selected_evidence = select_balanced_evidence(
-            paragraphs,
+        selected_evidence = _selected_evidence_for_stage(
+            stage,
+            runtime_context,
             manifest,
-            target_roles=("results", "discussion", "conclusions", "ethics", "references"),
-            max_chars=38000 if not concise_retry else 23000,
-            concise=concise_retry,
+            concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
         )
         payload = {
             "examination_information": shared["examination_information"],
@@ -453,7 +528,8 @@ def _stage_prompt(
             "more than five chapters. Apply the method-specific expert checklist in "
             "the manifest. Judge reported values, diagnostics and interpretations, "
             "not mere term presence. Each domain must set coverage_status. Every fully or partly assessed domain must cite "
-            "one or more allowed evidence_ids. Each domain assessment should normally "
+            "one or more allowed evidence_ids. Copy each ID exactly from allowed_evidence_ids and never derive it from a "
+            "page or paragraph number. Each domain assessment should normally "
             "remain below 240 words and lists should contain no more than six items."
         )
     elif stage == "corrections":
@@ -529,10 +605,11 @@ def _stage_prompt(
     )
     feedback_note = ""
     if validation_feedback:
+        safe_feedback = _feedback_for_prompt(validation_feedback)
         feedback_note = (
             " The previous draft failed mandatory evidence validation. Correct every "
             "point below and do not repeat it: "
-            + " | ".join(validation_feedback[:12])
+            + " | ".join(safe_feedback[:12])
         )
     return (
         instruction
@@ -704,24 +781,15 @@ def _allowed_ids_for_stage(
     prior_outputs: Optional[Dict[str, Any]],
     *,
     concise_retry: bool,
+    additional_evidence_ids: Sequence[str] = (),
 ) -> List[str]:
-    paragraphs = runtime_context.get("current_paragraphs") or []
-    if stage == "foundation":
-        evidence = select_balanced_evidence(
-            paragraphs,
+    if stage in {"foundation", "evidence"}:
+        evidence = _selected_evidence_for_stage(
+            stage,
+            runtime_context,
             manifest,
-            target_roles=("foundation", "literature_theory", "methodology"),
-            max_chars=30000 if not concise_retry else 19000,
-            concise=concise_retry,
-        )
-        return [item["id"] for item in evidence]
-    if stage == "evidence":
-        evidence = select_balanced_evidence(
-            paragraphs,
-            manifest,
-            target_roles=("results", "discussion", "conclusions", "ethics", "references"),
-            max_chars=38000 if not concise_retry else 23000,
-            concise=concise_retry,
+            concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
         )
         return [item["id"] for item in evidence]
     if stage == "corrections":
@@ -977,6 +1045,8 @@ async def _complete_assessment_stage(
 ) -> Any:
     last_error: Optional[Exception] = None
     validation_feedback: List[str] = []
+    additional_evidence_ids: List[str] = []
+    valid_manifest_ids = set(manifest.get("valid_evidence_ids") or [])
     attempts = (
         {"concise": False, "grounding_retry": False},
         {"concise": False, "grounding_retry": True},
@@ -995,6 +1065,7 @@ async def _complete_assessment_stage(
             prior_outputs=prior_outputs,
             concise_retry=concise_retry,
             validation_feedback=feedback,
+            additional_evidence_ids=additional_evidence_ids,
         )
         allowed_ids = _allowed_ids_for_stage(
             stage,
@@ -1002,13 +1073,15 @@ async def _complete_assessment_stage(
             manifest,
             prior_outputs,
             concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.8.0-grounded",
+            "pipeline": "external-assessment-v1.8.1-grounded-evidence-retry",
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
-            "validation_feedback": feedback,
+            "validation_feedback": _feedback_for_prompt(feedback),
+            "additional_evidence_ids": additional_evidence_ids,
             "manifest_hash": manifest.get("manifest_hash"),
             "model": config.deepseek_advanced_model,
             "reasoning_effort": reasoning_effort,
@@ -1038,6 +1111,18 @@ async def _complete_assessment_stage(
                 if not cached_feedback:
                     return cached
                 validation_feedback = cached_feedback
+                cached_unsupported = validate_evidence_ids(cached.data, allowed_ids)
+                for evidence_id in cached_unsupported:
+                    if (
+                        evidence_id in valid_manifest_ids
+                        and evidence_id not in additional_evidence_ids
+                    ):
+                        additional_evidence_ids.append(evidence_id)
+                checkpoint_manager.mark_failed(
+                    stage_key,
+                    "Cached stage output failed current evidence validation.",
+                )
+                continue
 
             checkpoint_manager.mark_running(
                 stage_key,
@@ -1067,6 +1152,13 @@ async def _complete_assessment_stage(
             )
             if stage_feedback:
                 validation_feedback = stage_feedback
+                unsupported_ids = validate_evidence_ids(result.data, allowed_ids)
+                for evidence_id in unsupported_ids:
+                    if (
+                        evidence_id in valid_manifest_ids
+                        and evidence_id not in additional_evidence_ids
+                    ):
+                        additional_evidence_ids.append(evidence_id)
                 last_error = ExternalAssessmentValidationError(
                     f"External assessment stage '{stage}' failed evidence validation: "
                     + " | ".join(stage_feedback[:8])

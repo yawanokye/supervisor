@@ -1041,6 +1041,39 @@ def select_balanced_evidence(
 
 
 def compact_manifest_for_prompt(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact manifest without exposing uncited evidence tokens.
+
+    Stage prompts provide their own bounded ``selected_source_evidence`` and
+    ``allowed_evidence_ids``.  Repeating evidence IDs inside role-presence,
+    metadata or TOC summaries can cause a model to cite an ID whose source text
+    was not supplied in that stage.  The prompt manifest therefore retains the
+    presence status and an evidence count, but not the raw identifiers.
+    """
+
+    role_presence: Dict[str, Any] = {}
+    for role, raw in (manifest.get("role_presence") or {}).items():
+        item = dict(raw or {})
+        evidence_ids = item.pop("evidence_ids", []) or []
+        item["evidence_count"] = len(evidence_ids)
+        role_presence[role] = item
+
+    presence_signals: Dict[str, Any] = {}
+    for key, raw in (manifest.get("presence_signals") or {}).items():
+        item = dict(raw or {})
+        evidence_ids = item.pop("evidence_ids", []) or []
+        item["evidence_count"] = len(evidence_ids)
+        presence_signals[key] = item
+
+    toc_reconciliation = dict(manifest.get("toc_reconciliation") or {})
+    toc_evidence_ids = toc_reconciliation.pop("toc_evidence_ids", []) or []
+    toc_reconciliation["toc_evidence_count"] = len(toc_evidence_ids)
+
+    inferred_metadata = dict(manifest.get("inferred_metadata") or {})
+    metadata_evidence = inferred_metadata.pop("evidence", {}) or {}
+    inferred_metadata["evidence_available"] = {
+        key: bool(value) for key, value in metadata_evidence.items()
+    }
+
     return {
         "manifest_version": manifest.get("manifest_version"),
         "manifest_hash": manifest.get("manifest_hash"),
@@ -1057,11 +1090,11 @@ def compact_manifest_for_prompt(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "appendix_heading_count": manifest.get("appendix_heading_count"),
         "detected_chapters": manifest.get("detected_chapters"),
         "chapter_map": manifest.get("chapter_map"),
-        "toc_reconciliation": manifest.get("toc_reconciliation"),
-        "role_presence": manifest.get("role_presence"),
+        "toc_reconciliation": toc_reconciliation,
+        "role_presence": role_presence,
         "role_chapters": manifest.get("role_chapters"),
-        "presence_signals": manifest.get("presence_signals"),
-        "inferred_metadata": manifest.get("inferred_metadata"),
+        "presence_signals": presence_signals,
+        "inferred_metadata": inferred_metadata,
         "method_rubric": manifest.get("method_rubric"),
         "quality_rule": manifest.get("quality_rule"),
     }

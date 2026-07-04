@@ -1125,7 +1125,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.8.0-grounded",
+                    "pipeline": "external-assessment-complete-v1.8.1-grounded-evidence-retry",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"
