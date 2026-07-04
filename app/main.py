@@ -42,7 +42,10 @@ from .checkpointing import (
     stable_hash,
 )
 from .document_parser import clean_text
-from .external_assessment import enrich_with_external_assessment
+from .external_assessment import (
+    ExternalAssessmentValidationError,
+    enrich_with_external_assessment,
+)
 from .external_assessment_exporter import (
     build_confidential_recommendation,
     build_corrections_schedule,
@@ -971,7 +974,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.7.0",
+            "pipeline": "review-pipeline-v1.8.0",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -993,7 +996,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.7.0",
+                "pipeline": "document-analysis-v1.8.0",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1073,7 +1076,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.7.0",
+                "pipeline": "academic-review-complete-v1.8.0-grounded",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "model": config.deepseek_advanced_model,
@@ -1122,7 +1125,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.7.0",
+                    "pipeline": "external-assessment-complete-v1.8.0-grounded",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"
@@ -1290,6 +1293,19 @@ async def _run_review_job(
             result_url=f'/api/review/{review["review_id"]}',
         )
 
+    except ExternalAssessmentValidationError as exc:
+        detail = clean_text(str(exc))
+        checkpoints.mark_failed(current_stage, detail)
+        _job_update(
+            job_id,
+            status="failed",
+            message="External assessment stopped by evidence validation",
+            error=detail,
+            current_stage=current_stage,
+            checkpoint_count=checkpoints.completed_count(),
+            retryable=False,
+            recoverable=False,
+        )
     except (ValueError, AIConfigurationError) as exc:
         checkpoints.mark_failed(current_stage, str(exc))
         _job_update(

@@ -373,6 +373,21 @@ def detect_chapter_number(text: str) -> Optional[int]:
     return None
 
 
+def is_probable_toc_entry(text: str, style_name: str = "") -> bool:
+    raw = clean_text(text)
+    style = (style_name or "").strip().lower()
+    if style.startswith("toc") or "table of contents" in style:
+        return True
+    if re.search(r"\.{2,}\s*\d+\s*$", raw):
+        return True
+    if re.match(r"^\s*chapter\s+(?:[a-z]+|[ivxlcdm]+|\d+)", raw, flags=re.I):
+        if len(raw.split()) > 2 and re.search(r"\s\d+\s*$", raw):
+            return True
+    if section_number_from_heading(raw) and re.search(r"\s\d+\s*$", raw) and len(raw.split()) > 2:
+        return True
+    return False
+
+
 def is_heading(text: str, style_name: str = "") -> bool:
     raw = clean_text(text)
     low = normalised(raw)
@@ -701,6 +716,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     "section_number": None,
                     "section_number_chapter": None,
                     "chapter_detection_basis": "inherited" if current_chapter else "unassigned",
+                    "is_toc_entry": False,
                     "style": "Table",
                     "source_kind": "table_row",
                     "table_index": table_index,
@@ -717,21 +733,22 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
         except Exception:
             style_name = ""
         heading = is_heading(text, style_name)
-        marker = explicit_chapter_marker(text) if heading else None
+        toc_entry = is_probable_toc_entry(text, style_name)
+        marker = explicit_chapter_marker(text) if heading and not toc_entry else None
         title_chapter = (
             canonical_chapter_title_number(
                 text,
                 style_name=style_name,
                 current_chapter=current_chapter,
             )
-            if heading
+            if heading and not toc_entry
             else None
         )
         section_number = (
-            section_number_from_heading(text) if heading else None
+            section_number_from_heading(text) if heading and not toc_entry else None
         )
         section_chapter = (
-            chapter_from_section_number(text) if heading else None
+            chapter_from_section_number(text) if heading and not toc_entry else None
         )
         chapter = marker or title_chapter or section_chapter
         if chapter is not None:
@@ -751,12 +768,14 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "section_number": section_number,
             "section_number_chapter": section_chapter,
             "chapter_detection_basis": (
-                "chapter_marker" if marker is not None
+                "toc_entry" if toc_entry
+                else "chapter_marker" if marker is not None
                 else "chapter_title" if title_chapter is not None
                 else "numbered_section" if section_chapter is not None
                 else "inherited" if current_chapter is not None
                 else "unassigned"
             ),
+            "is_toc_entry": toc_entry,
             "style": style_name,
             "source_kind": "paragraph",
             "table_index": None,
@@ -788,20 +807,21 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                 global_paragraph += 1
                 page_paragraph += 1
                 heading = is_heading(text)
-                marker = explicit_chapter_marker(text) if heading else None
+                toc_entry = is_probable_toc_entry(text)
+                marker = explicit_chapter_marker(text) if heading and not toc_entry else None
                 title_chapter = (
                     canonical_chapter_title_number(
                         text,
                         current_chapter=current_chapter,
                     )
-                    if heading
+                    if heading and not toc_entry
                     else None
                 )
                 section_number = (
-                    section_number_from_heading(text) if heading else None
+                    section_number_from_heading(text) if heading and not toc_entry else None
                 )
                 section_chapter = (
-                    chapter_from_section_number(text) if heading else None
+                    chapter_from_section_number(text) if heading and not toc_entry else None
                 )
                 chapter = marker or title_chapter or section_chapter
                 if chapter is not None:
@@ -821,12 +841,14 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     "section_number": section_number,
                     "section_number_chapter": section_chapter,
                     "chapter_detection_basis": (
-                        "chapter_marker" if marker is not None
+                        "toc_entry" if toc_entry
+                        else "chapter_marker" if marker is not None
                         else "chapter_title" if title_chapter is not None
                         else "numbered_section" if section_chapter is not None
                         else "inherited" if current_chapter is not None
                         else "unassigned"
                     ),
+                    "is_toc_entry": toc_entry,
                     "style": "",
                     "source_kind": "pdf_block",
                     "table_index": None,

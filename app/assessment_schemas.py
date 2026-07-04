@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Literal
 
-from pydantic import ConfigDict, BaseModel, Field
+from pydantic import ConfigDict, BaseModel, Field, model_validator
 
 
 DomainJudgement = Literal[
@@ -24,9 +24,17 @@ FinalRecommendation = Literal[
     "fail",
     "corrections_satisfactorily_completed",
     "corrections_not_satisfactorily_completed",
+    "assessment_withheld_incomplete_extraction",
 ]
 
 VivaRecommendation = Literal["required", "recommended", "optional", "not_required"]
+
+CoverageStatus = Literal[
+    "fully_assessed",
+    "partly_assessed",
+    "not_assessed_due_to_retrieval_limit",
+    "not_applicable",
+]
 
 
 class StrictAssessmentModel(BaseModel):
@@ -36,10 +44,29 @@ class StrictAssessmentModel(BaseModel):
 class AssessmentDomain(StrictAssessmentModel):
     domain: str
     judgement: DomainJudgement
+    coverage_status: CoverageStatus
+    evidence_ids: List[str] = Field(default_factory=list, max_length=24)
     assessment: str
     strengths: List[str] = Field(default_factory=list, max_length=8)
     concerns: List[str] = Field(default_factory=list, max_length=8)
     required_corrections: List[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_evidence_coverage(self):
+        if self.coverage_status in {"fully_assessed", "partly_assessed"} and not self.evidence_ids:
+            raise ValueError(
+                "Evidence IDs are required when an assessment domain is fully or partly assessed."
+            )
+        if self.coverage_status == "not_assessed_due_to_retrieval_limit":
+            if self.judgement != "not_applicable":
+                raise ValueError(
+                    "A domain not assessed because of retrieval limits must use judgement=not_applicable."
+                )
+            if self.concerns or self.required_corrections:
+                raise ValueError(
+                    "A domain that could not be assessed may not impose concerns or corrections."
+                )
+        return self
 
 
 class CorrectionItem(StrictAssessmentModel):
@@ -47,6 +74,7 @@ class CorrectionItem(StrictAssessmentModel):
     classification: CorrectionClass
     chapter_or_section: str
     location: str
+    evidence_ids: List[str] = Field(default_factory=list, min_length=1, max_length=12)
     issue: str
     required_correction: str
     rationale: str

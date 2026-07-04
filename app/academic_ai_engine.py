@@ -984,7 +984,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.7.0",
+            "pipeline": "academic-review-v1.8.0-grounded",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1325,7 +1325,7 @@ async def enrich_review_with_academic_ai(
 
         try:
             audit_hash = stable_hash({
-                "pipeline": "academic-audit-v1.7.0",
+                "pipeline": "academic-audit-v1.8.0-grounded",
                 "model": config.deepseek_advanced_model,
                 "effort": config.deepseek_advanced_reasoning_effort,
                 "tokens": config.advanced_audit_max_output_tokens,

@@ -42,6 +42,14 @@ JUDGEMENT_LABELS = {
     "not_applicable": "Not Applicable",
 }
 
+COVERAGE_LABELS = {
+    "fully_assessed": "Fully assessed from supplied evidence",
+    "partly_assessed": "Partly assessed from supplied evidence",
+    "not_assessed_due_to_retrieval_limit": "Not assessed because source retrieval was insufficient",
+    "not_applicable": "Not applicable",
+}
+
+
 STAGE_LABELS = {
     "initial_examination": "Initial Examination",
     "re_examination": "Re-examination",
@@ -156,6 +164,36 @@ def _add_bullets(doc: Document, heading: str, values: Iterable[Any]) -> None:
         doc.add_paragraph(value, style="List Bullet")
 
 
+def _add_source_assurance(doc: Document, assessment: Dict[str, Any]) -> None:
+    quality = assessment.get("quality_assurance") or {}
+    manifest = assessment.get("source_manifest") or {}
+    if not quality and not manifest:
+        return
+    doc.add_heading("Source Coverage and Evidence Assurance", level=1)
+    toc = manifest.get("toc_reconciliation") or {}
+    rows = [
+        ("Evidence audit", _clean(quality.get("audit_status")).replace("_", " ").title()),
+        ("Source coverage", _clean(quality.get("coverage_status") or manifest.get("coverage_status")).replace("_", " ").title()),
+        ("Coverage score", quality.get("coverage_score") or manifest.get("coverage_score")),
+        ("Detected chapters", ", ".join(str(value) for value in (quality.get("detected_chapters") or manifest.get("detected_chapters") or []))),
+        ("Table of contents reconciliation", _clean(toc.get("status")).replace("_", " ").title()),
+        ("Extracted words", f"{int(quality.get('word_count') or manifest.get('word_count') or 0):,}"),
+        ("Extracted tables", quality.get("table_count") if quality.get("table_count") is not None else manifest.get("table_count")),
+        ("Evidence references used", quality.get("evidence_reference_count")),
+        ("Derivative findings excluded", quality.get("derivative_findings_filtered")),
+        ("Contradictions after audit", quality.get("presence_contradiction_count")),
+    ]
+    table = doc.add_table(rows=0, cols=2)
+    _borders(table)
+    for label, value in rows:
+        cells = table.add_row().cells
+        _shade(cells[0], LIGHT)
+        cells[0].paragraphs[0].add_run(label).bold = True
+        cells[1].paragraphs[0].add_run(_clean(value) or "Not available")
+    warnings = manifest.get("extraction_warnings") or []
+    _add_bullets(doc, "Extraction warnings", warnings)
+
+
 def _add_domain(doc: Document, label: str, domain: Dict[str, Any]) -> None:
     doc.add_heading(label, level=1)
     judgement = JUDGEMENT_LABELS.get(
@@ -172,10 +210,68 @@ def _add_domain(doc: Document, label: str, domain: Dict[str, Any]) -> None:
         run.font.color.rgb = RGBColor.from_string(GREEN)
     else:
         run.font.color.rgb = RGBColor.from_string(AMBER)
+    coverage = COVERAGE_LABELS.get(
+        domain.get("coverage_status"),
+        _clean(domain.get("coverage_status")).replace("_", " ").title(),
+    )
+    if coverage:
+        p2 = doc.add_paragraph()
+        p2.add_run("Evidence coverage: ").bold = True
+        p2.add_run(coverage)
+    evidence_ids = [
+        _clean(value) for value in (domain.get("evidence_ids") or []) if _clean(value)
+    ]
+    if evidence_ids:
+        p3 = doc.add_paragraph()
+        p3.add_run("Evidence references: ").bold = True
+        p3.add_run(", ".join(evidence_ids))
     doc.add_paragraph(_clean(domain.get("assessment")))
     _add_bullets(doc, "Strengths", domain.get("strengths") or [])
     _add_bullets(doc, "Concerns", domain.get("concerns") or [])
     _add_bullets(doc, "Required corrections", domain.get("required_corrections") or [])
+
+
+def _add_evidence_register(doc: Document, assessment: Dict[str, Any]) -> None:
+    entries = assessment.get("source_evidence_register") or []
+    if not entries:
+        return
+    doc.add_heading("Source Evidence Register", level=1)
+    doc.add_paragraph(
+        "The following source excerpts support the evidence identifiers used in the "
+        "assessment. They are provided for traceability and should be read against "
+        "the complete thesis before the examiner signs the report."
+    )
+    table = doc.add_table(rows=1, cols=4)
+    _borders(table)
+    headers = ("Evidence ID", "Location", "Heading", "Source excerpt")
+    for cell, label in zip(table.rows[0].cells, headers):
+        _shade(cell, BLUE)
+        run = cell.paragraphs[0].add_run(label)
+        run.bold = True
+        run.font.color.rgb = RGBColor(255, 255, 255)
+    for item in entries:
+        cells = table.add_row().cells
+        location_parts = []
+        if item.get("chapter_number") is not None:
+            location_parts.append(f"Chapter {item.get('chapter_number')}")
+        if item.get("page") is not None:
+            location_parts.append(f"page {item.get('page')}")
+        if item.get("paragraph") is not None:
+            location_parts.append(f"paragraph {item.get('paragraph')}")
+        if item.get("table_index") is not None:
+            table_location = f"table {item.get('table_index')}"
+            if item.get("table_row") is not None:
+                table_location += f", row {item.get('table_row')}"
+            location_parts.append(table_location)
+        values = (
+            item.get("id"),
+            ", ".join(location_parts) or "Document source",
+            item.get("heading"),
+            item.get("text"),
+        )
+        for cell, value in zip(cells, values):
+            run = cell.paragraphs[0].add_run(_clean(value) or "Not available")
+            run.font.size = Pt(8.5)
 
 
 def _add_recommendation_box(doc: Document, assessment: Dict[str, Any]) -> None:
@@ -206,6 +302,7 @@ def build_external_examination_report(review: Dict[str, Any]) -> bytes:
         "Thesis or Dissertation Assessment",
     )
     _add_info_table(doc, assessment)
+    _add_source_assurance(doc, assessment)
     _add_paragraph_section(doc, "1. Summary of the Study", assessment.get("study_summary"))
     _add_paragraph_section(doc, "2. Overall Academic Judgement", assessment.get("overall_academic_judgement"))
     _add_paragraph_section(doc, "3. Degree-Level Standard", assessment.get("degree_standard_judgement"))
@@ -214,6 +311,8 @@ def build_external_examination_report(review: Dict[str, Any]) -> bytes:
         domain = assessment.get(field) or {}
         if domain:
             _add_domain(doc, DOMAIN_LABELS.get(field, field.replace("_", " ").title()), domain)
+
+    _add_evidence_register(doc, assessment)
 
     doc.add_heading("Major Strengths", level=1)
     strengths = assessment.get("major_strengths") or []
@@ -247,9 +346,9 @@ def build_corrections_schedule(review: Dict[str, Any]) -> bytes:
     doc = _base_document("Schedule of Required Corrections")
     _add_info_table(doc, assessment)
     corrections = assessment.get("corrections") or []
-    table = doc.add_table(rows=1, cols=7)
+    table = doc.add_table(rows=1, cols=8)
     _borders(table)
-    headers = ["No.", "Class", "Chapter/section", "Location", "Issue", "Required correction", "Verification"]
+    headers = ["No.", "Class", "Chapter/section", "Location", "Evidence", "Issue", "Required correction", "Verification"]
     for cell, label in zip(table.rows[0].cells, headers):
         _shade(cell, BLUE)
         run = cell.paragraphs[0].add_run(label)
@@ -259,20 +358,22 @@ def build_corrections_schedule(review: Dict[str, Any]) -> bytes:
         cells = table.add_row().cells
         values = [
             item.get("number"), item.get("classification", "").title(),
-            item.get("chapter_or_section"), item.get("location"), item.get("issue"),
-            item.get("required_correction"), item.get("verification_by"),
+            item.get("chapter_or_section"), item.get("location"),
+            ", ".join(_clean(value) for value in (item.get("evidence_ids") or []) if _clean(value)),
+            item.get("issue"), item.get("required_correction"), item.get("verification_by"),
         ]
         for cell, value in zip(cells, values):
             cell.paragraphs[0].add_run(_clean(value))
         if item.get("classification") in {"critical", "major"}:
             _shade(cells[1], "FDECEC" if item.get("classification") == "critical" else "FFF4E5")
         if _clean(item.get("rationale")):
-            p = cells[5].add_paragraph()
+            p = cells[6].add_paragraph()
             r = p.add_run("Rationale: " + _clean(item.get("rationale")))
             r.italic = True
             r.font.size = Pt(8.5)
     if not corrections:
         doc.add_paragraph("No formal corrections were recorded.")
+    _add_evidence_register(doc, assessment)
     doc.add_paragraph()
     doc.add_paragraph("Corrections verified by: ______________________________________")
     doc.add_paragraph("Signature: ______________________________   Date: ______________________________")
@@ -286,6 +387,8 @@ def build_confidential_recommendation(review: Dict[str, Any]) -> bytes:
         "Not for release to the candidate",
     )
     _add_info_table(doc, assessment)
+    _add_source_assurance(doc, assessment)
+    _add_evidence_register(doc, assessment)
     _add_recommendation_box(doc, assessment)
     _add_paragraph_section(doc, "Rationale", assessment.get("recommendation_rationale"))
     _add_paragraph_section(doc, "Confidential Comments", assessment.get("confidential_comments_to_university"))
