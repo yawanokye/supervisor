@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant 1.4
+# ProjectReady AI Supervisor Assistant 1.8.0
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
@@ -228,13 +228,19 @@ The workflow supports initial examination, re-examination and corrected-thesis v
 
 
 
-## Staged External Assessment generation
+## Grounded External Assessment generation
 
-Long PhD and Professional Doctorate external assessments are generated in four validated stages rather than one oversized response. This reduces output-token truncation and provides targeted recovery for an individual stage without weakening the examiner report.
+External Assessment first builds a source manifest before any examiner judgement is requested. The manifest records the detected chapters, research functions, metadata, tables, appendices, evidence identifiers and extraction coverage. The examiner stages then receive balanced evidence from the relevant research functions instead of a single sequential extract.
+
+The four-stage workflow covers foundation and methodology, findings and contribution, corrections and oral questions, and the final confidential decision. Every assessed domain and correction must cite valid evidence identifiers. The app rejects invented identifiers, unsupported numerical claims, missing-content claims that conflict with the thesis, and evidence drawn from the wrong research function.
+
+A component is never described as absent merely because it was not retrieved. Limited or insufficient extraction causes the academic recommendation to be withheld with low confidence. The candidate is not penalised for an extraction failure.
+
+The final DOCX report shows source coverage, detected chapters, evidence references and evidence-audit status. It also includes a source evidence register that links each cited identifier to its thesis location, heading and supporting excerpt. The confidential decision stage receives the cited source excerpts and independently checks the earlier assessments before recommending an outcome.
 
 ## Durable checkpoint and resume workflow
 
-Version 1.7.0 stores the uploaded review payload and each completed processing unit before the next unit begins. The following work is reusable after a timeout, provider interruption, Render restart or manual resume:
+Version 1.8.0 stores the uploaded review payload and each completed processing unit before the next unit begins. The following work is reusable after a timeout, provider interruption, Render restart or manual resume:
 
 - document extraction and thesis structure analysis
 - deterministic statistical and alignment preparation

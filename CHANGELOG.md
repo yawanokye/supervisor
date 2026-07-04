@@ -1,3 +1,21 @@
+## v1.8.0
+
+- Rebuilt External Assessment around a source manifest that records extracted words, chapters, research functions, tables, appendices, metadata, coverage warnings and stable evidence identifiers.
+- Added functional chapter mapping so seven-chapter, doctoral and custom thesis structures are assessed by research purpose rather than a fixed five-chapter assumption.
+- Added balanced evidence selection for foundation, literature, methodology, results, discussion, conclusions and ethics so later chapters cannot disappear because of sequential prompt truncation.
+- Added title-page metadata recovery for candidate name, candidate number, degree programme, institution and thesis title.
+- Changed the absence rule so content may be called missing only when the manifest explicitly marks it as confirmed absent. Retrieval uncertainty is never converted into an academic deficiency.
+- Added evidence IDs to every assessed domain and every correction, with deterministic rejection of invented IDs, irrelevant evidence and unsupported numerical claims.
+- Added method-specific examiner rubrics for PLS-SEM, covariance-based SEM, econometrics, qualitative inquiry and mixed-methods research.
+- Added source-presence contradiction checks that remove defective derivative findings and stop the final report when generated conclusions conflict with the thesis.
+- Added a source-evidence dossier to the confidential decision stage so the final recommendation audits earlier examiner findings against the cited thesis text.
+- Added a fail-safe recommendation rule. Limited or insufficient extraction now produces an assessment-withheld outcome with low confidence, never a pass, major-correction, re-examination or fail recommendation.
+- Added source coverage, evidence references and audit status to the external examination DOCX outputs and corrections schedule.
+- Added a source evidence register to the examiner outputs, linking every cited evidence ID to its thesis location, heading and supporting excerpt.
+- Versioned the document, academic-review, External Assessment and final checkpoints so earlier defective cached assessments are not reused.
+- Added an Edmund Animley seven-chapter regression test covering the candidate metadata, literature review, conceptual model, hypotheses, methodology, PLS-SEM results, discussion, conclusions, questionnaire and ethical-clearance appendix.
+- Added regression tests for DOCX chapter retention, false missing-content claims, evidence relevance, numerical grounding and extraction-based recommendation withholding.
+
 ## v1.7.0
 
 - Added durable job payload storage so uploaded theses, context chapters and examiner documents can be reloaded after a process interruption.
