@@ -21,6 +21,12 @@ from .ai_schemas import (
     AcademicVerificationBatch,
 )
 from .document_parser import clean_text, normalised
+from .supervisory_accuracy_guard import (
+    apply_accuracy_gate,
+    deterministic_expert_issues,
+    is_synthetic_section,
+    source_section,
+)
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
 ACTIONABLE_STATUS = {
@@ -470,6 +476,7 @@ def _batch_prompt(
             key: value for key, value in context_lock.items()
             if key != "source_text_normalised"
         },
+        "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "chapter_review_dimensions": _chapter_dimensions(review),
         "coverage_contract": {
             "review_every_section_and_subsection": True,
@@ -496,6 +503,10 @@ def _batch_prompt(
             "every_issue_must_name_the_exact_section_or_subsection_heading": True,
             "table_findings_must_name_the_supplied_table_number_and_title": True,
             "generic_or_portable_comments_are_not_allowed": True,
+            "absence_claims_must_be_checked_against_the_document_manifest": True,
+            "synthetic_audit_labels_are_not_document_locations": True,
+            "whole_thesis_instructions_require_whole_thesis_evidence": True,
+            "factual_accuracy_threshold_is_identical_for_all_depths": True,
         },
         "statistical_review_audit": review.get("statistical_review") or {},
         "institutional_structure_contract": {
@@ -552,6 +563,7 @@ def _verification_prompt(
             key: value for key, value in context_lock.items()
             if key != "source_text_normalised"
         },
+        "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
@@ -696,16 +708,26 @@ def _valid_issue(
     if not parsed["evidence_paragraph_ids"]:
         return None
 
-    if canonical_section:
+    first = paragraph_index[parsed["evidence_paragraph_ids"][0]]
+    evidence_section = source_section(first)
+    evidence_sections = {
+        normalised(source_section(paragraph_index[pid]))
+        for pid in parsed["evidence_paragraph_ids"]
+        if pid in paragraph_index and source_section(paragraph_index[pid])
+    }
+    requested_section = clean_text(parsed.get("section", ""))
+    # Synthetic audit packets are not real document locations. Re-anchor their
+    # findings to the exact section or subsection that supplied the evidence.
+    if canonical_section and not is_synthetic_section(canonical_section):
         parsed["section"] = clean_text(canonical_section)
-    else:
-        first = paragraph_index[parsed["evidence_paragraph_ids"][0]]
-        source_section = clean_text(
-            (first.get("section_path") or [""])[-1]
-            or first.get("heading", "")
-        )
-        if source_section and "audit" not in normalised(parsed.get("section", "")):
-            parsed["section"] = source_section
+    elif (
+        requested_section
+        and not is_synthetic_section(requested_section)
+        and normalised(requested_section) in evidence_sections
+    ):
+        parsed["section"] = requested_section
+    elif evidence_section:
+        parsed["section"] = evidence_section
 
     quote = clean_text(parsed.get("problematic_quote", ""))
     if quote and not any(
@@ -809,10 +831,13 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         None,
     )
     table_reference = ""
-    if table_evidence:
+    number = clean_text(issue.get("canonical_table_number", ""))
+    title = clean_text(issue.get("canonical_table_title", ""))
+    if not number and table_evidence:
         number = clean_text(table_evidence.get("table_number", ""))
         title = clean_text(table_evidence.get("table_title", ""))
-        table_reference = f"Table {number}" if number else "Table"
+    if number:
+        table_reference = f"Table {number}"
         if title:
             table_reference += f": {title}"
 
@@ -1164,7 +1189,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.8.5-grounded-comments",
+            "pipeline": "academic-review-v1.8.6-universal-factual-audit",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1501,116 +1526,162 @@ async def enrich_review_with_academic_ai(
         for issue in section_review["issues"]
     ]
 
-    # Every review depth receives one compact evidence audit. The declared
-    # academic level sets the benchmark, while depth controls the number of
-    # findings examined and the intensity of the second pass.
+    # Accuracy is mandatory at every review depth. Light, Standard and
+    # Advanced differ in the amount of feedback shown, not in factual
+    # verification. Every proposed issue therefore receives an independent
+    # evidence audit using the strongest configured review model.
     if all_primary:
-        profile = _review_profile(depth)
-        audit_model = (
-            config.deepseek_advanced_model
-            if depth == "advanced"
-            else config.deepseek_review_model
-        )
-        audit_effort = (
-            config.deepseek_advanced_reasoning_effort
-            if depth == "advanced"
-            else config.deepseek_reasoning_effort
-        )
-        audit_tokens = (
-            config.advanced_audit_max_output_tokens
-            if depth == "advanced"
-            else (2600 if depth == "light" else 3800)
-        )
-        audit_max_findings = min(
-            int(profile.get("quality_control_max_findings", 24)),
-            max(1, len(all_primary)),
-        )
-        audit_prompt = _compact_quality_audit_prompt(
-            review=review,
-            section_reviews=section_reviews,
-            context_lock=context_lock,
-            paragraph_index=paragraph_index,
-            audit_paragraphs=whole_audit,
-            max_findings=audit_max_findings,
-            max_source_chars=max(config.max_map_input_chars, 30000),
-            depth=depth,
+        audit_model = config.deepseek_advanced_model
+        audit_effort = config.deepseek_advanced_reasoning_effort
+        audit_tokens = max(
+            config.advanced_audit_max_output_tokens,
+            min(config.advanced_max_output_tokens, 6800),
         )
 
-        try:
+        verification_batches: List[List[Dict[str, Any]]] = []
+        pending: List[Dict[str, Any]] = []
+        pending_issues = 0
+        for section_review in section_reviews:
+            count = max(1, len(section_review.get("issues") or []))
+            if pending and pending_issues + count > max(4, config.verification_batch_size):
+                verification_batches.append(pending)
+                pending = []
+                pending_issues = 0
+            pending.append(section_review)
+            pending_issues += count
+        if pending:
+            verification_batches.append(pending)
+
+        async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
+            prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.8.5",
+                "pipeline": "academic-comment-audit-v1.8.6-universal",
+                "batch": batch_index,
                 "depth": depth,
                 "academic_level": academic_level,
                 "model": audit_model,
                 "effort": audit_effort,
                 "tokens": audit_tokens,
                 "system_prompt": ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                "user_prompt": audit_prompt,
+                "user_prompt": prompt,
             })
-            audit_stage_key = f"academic-comment-audit-{audit_hash[:20]}"
+            stage_key = f"academic-comment-audit-{audit_hash[:20]}"
             result = (
                 checkpoint_manager.load_provider_result(
-                    audit_stage_key,
-                    expected_input_hash=audit_hash,
+                    stage_key, expected_input_hash=audit_hash
                 )
-                if checkpoint_manager is not None
-                else None
+                if checkpoint_manager is not None else None
             )
             if result is None:
                 if checkpoint_manager is not None:
                     checkpoint_manager.mark_running(
-                        audit_stage_key,
+                        stage_key,
                         input_hash=audit_hash,
                         progress=68,
-                        message="Checking comment relevance and evidence",
+                        message=f"Verifying review comments {batch_index + 1} of {len(verification_batches)}",
                     )
                 result = await deepseek.complete_json(
                     model=audit_model,
                     system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                    user_prompt=audit_prompt,
+                    user_prompt=prompt,
                     schema_model=AcademicVerificationBatch,
-                    purpose=f"{depth}_compact_comment_accuracy_audit",
+                    purpose=f"{depth}_universal_comment_accuracy_audit",
                     reasoning_effort=audit_effort,
                     max_output_tokens=audit_tokens,
                 )
                 if checkpoint_manager is not None:
                     checkpoint_manager.save_provider_result(
-                        audit_stage_key,
+                        stage_key,
                         result,
                         input_hash=audit_hash,
                         progress=76,
-                        message="Comment accuracy audit completed",
+                        message="Comment accuracy audit batch completed",
                     )
-            usage_records.append(_usage_cost(result.usage, config))
-            merged = _apply_verification(all_primary, result.data)
+            return result
 
-            merged_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        audit_results = await _run_limited(
+            [verify_batch(index, batch) for index, batch in enumerate(verification_batches)],
+            min(config.max_parallel_calls, max(1, len(verification_batches))),
+        )
+
+        verified_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        successful_audits = 0
+        for batch, result in zip(verification_batches, audit_results):
+            batch_primary = [
+                issue for section_review in batch
+                for issue in section_review.get("issues") or []
+            ]
+            allowed_ids = {
+                _pid(paragraph)
+                for section_review in batch
+                for paragraph in section_review.get("source_section", {}).get("paragraphs") or []
+            }
+            if isinstance(result, Exception):
+                verification_failed = True
+                # Preserve only well-supported primary findings. The deterministic
+                # gate below still removes false absence claims, wrong locations
+                # and ungrounded table references.
+                merged = [
+                    item for item in batch_primary
+                    if float(item.get("confidence") or 0.0) >= 0.82
+                ]
+            else:
+                successful_audits += 1
+                usage_records.append(_usage_cost(result.usage, config))
+                merged = _apply_verification(batch_primary, result.data)
+
+            valid_rows: List[Dict[str, Any]] = []
             for item in merged:
-                valid = _valid_issue(item, paragraph_index, context_lock)
+                valid = _valid_issue(
+                    item, paragraph_index, context_lock, allowed_ids=allowed_ids
+                )
                 if valid:
-                    merged_by_section[
-                        normalised(valid.get("section", ""))
-                    ].append(valid)
+                    valid_rows.append(valid)
+            gated_rows, _ = apply_accuracy_gate(
+                valid_rows, paragraph_index, current
+            )
+            for valid in gated_rows:
+                verified_by_section[normalised(valid.get("section", ""))].append(valid)
 
-            for section_review in section_reviews:
-                key = normalised(section_review["heading"])
-                section_review["issues"] = merged_by_section.pop(key, [])
+        for section_review in section_reviews:
+            section_review["issues"] = verified_by_section.pop(
+                normalised(section_review["heading"]), []
+            )
 
-            # Unmatched audit output is discarded rather than attached to an
-            # unrelated section. This prevents generic comments from drifting
-            # to the first chapter or subsection.
-        except Exception:
+        # Findings from synthetic whole-document audits are re-anchored by the
+        # deterministic gate to their actual source section. Attach them only
+        # where the exact heading exists, never to an unrelated opening page.
+        if verified_by_section:
+            by_heading = {normalised(row["heading"]): row for row in section_reviews}
+            for section_key, values in list(verified_by_section.items()):
+                target = by_heading.get(section_key)
+                if target is not None:
+                    target["issues"].extend(values)
+
+        if successful_audits < len(verification_batches):
             verification_failed = True
             for section_review in section_reviews:
                 section_review["coverage_warning"] = (
                     section_review.get("coverage_warning", "")
-                    + " The independent comment-accuracy audit was unavailable; "
-                      "the evidence-linked primary review remains available."
+                    + " One or more independent accuracy-audit batches were unavailable; "
+                      "only high-confidence, deterministically grounded findings were retained."
                 ).strip()
 
 
+    raw_issues = [
+        issue for section_review in section_reviews
+        for issue in section_review["issues"]
+    ]
+    for deterministic in deterministic_expert_issues(current):
+        valid = _valid_issue(deterministic, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
+    raw_issues, accuracy_gate_stats = apply_accuracy_gate(
+        raw_issues, paragraph_index, current
+    )
     all_issues = _consolidate_repetitive_issues(
-        _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
+        _deduplicate_issues(raw_issues)
     )
     strengths = []
     seen = set()
@@ -1692,6 +1763,10 @@ async def enrich_review_with_academic_ai(
         "critical_issues": counts["critical"], "major_issues": counts["major"],
         "moderate_issues": counts["moderate"], "minor_issues": counts["minor"],
         "strengths_identified": len(strengths),
+        "accuracy_gate_kept": accuracy_gate_stats.get("kept", 0),
+        "accuracy_gate_dropped": accuracy_gate_stats.get("dropped", 0),
+        "accuracy_gate_adjusted": accuracy_gate_stats.get("adjusted", 0),
+        "universal_accuracy_audit_applied": True,
     })
     review["study_context"] = public_context(context_lock)
     review["academic_findings"] = finding_rows

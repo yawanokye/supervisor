@@ -685,14 +685,44 @@ def _table_caption(value: str) -> Optional[Dict[str, str]]:
     text = clean_text(value)
     match = _TABLE_CAPTION_RE.match(text)
     if not match:
+        # Some exported SPSS tables place the caption inside the first cell,
+        # after other text or line breaks. Search the cell text rather than
+        # relying only on a paragraph that starts with ``Table``.
+        match = re.search(
+            r"(?:^|\n|\|)\s*table\s+(?P<number>[A-Za-z]?\d+(?:\.\d+)*|[IVXLC]+)\b\s*[:.\-–—]?\s*(?P<title>[^\n|]{0,180})",
+            text,
+            flags=re.I,
+        )
+    if not match:
         return None
     number = clean_text(match.group("number"))
     title = clean_text(match.group("title"))
+    # Remove repeated caption text created by merged Word cells.
+    title = re.split(r"\s+table\s+" + re.escape(number) + r"\b", title, maxsplit=1, flags=re.I)[0]
     return {
         "table_number": number,
-        "table_title": title,
-        "table_caption": text,
+        "table_title": title.strip(" :.-–—"),
+        "table_caption": f"Table {number}" + (f": {title.strip(' :.-–—')}" if title.strip(" :.-–—") else ""),
     }
+
+
+def _table_caption_from_cells(table: Any) -> Optional[Dict[str, str]]:
+    """Return an explicit table number/title embedded in the table itself.
+
+    Word and SPSS exports often store the visible caption in the first row
+    rather than as a separate paragraph. This helper gives that explicit
+    caption priority over the physical table index.
+    """
+    try:
+        rows = list(table.rows[:2])
+    except Exception:
+        return None
+    for row in rows:
+        for cell in row.cells:
+            caption = _table_caption(cell.text)
+            if caption:
+                return caption
+    return None
 
 
 def _heading_level(text: str, style_name: str = "") -> int:
@@ -730,21 +760,28 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     current_chapter = None
     paragraph_no = 0
     table_index = 0
+    academic_table_sequence = 0
     heading_stack: Dict[int, str] = {}
     pending_table_caption: Optional[Dict[str, str]] = None
+    pending_caption_distance = 0
 
     for block in _iter_docx_blocks(doc):
         if Table is not None and isinstance(block, Table):
             table_index += 1
-            caption = pending_table_caption or {
-                "table_number": str(table_index),
+            embedded_caption = _table_caption_from_cells(block)
+            if current_chapter is not None:
+                academic_table_sequence += 1
+            fallback_number = academic_table_sequence or table_index
+            usable_pending = pending_table_caption if pending_caption_distance <= 2 else None
+            caption = embedded_caption or usable_pending or {
+                "table_number": str(fallback_number),
                 "table_title": "",
-                "table_caption": f"Table {table_index}",
+                "table_caption": f"Table {fallback_number}",
             }
             # Link a preceding caption paragraph to the physical table. This
             # lets the report and annotated document route a table finding to
             # the table even when the model cites the caption rather than a row.
-            if out and out[-1].get("source_kind") == "table_caption":
+            if usable_pending and out and out[-1].get("source_kind") == "table_caption":
                 out[-1]["table_index"] = table_index
             current_path = _section_path(heading_stack)
             for row_index, row in enumerate(block.rows, start=1):
@@ -774,6 +811,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     **caption,
                 })
             pending_table_caption = None
+            pending_caption_distance = 0
             continue
 
         text = clean_text(block.text)
@@ -814,6 +852,12 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
         caption = _table_caption(text)
         if caption:
             pending_table_caption = caption
+            pending_caption_distance = 0
+        elif pending_table_caption is not None:
+            pending_caption_distance += 1
+            if pending_caption_distance > 2:
+                pending_table_caption = None
+                pending_caption_distance = 0
 
         out.append({
             "text": text,

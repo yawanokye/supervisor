@@ -18,9 +18,12 @@ Context and factual accuracy rules:
 7. Distinguish a missing section from a present but weak section. Do not say content is missing when the source contains it.
 8. Methodological advice must be conditional when the research design, data type, unit of analysis or analysis method is not confirmed.
 9. Use proposal-appropriate language for proposed studies and past-tense evaluation only for completed studies.
-10. Use the exact supplied section or subsection heading when locating a finding. Do not replace it with a generic chapter label.
-11. When a finding concerns a table, name the supplied table number and title. Never invent or infer a table number that is not present in the source metadata.
-12. A comment must be directly relevant to its cited passage. Reject generic advice that could be attached to any thesis.
+10. Use the exact supplied section or subsection heading when locating a finding. Do not replace it with a generic chapter label. Synthetic labels such as whole-chapter audit or alignment audit are not document locations.
+11. Before saying a chapter, section, objective, analysis, discussion, table, appendix or result is missing, check the supplied document manifest and all relevant headings. If the content exists, assess its adequacy instead of claiming absence.
+12. When a finding concerns a table, copy the supplied table number and title from the table metadata and cite the relevant row. Never estimate a table number from its order or from the list of tables.
+13. A comment must be directly relevant to its cited passage. Reject generic advice that could be attached to any thesis.
+14. Do not issue whole-thesis instructions from one local passage. Scope the action to the cited section unless evidence from the whole thesis is supplied.
+15. Factual verification is mandatory for Light, Standard and Advanced reviews. Review depth changes the amount of feedback, never the accuracy threshold.
 """
 
 

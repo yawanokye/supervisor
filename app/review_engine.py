@@ -20,6 +20,7 @@ from .document_parser import (
     parse_document,
 )
 from .statistical_review import build_statistical_review
+from .supervisory_accuracy_guard import build_factual_index
 from .review_rules import (
     CHAPTERS,
     RULES,
@@ -957,6 +958,29 @@ def analyse(
         str(item.get("source_filename") or "Supervisor comments") for item in supervisor_comments
     ))
 
+    fact_index = build_factual_index(current_paragraphs)
+    supervisory_manifest = {
+        "chapter_paragraph_counts": {
+            str(number): count
+            for number, count in sorted(fact_index["chapter_counts"].items())
+        },
+        "exact_section_and_subsection_headings": fact_index["headings"],
+        "section_content_counts": {
+            entry["heading"]: len(entry.get("rows") or [])
+            for entry in fact_index["sections"].values()
+        },
+        "tables": [
+            {
+                "table_index": table.get("table_index"),
+                "table_number": table.get("table_number"),
+                "table_title": table.get("table_title"),
+                "section": table.get("section"),
+                "row_count": len(table.get("rows") or []),
+            }
+            for table in fact_index["tables"].values()
+        ],
+    }
+
     return {
         "review_id": review_id,
         "summary": {
@@ -1052,6 +1076,7 @@ def analyse(
             "detected_previous_chapters": detected_previous,
             "supervisor_comment_sources": comment_sources,
             "original_document_supplied": bool(original_summary),
+            "supervisory_document_manifest": supervisory_manifest,
         },
         "context_documents": prepared_context,
         "statistical_review": statistical_review,

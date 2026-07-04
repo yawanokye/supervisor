@@ -4,19 +4,19 @@ import io
 import re
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
+from docx.text.run import Run
 from docx.table import Table
 
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-REVIEW_RED = "C00000"
-COMMENT_GREEN = "008000"
+ANNOTATION_EXPORT_VERSION = "1.8.7-native-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -149,10 +149,12 @@ def _comment_body(row: Dict[str, Any]) -> str:
 
 
 def _format_comment_group(comments: Iterable[str]) -> str:
+    """Format text for the Word Review comment pane, not the document body."""
     unique = []
     seen = set()
     for value in comments:
         text = clean_text(value).strip("[] ").rstrip(" ;.")
+        text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         key = normalised(text)
         if not text or not key or key in seen:
             continue
@@ -163,19 +165,24 @@ def _format_comment_group(comments: Iterable[str]) -> str:
     if not unique:
         return ""
     if len(unique) == 1:
-        return f"[Supervisor comment: {unique[0]}]"
-    numbered = "; ".join(f"{index}. {text}" for index, text in enumerate(unique, start=1))
-    return f"[Supervisor comments: {numbered}]"
+        return unique[0]
+    return "\n".join(f"{index}. {text}" for index, text in enumerate(unique, start=1))
 
 def _replace_run_with_parts(run, before: str, marked: str, after: str):
+    """Split a plain-text run without changing its visible formatting.
+
+    Native Word comments must anchor to run boundaries. Splitting a run gives
+    the comment an exact range while preserving the original text and run
+    properties. No colour, inserted note, or tracked edit is added.
+    """
     parent = run._r.getparent()
     index = parent.index(run._r)
     created = []
-    for value, colour in ((before, None), (marked, REVIEW_RED), (after, None)):
+    for value in (before, marked, after):
         if not value:
             created.append(None)
             continue
-        element = _run_element(value, source_run=run, colour=colour)
+        element = _run_element(value, source_run=run)
         parent.insert(index, element)
         index += 1
         created.append(element)
@@ -183,13 +190,40 @@ def _replace_run_with_parts(run, before: str, marked: str, after: str):
     return created
 
 
-def _mark_span_and_insert_comment(paragraph: Paragraph, start: int, end: int, comment: str) -> bool:
+def _add_native_comment(document, runs: Sequence[Run], comment: str) -> bool:
+    usable = [run for run in runs if run is not None and clean_text(run.text)]
+    if not usable:
+        return False
+    if not hasattr(document, "add_comment"):
+        raise RuntimeError(
+            "Native Word comments require python-docx 1.2.0 or newer."
+        )
+    document.add_comment(
+        runs=usable,
+        text=clean_text(comment),
+        author="Supervisor Assistant",
+        initials="SA",
+    )
+    return True
+
+
+def _mark_span_and_insert_comment(
+    document,
+    paragraph: Paragraph,
+    start: int,
+    end: int,
+    comment: str,
+) -> bool:
+    """Anchor a native comment to an exact text range.
+
+    The paragraph text and visible formatting are preserved. The selected text
+    is not recoloured and no comment paragraph is inserted into the document.
+    """
     if start >= end:
         return False
     runs = list(paragraph.runs)
     cursor = 0
-    anchor = None
-    changed = False
+    marked_elements = []
 
     for run in runs:
         text = run.text or ""
@@ -204,21 +238,13 @@ def _mark_span_and_insert_comment(paragraph: Paragraph, start: int, end: int, co
         marked = text[local_start:local_end]
         after = text[local_end:]
         created = _replace_run_with_parts(run, before, marked, after)
-        changed = True
-        marked_element = created[1]
-        if local_end == len(text) or end <= run_end:
-            anchor = marked_element if marked_element is not None else created[0]
-        elif marked_element is not None:
-            anchor = marked_element
+        if created[1] is not None:
+            marked_elements.append(created[1])
 
-    if changed and anchor is not None:
-        parent = anchor.getparent()
-        index = parent.index(anchor) + 1
-        comment_element = _run_element(" " + comment, colour=COMMENT_GREEN, italic=True)
-        parent.insert(index, comment_element)
-        return True
-    return False
-
+    if not marked_elements:
+        return False
+    anchor_runs = [Run(element, paragraph) for element in marked_elements]
+    return _add_native_comment(document, anchor_runs, comment)
 
 def _merge_nearby_span_groups(
     span_groups: Dict[Tuple[int, int], List[str]],
@@ -344,67 +370,71 @@ def _find_heading(document, headings: Iterable[str]) -> Optional[Paragraph]:
     return None
 
 
-def _insert_green_comment_after(paragraph: Paragraph, comments: List[str]) -> Paragraph:
-    new_p = OxmlElement("w:p")
-    paragraph._p.addnext(new_p)
-    new_para = Paragraph(new_p, paragraph._parent)
+def _comment_on_paragraph(document, paragraph: Paragraph, comments: List[str]) -> bool:
     grouped = _format_comment_group(comments)
-    run = new_para.add_run(grouped)
-    run.font.color.rgb = None
-    run._r.get_or_add_rPr()
-    _set_run_colour(run._r, COMMENT_GREEN)
-    run.italic = True
-    return new_para
+    runs = [run for run in paragraph.runs if clean_text(run.text)]
+    return bool(grouped and runs and _add_native_comment(document, runs, grouped))
 
 
-def _insert_green_comment_after_table(table: Table, comments: List[str]) -> Paragraph:
-    new_p = OxmlElement("w:p")
-    table._tbl.addnext(new_p)
-    new_para = Paragraph(new_p, table._parent)
+def _comment_on_table(
+    document,
+    table: Table,
+    comments: List[str],
+    caption: Optional[Paragraph] = None,
+) -> bool:
     grouped = _format_comment_group(comments)
-    run = new_para.add_run(grouped)
-    run._r.get_or_add_rPr()
-    _set_run_colour(run._r, COMMENT_GREEN)
-    run.italic = True
-    return new_para
+    if not grouped:
+        return False
+    if caption is not None:
+        runs = [run for run in caption.runs if clean_text(run.text)]
+        if runs and _add_native_comment(document, runs, grouped):
+            return True
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                runs = [run for run in paragraph.runs if clean_text(run.text)]
+                if runs and _add_native_comment(document, runs, grouped):
+                    return True
+    return False
 
 
-def _append_review_notes(document, comments: List[str]) -> None:
-    if not comments:
-        return
-    heading = document.add_paragraph()
-    heading.style = document.styles["Heading 1"] if "Heading 1" in document.styles else heading.style
-    heading.add_run("SUPERVISOR REVIEW NOTES")
-    anchor = heading
-    unique = list(dict.fromkeys(clean_text(value) for value in comments if clean_text(value)))
-    for start in range(0, len(unique), 5):
-        anchor = _insert_green_comment_after(anchor, unique[start:start + 5])
-
-
-
-def _remove_trailing_empty_paragraphs(document, keep: int = 1) -> None:
-    trailing = []
-    for paragraph in reversed(document.paragraphs):
+def _first_native_anchor(document) -> Optional[Paragraph]:
+    """Return a stable existing paragraph for document-level comments."""
+    for paragraph in document.paragraphs:
         if clean_text(paragraph.text):
-            break
-        ppr = paragraph._p.find(qn("w:pPr"))
-        has_section_properties = ppr is not None and ppr.find(qn("w:sectPr")) is not None
-        if "w:type=\"page\"" in paragraph._p.xml or has_section_properties:
-            break
-        trailing.append(paragraph)
-    for paragraph in trailing[keep:]:
-        parent = paragraph._p.getparent()
-        if parent is not None:
-            parent.remove(paragraph._p)
+            return paragraph
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    if clean_text(paragraph.text):
+                        return paragraph
+    return None
+
+
+def _attach_document_level_comments(document, comments: List[str]) -> None:
+    """Keep unplaced findings in the Review pane without changing body text."""
+    unique = list(dict.fromkeys(clean_text(value) for value in comments if clean_text(value)))
+    if not unique:
+        return
+    anchor = _first_native_anchor(document)
+    if anchor is None:
+        raise RuntimeError(
+            "The source document has no text that can anchor native Word comments."
+        )
+    for start in range(0, len(unique), 4):
+        batch = unique[start:start + 4]
+        prefixed = [f"Document-level review note. {value}" for value in batch]
+        if not _comment_on_paragraph(document, anchor, prefixed):
+            raise RuntimeError("A native Word comment could not be anchored.")
 
 def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     document = Document(io.BytesIO(source_bytes))
     source_map, table_map = _source_locator_map(document)
 
-    # Exact quotations may be marked in red. When no exact quotation is
-    # available, the comment is placed after the correct paragraph rather than
-    # colouring an arbitrary sentence. Table findings are placed after the
-    # relevant table and explicitly identify the table number.
+    # All annotations are native Word comments. Exact quotations are used as
+    # comment anchors where available. The source text, formatting, pagination,
+    # tables, and headings remain unchanged.
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     by_table: Dict[int, List[str]] = defaultdict(list)
@@ -468,31 +498,33 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         merged_groups = _merge_nearby_span_groups(span_groups)
         for (start, end), comments in reversed(merged_groups):
             combined = _format_comment_group(comments)
-            if not _mark_span_and_insert_comment(paragraph, start, end, combined):
+            if not _mark_span_and_insert_comment(document, paragraph, start, end, combined):
                 after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
         locator = source_map.get(paragraph_number) or {}
         paragraph = locator.get("paragraph")
         if paragraph is not None:
-            _insert_green_comment_after(paragraph, list(dict.fromkeys(comments)))
+            unique = list(dict.fromkeys(comments))
+            if not _comment_on_paragraph(document, paragraph, unique):
+                fallback_comments.extend(unique)
         else:
             fallback_comments.extend(comments)
 
-    # Work in reverse document order so inserting after one table does not alter
-    # the relative position of comments for later tables.
+    # Process tables in reverse order for stable comment anchoring.
     for table_index in sorted(by_table, reverse=True):
         table_info = table_map.get(table_index) or {}
         table = table_info.get("table")
         comments = list(dict.fromkeys(by_table[table_index]))
+        caption = table_info.get("caption_paragraph")
         if table is not None:
-            _insert_green_comment_after_table(table, comments)
-        else:
-            caption = table_info.get("caption_paragraph")
-            if caption is not None:
-                _insert_green_comment_after(caption, comments)
-            else:
+            if not _comment_on_table(document, table, comments, caption=caption):
                 fallback_comments.extend(comments)
+        elif caption is not None:
+            if not _comment_on_paragraph(document, caption, comments):
+                fallback_comments.extend(comments)
+        else:
+            fallback_comments.extend(comments)
 
     # Findings about absent or underdeveloped material are placed under the
     # exact supplied section or subsection heading.
@@ -500,13 +532,15 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         unique_comments = list(dict.fromkeys(comments))
         heading = _find_heading(document, headings)
         if heading is not None:
-            _insert_green_comment_after(heading, unique_comments)
+            if not _comment_on_paragraph(document, heading, unique_comments):
+                fallback_comments.extend(unique_comments)
         else:
             fallback_comments.extend(unique_comments)
 
-    _append_review_notes(document, list(dict.fromkeys(fallback_comments)))
-    _remove_trailing_empty_paragraphs(document)
-
+    _attach_document_level_comments(
+        document,
+        list(dict.fromkeys(fallback_comments)),
+    )
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()

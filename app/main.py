@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .academic_ai_engine import enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_providers import AIProviderError
-from .annotated_exporter import build_annotated_docx
+from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx
 from .auth import (
     authenticate,
     create_bootstrap_admin,
@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.8.5",
+    version="1.8.7",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.8.5",
+        "version": "1.8.7",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1053,7 +1053,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.8.5-section-table-grounding",
+                "pipeline": "document-analysis-v1.8.6-factual-manifest",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1134,7 +1134,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.8.5-grounded-comments",
+                "pipeline": "academic-review-complete-v1.8.6-universal-factual-audit",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "model": config.deepseek_advanced_model,
@@ -1274,7 +1274,15 @@ async def _run_review_job(
         )
 
         if review["summary"].get("annotated_document_available"):
-            annotated_data = load_annotated(review["review_id"])
+            annotation_is_current = (
+                review["summary"].get("annotation_export_version")
+                == ANNOTATION_EXPORT_VERSION
+            )
+            annotated_data = (
+                load_annotated(review["review_id"])
+                if annotation_is_current
+                else None
+            )
             if annotated_data is None:
                 try:
                     annotated_data = await asyncio.to_thread(
@@ -1284,14 +1292,19 @@ async def _run_review_job(
                     )
                     ANNOTATED_CACHE[review["review_id"]] = annotated_data
                     save_annotated(review["review_id"], annotated_data)
+                    review["summary"].update({
+                        "annotation_export_version": ANNOTATION_EXPORT_VERSION,
+                        "annotation_mode": "native_word_comments",
+                    })
+                    review["summary"].pop("annotation_warning", None)
                 except Exception:
                     logger.exception("Annotated document generation failed")
                     review["summary"][
                         "annotated_document_available"
                     ] = False
                     review["summary"]["annotation_warning"] = (
-                        "The review completed, but the annotated document "
-                        "could not be generated."
+                        "The review completed, but the native-comment "
+                        "annotated document could not be generated."
                     )
             else:
                 ANNOTATED_CACHE[review["review_id"]] = annotated_data
@@ -1901,12 +1914,72 @@ async def export_annotated_document(review_id: str, request: Request, db: Sessio
         return RedirectResponse("/login", status_code=303)
     record = _authorised_review_record(db, user, review_id)
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
-    data = ANNOTATED_CACHE.get(review_id) or load_annotated(review_id)
-    if not review or data is None:
-        raise HTTPException(status_code=404, detail="Annotated DOCX is not available for this review.")
+    if not review:
+        raise HTTPException(status_code=404, detail="Review result is not available.")
+
+    summary = review.setdefault("summary", {})
+    annotation_is_current = (
+        summary.get("annotation_export_version") == ANNOTATION_EXPORT_VERSION
+    )
+    data = (
+        ANNOTATED_CACHE.get(review_id) or load_annotated(review_id)
+        if annotation_is_current
+        else None
+    )
+
+    # Completed reviews created by an earlier exporter can be upgraded at
+    # download time without rerunning the academic review, provided the saved
+    # source upload is still available on persistent storage.
+    if data is None and record.job_id and payload_available(record.job_id):
+        try:
+            payload = await asyncio.to_thread(load_job_payload, record.job_id)
+            source_data = bytes((payload or {}).get("data") or b"")
+            source_name = str((payload or {}).get("filename") or record.filename or "")
+            if not source_data or not source_name.lower().endswith(".docx"):
+                raise ValueError("The saved source is not an annotatable DOCX file.")
+            data = await asyncio.to_thread(build_annotated_docx, source_data, review)
+            ANNOTATED_CACHE[review_id] = data
+            await asyncio.to_thread(save_annotated, review_id, data)
+            summary.update({
+                "annotated_document_available": True,
+                "annotation_export_version": ANNOTATION_EXPORT_VERSION,
+                "annotation_mode": "native_word_comments",
+            })
+            summary.pop("annotation_warning", None)
+            REVIEW_CACHE[review_id] = review
+            await asyncio.to_thread(save_review_json, review_id, review)
+        except Exception as exc:
+            logger.exception("Could not regenerate native-comment annotated document")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The annotated document could not be upgraded to native Word "
+                    "comments. Submit a fresh review or confirm that the original "
+                    "DOCX remains on persistent storage."
+                ),
+            ) from exc
+
+    if data is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This review predates native Word comments and the saved source "
+                "document is unavailable. Submit a fresh review to generate a "
+                "comment-box annotated document."
+            ),
+        )
+
     ANNOTATED_CACHE[review_id] = data
     stem = os.path.splitext(os.path.basename(record.filename or "thesis.docx"))[0]
-    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{stem}-supervisor-reviewed.docx"'})
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{stem}-supervisor-reviewed.docx"'
+            )
+        },
+    )
 
 
 @app.get("/api/review/{review_id}/export.docx")
