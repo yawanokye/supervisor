@@ -1,3 +1,11 @@
+## v1.8.2
+
+- Makes evidence-validation failures recoverable when the original upload is still stored.
+- Adds a **Recover** action for existing failed jobs that still have a saved payload.
+- Allows the resume endpoint to revive pre-v1.8.2 failed jobs without a database edit.
+- Retries only the interrupted stage and preserves completed checkpoints.
+- Exposes recovery URLs in job status responses and supports automatic browser recovery.
+
 ## v1.8.1
 
 - Fixed the External Assessment foundation-stage failure caused when a model cited a valid manifest evidence token that was not included in that stage's bounded source excerpts.
