@@ -33,4 +33,5 @@ def test_advanced_engine_routes_to_deepseek():
     from pathlib import Path
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     assert "primary_model = config.deepseek_advanced_model" in source
-    assert 'purpose="advanced_compact_doctoral_audit"' in source
+    assert 'purpose=f"{depth}_compact_comment_accuracy_audit"' in source
+    assert "audit_model = (" in source

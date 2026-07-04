@@ -32,12 +32,15 @@ def stage_payload(stage: str) -> dict:
             "literature_and_theoretical_foundation": domain("Literature and theory", "P2"),
             "methodology_and_procedures": domain("Methodology", "P3"),
         }
-    if stage == "evidence":
+    if stage == "evidence_core":
         return {
             "results_or_findings": domain("Results or findings", "P4"),
             "discussion_and_interpretation": domain("Discussion", "P5"),
             "conclusions_recommendations_and_contribution": domain("Conclusions", "P6"),
             "structural_coherence_and_alignment": domain("Structural coherence", "P4"),
+        }
+    if stage == "integrity":
+        return {
             "academic_writing_and_presentation": domain("Writing", "P5"),
             "ethics_and_research_integrity": domain("Ethics", "P6"),
             "originality_and_contribution": domain("Originality", "P6"),
@@ -110,13 +113,13 @@ def realistic_runtime_paragraphs() -> list[dict]:
         {"paragraph": 6, "chapter_number": 7, "heading": "Conclusions and Recommendations", "text": "The conclusions, recommendations, contribution to knowledge, limitations, future research and ethical clearance are presented." + filler, "is_heading": False},
     ]
 
-def test_external_assessment_is_generated_in_four_stages(monkeypatch) -> None:
+def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     config = HybridAIConfig.from_env()
     calls: list[str] = []
 
     async def fake_complete(self, **kwargs):
-        stage = kwargs["purpose"].rsplit("_", 1)[-1]
+        stage = kwargs["purpose"].removeprefix("external_thesis_assessment_")
         calls.append(stage)
         return make_result(stage)
 
@@ -154,12 +157,15 @@ def test_external_assessment_is_generated_in_four_stages(monkeypatch) -> None:
         )
     )
 
-    assert calls == ["foundation", "evidence", "corrections", "decision"]
-    assert output["summary"]["external_assessment_generation_mode"] == "staged_grounded"
-    assert output["summary"]["external_assessment_stage_count"] == 4
+    assert set(calls) == {"foundation", "evidence_core", "integrity", "corrections", "decision"}
+    assert len(calls) == 5
+    assert set(calls[:3]) == {"foundation", "evidence_core", "integrity"}
+    assert set(calls[3:]) == {"corrections", "decision"}
+    assert output["summary"]["external_assessment_generation_mode"] == "parallel_grounded"
+    assert output["summary"]["external_assessment_stage_count"] == 5
     assert output["external_assessment"]["final_recommendation"] == "pass_subject_to_major_corrections"
-    assert output["external_assessment_usage"]["api_call_count"] == 4
-    assert len(output["ai_review"]["usage"]) == 4
+    assert output["external_assessment_usage"]["api_call_count"] == 5
+    assert len(output["ai_review"]["usage"]) == 5
 
 
 def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:
@@ -168,7 +174,7 @@ def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:
     attempts = {"foundation": 0}
 
     async def fake_complete(self, **kwargs):
-        stage = kwargs["purpose"].rsplit("_", 1)[-1]
+        stage = kwargs["purpose"].removeprefix("external_thesis_assessment_")
         if stage == "foundation":
             attempts["foundation"] += 1
             if attempts["foundation"] == 1:
