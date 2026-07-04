@@ -1,3 +1,28 @@
+## v1.8.7
+
+- Makes native Microsoft Word comments the only annotation output mode.
+- Removes all inline green comment paragraphs, appended supervisor-note sections and red text recolouring from annotated documents.
+- Preserves the document body, visible formatting, headings, tables and pagination while anchoring comments to exact quotations, paragraphs, headings or table captions.
+- Places otherwise unanchored findings in document-level native comments attached to existing text rather than inserting new content.
+- Regenerates older annotated outputs at download time from the saved source DOCX when persistent job payloads are available.
+- Blocks delivery of legacy inline-comment files when the original source is unavailable, with a clear instruction to submit a fresh review.
+- Records `annotation_mode=native_word_comments` and a versioned annotation exporter so cached legacy files are not reused.
+- Passed 137 automated tests, including OOXML package checks for `word/comments.xml`, comment ranges and unchanged visible document content.
+
+## v1.8.6
+
+- Applies the same factual-verification and expert-review threshold to Light, Standard and Advanced supervisory reviews.
+- Builds a whole-document factual manifest of exact headings, substantive section content, chapters, tables, captions and evidence locations before review.
+- Rejects false missing-chapter, missing-methodology, missing-results and missing-conclusion claims when the content exists elsewhere in the document.
+- Reanchors synthetic audit findings to the actual source section and prevents audit labels from becoming annotation locations.
+- Runs an independent evidence-complete accuracy audit over every proposed comment at every selected depth.
+- Adds a deterministic final accuracy gate that removes unsupported, misplaced, overly broad and contradictory findings.
+- Parses embedded table captions, preserves the actual table number and title, corrects conflicting model references and rejects table claims without table evidence.
+- Adds cross-chapter expert checks for causal language in cross-sectional designs, sampling-formula incompatibility, simultaneous-regression promises versus separate models, `p = .000` reporting and declaration grammar.
+- Exports native Microsoft Word comments anchored to exact text, headings, captions or relevant paragraphs, avoiding pagination changes caused by inline green comment paragraphs.
+- Versions document-analysis, primary-review, audit and completed-review checkpoints so v1.8.5 annotations are not restored.
+- Passed 135 automated tests and structural/visual DOCX validation.
+
 ## v1.8.5
 
 - Grounds every supervisory finding in evidence from the section or subsection being reviewed.

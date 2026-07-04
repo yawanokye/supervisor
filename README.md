@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant 1.8.2
+# ProjectReady AI Supervisor Assistant 1.8.7
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
@@ -22,31 +22,16 @@ The review covers, where relevant:
 - academic writing, terminology, grammar and presentation
 - supervisor-comment compliance for revised chapters
 
-## Review levels
+## Academic level and review depth
 
-### Light Review
+Academic level and review depth are separate controls.
 
-- Reviews every section and subsection.
-- Applies the standard expected of a Bachelor’s dissertation or non-research Master’s project.
-- Focuses on correct structure, basic coherence, clear concepts, credible evidence, alignment, essential methodology, defensible interpretation, common research flaws, source-verification concerns and scholarly presentation.
-- Uses DeepSeek V4 Pro in thinking mode.
-- Provides practical, topic-aware guidance and short examples where these will help the student.
+- **Academic level** sets the standard expected of Bachelor’s, Non-Research Master’s, Research Master’s or MPhil, Professional Doctorate, or PhD work.
+- **Review depth** controls the breadth, detail and prioritisation of feedback.
+- Light, Standard and Advanced reviews all apply the same factual-verification threshold.
+- A Light doctoral review remains doctoral in academic standard. An Advanced Bachelor’s review does not impose a doctoral originality requirement.
 
-### Standard Review
-
-- Reviews every section and subsection.
-- Applies the standard expected of a Research Master’s or MPhil dissertation.
-- Requires stronger critical synthesis, defensible theoretical grounding, explicit methodological justification, objective-method-result alignment and a clear research contribution.
-- Uses DeepSeek V4 Pro in thinking mode with a Research Master’s/MPhil review prompt.
-
-### Advanced Review
-
-- Reviews every section and subsection.
-- Applies the standard expected of a Professional Doctorate or PhD thesis.
-- Examines originality, theoretical and methodological contribution, assumptions, robustness, alternative explanations, scholarly positioning and contribution to knowledge.
-- Uses DeepSeek V4 Pro with maximum reasoning and an independent DeepSeek second-pass audit.
-
-Python extracts the document, validates paragraph evidence, checks review coverage, scores the review and produces the annotated Word file.
+Every selected depth receives complete section coverage, source-grounded findings, an independent accuracy audit, deterministic factual checks and cross-chapter consistency checks. Python extracts the document, validates evidence, builds a factual document manifest, checks review coverage and generates the report and annotated Word file.
 
 ## Coverage safeguard
 
@@ -54,11 +39,11 @@ The app requires one substantive assessment for every detected section and subse
 
 ## Annotated Word output
 
-- Existing text requiring revision is coloured red.
-- A specific supervisor comment is inserted immediately afterwards in green square brackets.
-- Related successive comments are consolidated as one numbered note.
-- Missing content receives a green bracketed instruction beneath the relevant heading.
-- Internal checklist codes are never displayed.
+- Feedback is created as native Microsoft Word comments, anchored to the exact quotation, section heading, table caption or relevant paragraph.
+- The source text and visible formatting remain unchanged. Word shows the comment anchor using its normal review highlighting.
+- Table comments identify the actual table number and title extracted from the document.
+- Comments exist only in the Microsoft Word Review pane or margin. They do not become body paragraphs, alter pagination or split tables.
+- Internal checklist codes and evidence identifiers are never displayed to the student.
 
 ## Human-supervisor report
 
@@ -77,9 +62,9 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 ## Model routing
 
-- Light Review: DeepSeek V4 Pro with high reasoning, calibrated to Bachelor’s and non-research Master’s work.
-- Standard Review: DeepSeek V4 Pro with high reasoning, calibrated to Research Master’s and MPhil work.
-- Advanced Review: DeepSeek V4 Pro with maximum reasoning and an independent second-pass audit, calibrated to Professional Doctorate and PhD work.
+- Light, Standard and Advanced Review use the selected academic-level benchmark.
+- Every depth receives an independent evidence-grounded accuracy audit using the strongest configured review model and maximum reasoning.
+- Advanced depth may provide more extensive feedback, but it does not receive a lower or higher factual-accuracy threshold than the other depths.
 - OpenAI is not required for active review routing.
 - Review requests run as background jobs and the browser polls for progress.
 
@@ -185,22 +170,26 @@ falls back safely to `/tmp/projectready-supervisor/reviews`.
 
 Provider names remain hidden from supervisors and students.
 
-- **Light Review:** DeepSeek V4 Pro in thinking mode, calibrated to Bachelor’s and non-research Master’s work.
-- **Standard Review:** DeepSeek V4 Pro in thinking mode, calibrated to Research Master’s and MPhil work.
-- **Advanced Review:** DeepSeek V4 Pro with maximum reasoning and an independent DeepSeek second-pass audit, calibrated to Professional Doctorate and PhD work.
+- The selected academic level determines the scholarly benchmark.
+- The selected review depth determines breadth and detail.
+- Every depth receives a universal accuracy audit, exact evidence validation and deterministic expert checks before export.
 
-Every level reviews every detected section and subsection. The difference is the academic benchmark, depth of scrutiny, reasoning effort and level of guidance.
+Every review covers every detected section and subsection. No selected depth is permitted to bypass factual validation.
 
 The internal academic guide is adapted from the supplied thesis self-evaluation framework. It is used only to support coverage and is never shown as checklist codes in the report.
 
 ### Accuracy safeguards
 
-- A study-context lock is built from the uploaded document before review.
+- A factual manifest is built from the whole document before review, including exact headings, chapter content, tables, captions and source locations.
+- A section or chapter cannot be called missing when the manifest shows substantive content elsewhere in the document.
+- Synthetic labels such as “whole-chapter audit” are never treated as document locations.
+- Every finding is rechecked against its cited section, subsection or table evidence.
+- Table numbers and titles are copied from parsed captions, not guessed by the model.
+- Cross-chapter checks compare the method promised with the analysis actually reported, including sampling and regression consistency.
 - Examples cannot introduce a country, region, organisation, population or sector absent from the source.
-- Unknown contextual details use neutral placeholders.
 - New author-year citations, statistics and percentages are rejected unless they appear in the uploaded source.
-- Repetitive language and citation comments are consolidated.
-- Missing content is distinguished from weakly developed content.
+- Unsupported, misplaced, overly broad and repetitive comments are removed before export.
+- Missing content is distinguished from weakly developed content and extraction uncertainty.
 
 ## Institutional access interface
 

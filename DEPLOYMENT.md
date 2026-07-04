@@ -2,7 +2,7 @@
 
 ## Environment variables
 
-Set `DEEPSEEK_API_KEY`. Light, Standard and Advanced Review use DeepSeek, with maximum reasoning and an independent second pass for Advanced Review.
+Set `DEEPSEEK_API_KEY`. Light, Standard and Advanced Review use DeepSeek. Every review depth receives an independent factual-accuracy audit with the strongest configured model and maximum reasoning. Review depth changes breadth, not the accuracy threshold.
 
 ## Commands
 
@@ -27,7 +27,7 @@ AI_ADVANCED_MAX_OUTPUT_TOKENS=10000
 AI_ADVANCED_SECOND_PASS=true
 ```
 
-All three review levels use DeepSeek. Light and Standard Review use one primary pass at their respective academic benchmarks. Advanced Review uses maximum reasoning and an independent second-pass audit.
+All three review depths use DeepSeek and the selected academic-level benchmark. Light, Standard and Advanced Review all receive a separate evidence-grounded accuracy audit. Advanced depth may be broader, but no depth bypasses factual validation.
 
 ## Institutional portal deployment
 
@@ -93,7 +93,7 @@ AI_ADVANCED_SECTION_BATCH_SIZE=2
 AI_VERIFICATION_BATCH_SIZE=2
 ```
 
-Advanced Review performs a separate DeepSeek quality-control pass. OpenAI is no longer required for active review routing. Provider names are not displayed in the supervisor or student interface.
+Every review depth performs a separate DeepSeek factual quality-control pass using the strongest configured review model. OpenAI is no longer required for active review routing. Provider names are not displayed in the supervisor or student interface.
 
 ## Long-running review jobs
 
@@ -137,7 +137,7 @@ For a typical Chapter One with about 15 detected review units, Advanced Review s
 
 ## Checkpoint and resume deployment requirements
 
-The v1.8.2 pipeline persists original uploads, extracted thesis maps, completed AI section groups and final-stage data. For the checkpoints to survive a Render restart or redeploy:
+The v1.8.6 pipeline persists original uploads, factual document manifests, completed AI section groups, universal accuracy-audit results and final-stage data. For the checkpoints to survive a Render restart or redeploy:
 
 1. Use Render PostgreSQL through `DATABASE_URL`.
 2. Mount persistent storage at `/var/data` and set `REVIEW_STORAGE_DIR=/var/data/reviews`.
@@ -160,3 +160,17 @@ REVIEW_STORAGE_FALLBACK_DIR=/tmp/projectready-supervisor/reviews
 ```
 
 On startup, queued, paused and interrupted processing jobs with saved payloads are reclaimed. Completed document-analysis, section-review and External Assessment checkpoints are skipped. Only the unfinished unit is repeated.
+
+## v1.8.6 supervisory accuracy deployment
+
+Version 1.8.6 requires `python-docx==1.2.0` so the annotated document can use native Microsoft Word comments. Use **Clear build cache & deploy** when upgrading from v1.8.5 or earlier.
+
+The checkpoint keys changed for document analysis, supervisory review and the universal accuracy audit. Existing completed external-assessment checkpoints remain compatible, but a previously inaccurate supervisory review should be submitted as a fresh review so it is regenerated under the v1.8.6 factual manifest and annotation controls.
+
+No new environment variable is required. Keep the existing persistent database and review storage.
+
+## v1.8.7 native Word comment deployment
+
+Version 1.8.7 makes native Microsoft Word comments the only annotated-document output. Use **Clear build cache & deploy** and confirm `python-docx==1.2.0` is installed.
+
+Keep the existing persistent review storage mounted. When a user downloads an annotated document created by an older exporter, the app regenerates it from the saved source DOCX and current review findings. If that source payload is no longer available, the app asks for a fresh review rather than serving a legacy file with comments inserted into the text.
