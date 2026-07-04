@@ -372,3 +372,54 @@ def test_docx_parser_and_manifest_retain_a_seven_chapter_architecture() -> None:
     assert manifest["toc_reconciliation"]["toc_only_chapters"] == [8]
     assert manifest["presence_signals"]["measurement_model"]["status"] == "present"
     assert manifest["presence_signals"]["ethics"]["status"] == "present"
+
+
+def test_prompt_manifest_does_not_expose_off_stage_evidence_ids() -> None:
+    from app.external_assessment import _stage_prompt
+
+    rows = seven_chapter_rows()
+    manifest = build_document_manifest(rows, summary={"academic_level": "PhD"})
+    # Simulate a manifest-only identifier that is not among the stage excerpts.
+    manifest["role_presence"]["foundation"]["evidence_ids"].append("P91")
+    manifest["presence_signals"]["chapter_1"]["evidence_ids"].append("P91")
+    manifest["toc_reconciliation"]["toc_evidence_ids"].append("P91")
+    manifest["inferred_metadata"]["evidence"]["candidate_name"] = "P91"
+    prompt = _stage_prompt(
+        "foundation",
+        {"summary": {"academic_level": "PhD"}},
+        {"current_paragraphs": rows},
+        {},
+        manifest,
+    )
+
+    # P91 exists only in manifest bookkeeping and has no supplied source excerpt.
+    assert '"P91"' not in prompt
+    assert '"toc_evidence_ids"' not in prompt
+    assert '"evidence_available"' in prompt
+
+
+def test_grounding_retry_redacts_bad_token_and_adds_valid_source_excerpt() -> None:
+    from app.external_assessment import (
+        _feedback_for_prompt,
+        _selected_evidence_for_stage,
+    )
+
+    rows = seven_chapter_rows()
+    manifest = build_document_manifest(rows, summary={"academic_level": "PhD"})
+
+    safe_feedback = _feedback_for_prompt(
+        ["Unsupported evidence IDs were used: P31"]
+    )
+    assert "P31" not in " ".join(safe_feedback)
+    assert "allowed_evidence_ids" in safe_feedback[0]
+
+    selected = _selected_evidence_for_stage(
+        "foundation",
+        {"current_paragraphs": rows},
+        manifest,
+        concise_retry=False,
+        additional_evidence_ids=("P31",),
+    )
+    by_id = {item["id"]: item for item in selected}
+    assert "P31" in by_id
+    assert "ethical clearance" in by_id["P31"]["text"].lower()
