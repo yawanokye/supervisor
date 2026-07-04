@@ -1,4 +1,4 @@
-# ProjectReady AI Supervisor Assistant 1.8.0
+# ProjectReady AI Supervisor Assistant 1.8.1
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 

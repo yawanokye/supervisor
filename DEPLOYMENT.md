@@ -137,7 +137,7 @@ For a typical Chapter One with about 15 detected review units, Advanced Review s
 
 ## Checkpoint and resume deployment requirements
 
-The v1.8.0 pipeline persists original uploads, extracted thesis maps, completed AI section groups and final-stage data. For the checkpoints to survive a Render restart or redeploy:
+The v1.8.1 pipeline persists original uploads, extracted thesis maps, completed AI section groups and final-stage data. For the checkpoints to survive a Render restart or redeploy:
 
 1. Use Render PostgreSQL through `DATABASE_URL`.
 2. Mount persistent storage at `/var/data` and set `REVIEW_STORAGE_DIR=/var/data/reviews`.

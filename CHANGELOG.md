@@ -1,3 +1,13 @@
+## v1.8.1
+
+- Fixed the External Assessment foundation-stage failure caused when a model cited a valid manifest evidence token that was not included in that stage's bounded source excerpts.
+- Removed raw evidence IDs from the compact manifest supplied to generation prompts, while retaining presence status and evidence counts. This prevents manifest-only IDs from being mistaken for citable source evidence.
+- Added a grounded retry mechanism. When a failed attempt cites an otherwise valid thesis evidence ID, the next attempt receives both that ID and its full source excerpt.
+- Redacted unsupported evidence tokens from retry feedback so the model is not prompted to repeat the rejected token.
+- Clarified that evidence IDs are opaque tokens and must be copied exactly from `allowed_evidence_ids`, not constructed from page or paragraph numbers.
+- Versioned External Assessment stage and completion checkpoints so failed v1.8.0 outputs are not restored after deployment.
+- Added regression tests for manifest-ID leakage, retry-token redaction and recovery of valid out-of-selection evidence.
+
 ## v1.8.0
 
 - Rebuilt External Assessment around a source manifest that records extracted words, chapters, research functions, tables, appendices, metadata, coverage warnings and stable evidence identifiers.
