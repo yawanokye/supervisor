@@ -52,6 +52,12 @@
                   <a href="/api/review/{{ item.review_id }}/export.docx">Report</a>
                   {% if item.annotated_available %}<a href="/api/review/{{ item.review_id }}/annotated.docx">Annotated</a>{% endif %}
                 {% endif %}
+              {% elif item.status == 'processing' and item.is_stalled %}
+                <form method="post" action="/api/review/jobs/{{ item.job_id }}/recover-stalled" class="inline-action-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="table-action-button">Recover stalled stage</button>
+                </form>
+                <small class="muted-text">No stage progress for about {{ item.stage_age_minutes }} minutes. Recovery keeps completed checkpoints.</small>
               {% elif item.status in ['paused', 'failed'] and (item.recoverable or item.payload_available) %}
                 <form method="post" action="/api/review/jobs/{{ item.job_id }}/resume" class="inline-action-form">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
