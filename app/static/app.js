@@ -103,13 +103,14 @@ function updateDepthGuidance() {
     return;
   }
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
+  const levelLabel = academicLevelSelect.options[academicLevelSelect.selectedIndex]?.text || "the selected academic level";
   lightReviewNote.classList.toggle("hidden", depth !== "light");
   if (depth === "light") {
-    reviewDepthHelp.textContent = "Light Review examines every section and subsection at Bachelor’s or non-research Master’s level, with practical guidance and examples where needed.";
+    reviewDepthHelp.textContent = `Light Review gives a concise review of every section and subsection at the ${levelLabel} standard. It reports only the most material issues.`;
   } else if (depth === "advanced") {
-    reviewDepthHelp.textContent = "Advanced Review examines every section and subsection at Professional Doctorate or PhD level, with rigorous scrutiny of originality, theory, methodology and contribution to knowledge.";
+    reviewDepthHelp.textContent = `Advanced Review applies an intensive review and independent accuracy audit at the ${levelLabel} standard. It does not impose a higher degree standard.`;
   } else {
-    reviewDepthHelp.textContent = "Standard Review examines every section and subsection at Research Master’s or MPhil level, with stronger critical synthesis and methodological scrutiny.";
+    reviewDepthHelp.textContent = `Standard Review gives a full section-by-section review at the ${levelLabel} standard, with an independent comment-accuracy check.`;
   }
 }
 academicLevelSelect.addEventListener("change", () => {
