@@ -8,10 +8,12 @@ from app.ai_schemas import AIUsageRecord
 from app.external_assessment import enrich_with_external_assessment
 
 
-def domain(name: str) -> dict:
+def domain(name: str, evidence_id: str) -> dict:
     return {
         "domain": name,
         "judgement": "appropriate_with_minor_refinement",
+        "coverage_status": "fully_assessed",
+        "evidence_ids": [evidence_id],
         "assessment": f"Assessment of {name}.",
         "strengths": ["A relevant strength."],
         "concerns": ["A material concern."],
@@ -25,20 +27,20 @@ def stage_payload(stage: str) -> dict:
             "study_summary": "The study examines a defined research problem.",
             "degree_standard_judgement": "The work broadly meets the degree standard.",
             "chapter_one_gate_status": "major_concern",
-            "chapter_one_assessment": domain("Chapter One"),
-            "research_problem_and_purpose": domain("Research problem and purpose"),
-            "literature_and_theoretical_foundation": domain("Literature and theory"),
-            "methodology_and_procedures": domain("Methodology"),
+            "chapter_one_assessment": domain("Chapter One", "P1"),
+            "research_problem_and_purpose": domain("Research problem and purpose", "P1"),
+            "literature_and_theoretical_foundation": domain("Literature and theory", "P2"),
+            "methodology_and_procedures": domain("Methodology", "P3"),
         }
     if stage == "evidence":
         return {
-            "results_or_findings": domain("Results or findings"),
-            "discussion_and_interpretation": domain("Discussion"),
-            "conclusions_recommendations_and_contribution": domain("Conclusions"),
-            "structural_coherence_and_alignment": domain("Structural coherence"),
-            "academic_writing_and_presentation": domain("Writing"),
-            "ethics_and_research_integrity": domain("Ethics"),
-            "originality_and_contribution": domain("Originality"),
+            "results_or_findings": domain("Results or findings", "P4"),
+            "discussion_and_interpretation": domain("Discussion", "P5"),
+            "conclusions_recommendations_and_contribution": domain("Conclusions", "P6"),
+            "structural_coherence_and_alignment": domain("Structural coherence", "P4"),
+            "academic_writing_and_presentation": domain("Writing", "P5"),
+            "ethics_and_research_integrity": domain("Ethics", "P6"),
+            "originality_and_contribution": domain("Originality", "P6"),
             "major_strengths": ["The topic is significant."],
             "publication_potential": "The work has publication potential after revision.",
         }
@@ -50,6 +52,7 @@ def stage_payload(stage: str) -> dict:
                     "classification": "major",
                     "chapter_or_section": "Chapter One",
                     "location": "Statement of the Problem",
+                    "evidence_ids": ["P1"],
                     "issue": "The gap requires clarification.",
                     "required_correction": "Clarify the gap with evidence.",
                     "rationale": "The thesis requires a defensible foundation.",
@@ -72,7 +75,7 @@ def stage_payload(stage: str) -> dict:
             "final_recommendation": "pass_subject_to_major_corrections",
             "recommendation_rationale": "The identified deficiencies are remediable.",
             "confidential_comments_to_university": "The corrections should be examiner-verified.",
-            "recommendation_confidence": "high",
+            "recommendation_confidence": "moderate",
             "corrections_verification_by": "External examiner",
             "viva_recommendation": "required",
             "examiner_declaration": "I examined the thesis independently.",
@@ -94,6 +97,18 @@ def make_result(stage: str) -> ProviderResult:
         ),
     )
 
+
+
+def realistic_runtime_paragraphs() -> list[dict]:
+    filler = " This paragraph provides detailed scholarly explanation, evidence and interpretation for the examination record." * 220
+    return [
+        {"paragraph": 1, "chapter_number": 1, "heading": "Statement of the Problem", "text": "The statement of the problem, research objectives and research questions are presented." + filler, "is_heading": False},
+        {"paragraph": 2, "chapter_number": 3, "heading": "Literature Review", "text": "The literature review, theoretical framework, conceptual model and hypotheses are developed." + filler, "is_heading": False},
+        {"paragraph": 3, "chapter_number": 4, "heading": "Research Methodology", "text": "The research philosophy, research design, sampling procedure, sample size and data collection procedures are explained." + filler, "is_heading": False},
+        {"paragraph": 4, "chapter_number": 5, "heading": "Results", "text": "The results include measurement model, structural model, bootstrapping, path coefficients and hypothesis testing." + filler, "is_heading": False},
+        {"paragraph": 5, "chapter_number": 6, "heading": "Discussion", "text": "The discussion of findings interprets the results against theory and prior research." + filler, "is_heading": False},
+        {"paragraph": 6, "chapter_number": 7, "heading": "Conclusions and Recommendations", "text": "The conclusions, recommendations, contribution to knowledge, limitations, future research and ethical clearance are presented." + filler, "is_heading": False},
+    ]
 
 def test_external_assessment_is_generated_in_four_stages(monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -123,24 +138,7 @@ def test_external_assessment_is_generated_in_four_stages(monkeypatch) -> None:
             "api_call_count": 0,
         },
     }
-    runtime_context = {
-        "current_paragraphs": [
-            {
-                "paragraph": 1,
-                "chapter_number": 1,
-                "heading": "Introduction",
-                "text": "The statement of the problem and research objectives are presented.",
-                "is_heading": False,
-            },
-            {
-                "paragraph": 2,
-                "chapter_number": 4,
-                "heading": "Results",
-                "text": "The results and discussion are presented.",
-                "is_heading": False,
-            },
-        ]
-    }
+    runtime_context = {"current_paragraphs": realistic_runtime_paragraphs()}
     metadata = {
         "candidate_name": "Candidate",
         "degree_programme": "PhD",
@@ -157,14 +155,14 @@ def test_external_assessment_is_generated_in_four_stages(monkeypatch) -> None:
     )
 
     assert calls == ["foundation", "evidence", "corrections", "decision"]
-    assert output["summary"]["external_assessment_generation_mode"] == "staged"
+    assert output["summary"]["external_assessment_generation_mode"] == "staged_grounded"
     assert output["summary"]["external_assessment_stage_count"] == 4
     assert output["external_assessment"]["final_recommendation"] == "pass_subject_to_major_corrections"
     assert output["external_assessment_usage"]["api_call_count"] == 4
     assert len(output["ai_review"]["usage"]) == 4
 
 
-def test_truncated_stage_gets_one_concise_recovery_attempt(monkeypatch) -> None:
+def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     config = HybridAIConfig.from_env()
     attempts = {"foundation": 0}
@@ -195,7 +193,7 @@ def test_truncated_stage_gets_one_concise_recovery_attempt(monkeypatch) -> None:
     output = asyncio.run(
         enrich_with_external_assessment(
             review,
-            {"current_paragraphs": []},
+            {"current_paragraphs": realistic_runtime_paragraphs()},
             metadata={"assessment_stage": "initial_examination"},
             config=config,
         )

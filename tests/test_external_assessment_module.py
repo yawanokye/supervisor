@@ -7,6 +7,7 @@ from zipfile import ZipFile
 import app.main as main_module
 from app.assessment_schemas import ExternalAssessmentReport
 from app.external_assessment import prepare_external_assessment
+from app.external_assessment_guard import build_document_manifest
 from app.external_assessment_exporter import (
     build_confidential_recommendation,
     build_corrections_schedule,
@@ -19,6 +20,8 @@ def domain(name: str, judgement: str = "appropriate_with_minor_refinement") -> d
     return {
         "domain": name,
         "judgement": judgement,
+        "coverage_status": "fully_assessed",
+        "evidence_ids": ["P1"],
         "assessment": f"Assessment of {name}.",
         "strengths": ["A defensible strength."],
         "concerns": ["A material concern."],
@@ -40,6 +43,7 @@ def raw_report() -> dict:
                 "classification": "major",
                 "chapter_or_section": "Statement of the Problem",
                 "location": "Chapter One",
+                "evidence_ids": ["P1"],
                 "issue": "The research gap is not established.",
                 "required_correction": "Reconstruct the problem statement using evidence.",
                 "rationale": "The thesis requires a defensible foundation.",
@@ -140,6 +144,7 @@ def test_all_four_external_examination_outputs_are_valid_docx() -> None:
         assert output.startswith(b"PK")
         assert "Candidate" in docx_text(output)
     assert "EXTERNAL EXAMINATION REPORT" in docx_text(outputs[0])
+    assert "Evidence references" in docx_text(outputs[0])
     assert "CONFIDENTIAL RECOMMENDATION" in docx_text(outputs[2])
 
 
@@ -167,3 +172,40 @@ def test_external_assessment_routes_are_registered() -> None:
     assert "/api/review/{review_id}/corrections-schedule.docx" in paths
     assert "/api/review/{review_id}/confidential-recommendation.docx" in paths
     assert "/api/review/{review_id}/oral-questions.docx" in paths
+
+
+def test_limited_source_coverage_withholds_academic_recommendation() -> None:
+    report = raw_report()
+    manifest = build_document_manifest(
+        [
+            {
+                "paragraph": 1,
+                "chapter_number": 1,
+                "heading": "Introduction",
+                "text": "A short introduction and statement of the problem.",
+                "is_heading": False,
+            }
+        ],
+        summary={"academic_level": "PhD"},
+    )
+    review = {
+        "summary": {
+            "filename": "incomplete.docx",
+            "academic_level": "PhD",
+            "research_approach": "quantitative",
+        }
+    }
+    prepared = prepare_external_assessment(
+        report,
+        {"assessment_stage": "initial_examination"},
+        review,
+        manifest,
+    )
+    assert prepared["final_recommendation"] == "assessment_withheld_incomplete_extraction"
+    assert prepared["recommendation_confidence"] == "low"
+    assert prepared["report_status"] == "Assessment withheld pending source verification"
+    assert prepared["source_evidence_register"]
+    review["external_assessment"] = prepared
+    report_xml = docx_text(build_external_examination_report(review))
+    assert "Source Evidence Register" in report_xml
+    assert "P1" in report_xml
