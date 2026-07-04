@@ -27,6 +27,12 @@ services:
         value: 240
       - key: AI_MAX_PARALLEL_CALLS
         value: 4
+      - key: AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS
+        value: 600
+      - key: AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS
+        value: 240
+      - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
+        value: 0
     disk:
       name: supervisor-review-checkpoints
       mountPath: /var/data

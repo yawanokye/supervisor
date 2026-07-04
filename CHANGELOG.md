@@ -1,3 +1,41 @@
+## v1.8.5
+
+- Grounds every supervisory finding in evidence from the section or subsection being reviewed.
+- Rejects findings without valid evidence and prevents evidence from one section being used to criticise another.
+- Runs an independent compact comment-accuracy audit for Light, Standard and Advanced reviews.
+- Removes unsupported, generic, misplaced and repetitive comments before the final report and annotation are produced.
+- Carries exact section paths, section headings, table numbers, table titles and table rows through extraction, review, reporting and annotation.
+- Requires table-related comments to identify the relevant table number and title.
+- Links table-caption evidence to the physical table and places annotations after the correct table.
+- Colours text red only when the quoted source text is an exact match. Otherwise, the comment is placed after the correct paragraph without arbitrary red highlighting.
+- Separates academic level from review depth. Bachelor’s, Non-Research Master’s, Research Master’s or MPhil, Professional Doctorate and PhD work now receive distinct benchmarks at every review depth.
+- Versions document extraction, section review, completed supervisory review and comment-audit checkpoints so previous annotations are not restored.
+- Passed 129 automated tests, including every academic level at Light, Standard and Advanced depth.
+
+## v1.8.4
+
+- Replaces the long 87% external-assessment bottleneck with a five-stage fast grounded workflow.
+- Runs foundation, results/interpretation, and integrity/contribution assessments concurrently.
+- Runs the corrections schedule and final examiner decision concurrently after the domain assessments complete.
+- Splits the former large evidence request into smaller, method-focused requests to reduce provider latency and schema failures.
+- Reports progress as each independent stage finishes instead of remaining at 87% until every assessment request completes.
+- Reduces redundant prompt material while preserving the source manifest, evidence IDs, contradiction checks, numerical verification, reference-risk safeguards, and recommendation consistency rules.
+- Limits each external-assessment request to four minutes and each stage to ten minutes, then pauses safely for recovery rather than appearing to process indefinitely.
+- Uses one concise evidence-grounded retry instead of three potentially long attempts.
+- Invalidates the old stalled external-assessment completion checkpoint while retaining the completed document extraction and academic review checkpoints.
+- Adds configurable external-assessment request timeouts, retry limits, and stage-specific output budgets.
+- Passed 109 automated tests.
+
+## v1.8.3
+
+- Detects a processing stage that has made no checkpoint progress for 30 minutes.
+- Shows **Recover stalled stage** in Review History.
+- Cancels the local stuck task, releases the lease, and restarts only the interrupted stage.
+- Preserves all completed checkpoints.
+- Adds a 20-minute hard timeout to each external-assessment model stage.
+- Stops automatic retry loops for external-assessment timeouts and provider failures.
+- Prevents an old worker from completing a job after its lease has been replaced.
+
 ## v1.8.2
 
 - Makes evidence-validation failures recoverable when the original upload is still stored.
