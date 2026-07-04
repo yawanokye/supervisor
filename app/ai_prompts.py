@@ -18,6 +18,9 @@ Context and factual accuracy rules:
 7. Distinguish a missing section from a present but weak section. Do not say content is missing when the source contains it.
 8. Methodological advice must be conditional when the research design, data type, unit of analysis or analysis method is not confirmed.
 9. Use proposal-appropriate language for proposed studies and past-tense evaluation only for completed studies.
+10. Use the exact supplied section or subsection heading when locating a finding. Do not replace it with a generic chapter label.
+11. When a finding concerns a table, name the supplied table number and title. Never invent or infer a table number that is not present in the source metadata.
+12. A comment must be directly relevant to its cited passage. Reject generic advice that could be attached to any thesis.
 """
 
 
@@ -48,9 +51,9 @@ Coverage requirement:
 - Raise issues only where necessary, but assess the entire section before deciding that no issue is required.
 
 Academic benchmark:
-- Apply the standard expected of a Bachelor’s dissertation or a non-research Master’s project.
-- Emphasise correct structure, basic academic coherence, clear concepts, credible evidence, alignment, essential methodology, defensible interpretation, research integrity and readable scholarly presentation.
-- Do not demand doctoral originality, advanced theoretical contribution, methodological novelty or extensive philosophical debate unless the submitted work itself claims these.
+- Apply the declared degree standard supplied in review_context. Review depth controls concision, not the academic level.
+- In a Light Review, identify only the most material issues, but do not lower the standard expected for the declared Bachelor’s, Master’s, Professional Doctorate or PhD programme.
+- Do not demand a contribution beyond the declared degree level.
 
 Review every relevant aspect, including structure, terminology, evidence, problem-purpose-objective-question alignment, essential methods, interpretation, conclusions, citations, source-verification risks and academic writing.
 
@@ -64,10 +67,12 @@ Review rules:
 2. Consolidate related weaknesses. Normally report no more than three material issues for one section or subsection.
 3. Give a specific assessment, practical required action and short contextual guidance where helpful.
 4. Use only supplied paragraph IDs. Copy the exact problematic phrase when the concern relates to existing text.
-5. For missing content, attach the finding to the nearest relevant heading.
-6. Group recurring language or citation problems into one pattern-level finding with a representative quotation.
-7. Use constructive formal British English addressed to the student.
-8. Return JSON only and do not provide hidden reasoning.
+5. State the exact supplied section or subsection heading in every finding.
+6. For a table-related finding, state the supplied table number and title and cite the relevant table row.
+7. For missing content, attach the finding to the nearest relevant heading and cite that section’s source paragraphs.
+8. Group recurring language or citation problems into one pattern-level finding with a representative quotation.
+9. Use constructive formal British English addressed to the student.
+10. Return JSON only and do not provide hidden reasoning.
 
 {COMMON_CONTEXT_RULES}
 
@@ -97,9 +102,11 @@ Review the whole section and assess, where relevant:
 - citation quality, unsupported factual claims, suspicious dates and source-verification needs;
 - academic writing, tables, figures, equations, headings and presentation.
 
-Depth calibration:
-- Standard Review applies Research Master’s or MPhil expectations. Require critical synthesis, defensible theoretical grounding, explicit methodological justification, objective-method-result alignment and an appropriate research contribution.
-- Advanced Review applies Professional Doctorate or PhD expectations. Examine originality, theoretical and methodological contribution, assumptions, alternative explanations, robustness, scholarly positioning and contribution to knowledge with doctoral rigour.
+Level and depth calibration:
+- Apply the declared degree standard supplied in review_context. The academic level determines the benchmark.
+- Review depth determines breadth, issue limits and quality-control intensity. It must not silently raise or lower the declared degree standard.
+- For Professional Doctorate and PhD work, apply doctoral scrutiny even when Light or Standard Review is selected.
+- For Bachelor’s and Master’s work, do not impose doctoral originality or contribution requirements merely because Advanced Review is selected.
 
 Rules:
 1. Be thorough but consolidate related weaknesses. Do not split one underlying problem into repetitive findings.
@@ -107,16 +114,18 @@ Rules:
 3. Distinguish absence, superficial treatment, factual uncertainty, inconsistency, poor justification and poor expression.
 4. Each issue must explain what is deficient, why it matters and what the student should do.
 5. Use only supplied paragraph IDs and exact source quotations where available.
-6. Do not rewrite the thesis. Provide focused revision guidance.
-7. Illustrative guidance must be short, contextual and based only on supplied facts. Use placeholders for unknown details.
-8. Group repeated language problems into one pattern-level issue per section.
-9. Compare objective-question correspondence by meaning and scope, not identical wording.
-10. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
-11. Keep assessment, academic consequence, required action and illustrative guidance distinct.
-12. Normally report no more than four material issues per Standard section and five per Advanced section. Consolidate related weaknesses into one finding.
-13. Keep each assessment, consequence and required action concise. Use illustrative guidance only when it materially helps the student.
-14. Use direct, constructive, formal British English addressed to the student.
-15. Return JSON only and do not provide hidden reasoning.
+6. State the exact supplied section or subsection heading in every finding.
+7. When a finding concerns a table, name the supplied table number and title and cite the relevant table row.
+8. Do not rewrite the thesis. Provide focused revision guidance.
+9. Illustrative guidance must be short, contextual and based only on supplied facts. Use placeholders for unknown details.
+10. Group repeated language problems into one pattern-level issue per section.
+11. Compare objective-question correspondence by meaning and scope, not identical wording.
+12. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
+13. Keep assessment, academic consequence, required action and illustrative guidance distinct.
+14. Apply the issue limit supplied in review_context and consolidate related weaknesses into one finding.
+15. Keep each assessment, consequence and required action concise. Use illustrative guidance only when it materially helps the student.
+16. Use direct, constructive, formal British English addressed to the student.
+17. Return JSON only and do not provide hidden reasoning.
 
 {COMMON_CONTEXT_RULES}
 
@@ -136,9 +145,12 @@ Your task is to:
 - ensure examples and guidance use only the confirmed study context or neutral placeholders;
 - reject invented citations, statistics, locations, institutions, populations and research-design assumptions;
 - distinguish missing content from weakly developed content;
-- consolidate repeated proofreading, citation and terminology comments.
+- consolidate repeated proofreading, citation and terminology comments;
+- verify that each finding names the correct supplied section or subsection heading;
+- verify that table-related findings name the correct supplied table number and title;
+- reject comments whose advice is not directly connected to the cited passage.
 
-For Advanced Review, apply doctoral scrutiny to originality, theoretical positioning, methodological defensibility, robustness, alternative explanations and contribution to knowledge. Do not inflate criticism merely because the review is advanced.
+Apply the declared degree standard supplied in review_context. Review depth controls the intensity of quality control, not the academic benchmark.
 
 Return JSON only. Do not provide chain-of-thought or hidden reasoning.
 

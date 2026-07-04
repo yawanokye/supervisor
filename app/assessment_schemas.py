@@ -102,6 +102,21 @@ class ExternalAssessmentFoundation(StrictAssessmentModel):
     methodology_and_procedures: AssessmentDomain
 
 
+class ExternalAssessmentEvidenceCore(StrictAssessmentModel):
+    results_or_findings: AssessmentDomain
+    discussion_and_interpretation: AssessmentDomain
+    conclusions_recommendations_and_contribution: AssessmentDomain
+    structural_coherence_and_alignment: AssessmentDomain
+
+
+class ExternalAssessmentIntegrity(StrictAssessmentModel):
+    academic_writing_and_presentation: AssessmentDomain
+    ethics_and_research_integrity: AssessmentDomain
+    originality_and_contribution: AssessmentDomain
+    major_strengths: List[str] = Field(default_factory=list, max_length=12)
+    publication_potential: str
+
+
 class ExternalAssessmentEvidence(StrictAssessmentModel):
     results_or_findings: AssessmentDomain
     discussion_and_interpretation: AssessmentDomain

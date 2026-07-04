@@ -674,6 +674,42 @@ def detect_doctoral_functional_coverage(
     }
 
 
+
+_TABLE_CAPTION_RE = re.compile(
+    r"^\s*table\s+(?P<number>[A-Za-z]?\d+(?:\.\d+)*|[IVXLC]+)\b\s*[:.\-–—]?\s*(?P<title>.*)$",
+    flags=re.I,
+)
+
+
+def _table_caption(value: str) -> Optional[Dict[str, str]]:
+    text = clean_text(value)
+    match = _TABLE_CAPTION_RE.match(text)
+    if not match:
+        return None
+    number = clean_text(match.group("number"))
+    title = clean_text(match.group("title"))
+    return {
+        "table_number": number,
+        "table_title": title,
+        "table_caption": text,
+    }
+
+
+def _heading_level(text: str, style_name: str = "") -> int:
+    style_match = re.search(r"heading\s*(\d+)", style_name or "", flags=re.I)
+    if style_match:
+        return max(1, min(9, int(style_match.group(1))))
+    if explicit_chapter_marker(text) is not None:
+        return 1
+    match = re.match(r"^\s*(\d+(?:\.\d+){0,5})\s+", text or "")
+    if match:
+        return min(9, match.group(1).count(".") + 1)
+    return 2
+
+
+def _section_path(stack: Dict[int, str]) -> List[str]:
+    return [stack[level] for level in sorted(stack) if clean_text(stack[level])]
+
 def _iter_docx_blocks(document) -> Iterator[Any]:
     if qn is None or Paragraph is None or Table is None:
         yield from document.paragraphs
@@ -694,10 +730,23 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     current_chapter = None
     paragraph_no = 0
     table_index = 0
+    heading_stack: Dict[int, str] = {}
+    pending_table_caption: Optional[Dict[str, str]] = None
 
     for block in _iter_docx_blocks(doc):
         if Table is not None and isinstance(block, Table):
             table_index += 1
+            caption = pending_table_caption or {
+                "table_number": str(table_index),
+                "table_title": "",
+                "table_caption": f"Table {table_index}",
+            }
+            # Link a preceding caption paragraph to the physical table. This
+            # lets the report and annotated document route a table finding to
+            # the table even when the model cites the caption rather than a row.
+            if out and out[-1].get("source_kind") == "table_caption":
+                out[-1]["table_index"] = table_index
+            current_path = _section_path(heading_stack)
             for row_index, row in enumerate(block.rows, start=1):
                 values = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
                 if not values:
@@ -710,6 +759,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     "page_paragraph": None,
                     "is_heading": False,
                     "heading": current_heading,
+                    "section_path": list(current_path),
                     "chapter_number": current_chapter,
                     "chapter_marker_number": None,
                     "chapter_title_number": None,
@@ -721,7 +771,9 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     "source_kind": "table_row",
                     "table_index": table_index,
                     "table_row": row_index,
+                    **caption,
                 })
+            pending_table_caption = None
             continue
 
         text = clean_text(block.text)
@@ -755,6 +807,14 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             current_chapter = chapter
         if heading:
             current_heading = text
+            level = _heading_level(text, style_name)
+            heading_stack = {k: v for k, v in heading_stack.items() if k < level}
+            heading_stack[level] = text
+
+        caption = _table_caption(text)
+        if caption:
+            pending_table_caption = caption
+
         out.append({
             "text": text,
             "page": None,
@@ -762,6 +822,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "page_paragraph": None,
             "is_heading": heading,
             "heading": current_heading,
+            "section_path": _section_path(heading_stack),
             "chapter_number": current_chapter,
             "chapter_marker_number": marker,
             "chapter_title_number": title_chapter,
@@ -777,9 +838,12 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             ),
             "is_toc_entry": toc_entry,
             "style": style_name,
-            "source_kind": "paragraph",
+            "source_kind": "table_caption" if caption else "paragraph",
             "table_index": None,
             "table_row": None,
+            "table_number": caption.get("table_number") if caption else None,
+            "table_title": caption.get("table_title") if caption else None,
+            "table_caption": caption.get("table_caption") if caption else None,
         })
     return out
 
@@ -791,6 +855,7 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     current_heading = None
     current_chapter = None
+    heading_stack: Dict[int, str] = {}
     global_paragraph = 0
     for page_index in range(len(doc)):
         page = doc[page_index]
@@ -828,6 +893,10 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     current_chapter = chapter
                 if heading:
                     current_heading = text
+                    level = _heading_level(text)
+                    heading_stack = {k: v for k, v in heading_stack.items() if k < level}
+                    heading_stack[level] = text
+                caption = _table_caption(text)
                 out.append({
                     "text": text,
                     "page": page_index + 1,
@@ -835,6 +904,7 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     "page_paragraph": page_paragraph,
                     "is_heading": heading,
                     "heading": current_heading,
+                    "section_path": _section_path(heading_stack),
                     "chapter_number": current_chapter,
                     "chapter_marker_number": marker,
                     "chapter_title_number": title_chapter,
@@ -850,9 +920,12 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     ),
                     "is_toc_entry": toc_entry,
                     "style": "",
-                    "source_kind": "pdf_block",
+                    "source_kind": "table_caption" if caption else "pdf_block",
                     "table_index": None,
                     "table_row": None,
+                    "table_number": caption.get("table_number") if caption else None,
+                    "table_title": caption.get("table_title") if caption else None,
+                    "table_caption": caption.get("table_caption") if caption else None,
                 })
     doc.close()
     return out

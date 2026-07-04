@@ -110,11 +110,14 @@ class HybridAIConfig:
     openai_advanced_input_price: float = 2.50
     openai_advanced_cached_input_price: float = 0.25
     openai_advanced_output_price: float = 15.00
-    external_assessment_foundation_max_output_tokens: int = 4600
-    external_assessment_evidence_max_output_tokens: int = 4600
-    external_assessment_corrections_max_output_tokens: int = 4200
-    external_assessment_decision_max_output_tokens: int = 3000
-    external_assessment_stage_timeout_seconds: int = 1200
+    external_assessment_foundation_max_output_tokens: int = 3400
+    external_assessment_evidence_max_output_tokens: int = 3400
+    external_assessment_integrity_max_output_tokens: int = 2800
+    external_assessment_corrections_max_output_tokens: int = 3400
+    external_assessment_decision_max_output_tokens: int = 2200
+    external_assessment_stage_timeout_seconds: int = 600
+    external_assessment_request_timeout_seconds: int = 240
+    external_assessment_request_max_retries: int = 0
 
     @classmethod
     def from_env(cls) -> "HybridAIConfig":
@@ -182,23 +185,36 @@ class HybridAIConfig:
             review_max_output_tokens=advanced_tokens,
             external_assessment_foundation_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS",
-                4600,
+                3400,
             ),
             external_assessment_evidence_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS",
-                4600,
+                3400,
+            ),
+            external_assessment_integrity_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_INTEGRITY_MAX_OUTPUT_TOKENS",
+                2800,
             ),
             external_assessment_corrections_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_CORRECTIONS_MAX_OUTPUT_TOKENS",
-                4200,
+                3400,
             ),
             external_assessment_decision_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_DECISION_MAX_OUTPUT_TOKENS",
-                3000,
+                2200,
             ),
             external_assessment_stage_timeout_seconds=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS",
-                1200,
+                600,
+            ),
+            external_assessment_request_timeout_seconds=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS",
+                240,
+            ),
+            external_assessment_request_max_retries=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES",
+                0,
+                0,
             ),
         )
 

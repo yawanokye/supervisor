@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.8.3",
+    version="1.8.5",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.7.0",
+        "version": "1.8.5",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1053,7 +1053,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.8.0",
+                "pipeline": "document-analysis-v1.8.5-section-table-grounding",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1134,7 +1134,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.8.0-grounded",
+                "pipeline": "academic-review-complete-v1.8.5-grounded-comments",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "model": config.deepseek_advanced_model,
@@ -1183,7 +1183,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.8.1-grounded-evidence-retry",
+                    "pipeline": "external-assessment-complete-v1.8.4-fast-grounded-parallel",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"

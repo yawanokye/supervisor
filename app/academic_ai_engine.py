@@ -104,39 +104,104 @@ KEY_ALIGNMENT_TERMS = (
 REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
     "light": {
         "label": "Light Review",
-        "benchmark": "Bachelor’s dissertation or non-research Master’s project",
+        "benchmark": "Concise review at the declared degree standard",
         "focus": (
-            "Complete section-by-section and subsection-by-subsection review at a foundational academic standard. "
-            "Emphasise correct structure, basic coherence, clear concepts, credible evidence, alignment, essential methodology, "
-            "defensible interpretation, research-integrity checks and readable scholarly presentation."
+            "Review every section and subsection, but report only the most material issues. "
+            "The declared academic level remains the substantive benchmark."
         ),
         "normal_issue_limit_per_section": 2,
+        "quality_control_max_findings": 12,
     },
     "standard": {
         "label": "Standard Review",
-        "benchmark": "Research Master’s or MPhil dissertation",
+        "benchmark": "Full review at the declared degree standard",
         "focus": (
-            "Complete section-by-section and subsection-by-subsection review at a research Master’s standard. "
-            "Require critical synthesis, defensible theoretical grounding, explicit methodological justification, "
-            "objective-method-result alignment and a clear contribution appropriate to MPhil-level research."
+            "Conduct a complete section-by-section and subsection-by-subsection review. "
+            "Assess structure, evidence, theory, methods, results, alignment and contribution at the declared academic level."
         ),
         "normal_issue_limit_per_section": 4,
+        "quality_control_max_findings": 24,
     },
     "advanced": {
         "label": "Advanced Review",
-        "benchmark": "Professional Doctorate or PhD thesis",
+        "benchmark": "Intensive review and independent audit at the declared degree standard",
         "focus": (
-            "Complete section-by-section and subsection-by-subsection review at doctoral standard. "
-            "Apply rigorous scrutiny to originality, theoretical and methodological contribution, assumptions, robustness, "
-            "alternative explanations, scholarly positioning and contribution to knowledge."
+            "Conduct a complete review with a compact independent second-pass audit. "
+            "Increase scrutiny and robustness checks without imposing a degree standard above the declared programme."
         ),
         "normal_issue_limit_per_section": 5,
+        "quality_control_max_findings": 32,
+    },
+}
+
+
+DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, str]] = {
+    "bachelors": {
+        "label": "Bachelor’s dissertation",
+        "benchmark": (
+            "Require a clear and researchable problem, coherent use of literature, appropriate and correctly applied methods, "
+            "accurate analysis, defensible conclusions and competent academic presentation. Expect a modest but explicit contribution."
+        ),
+    },
+    "non_research_masters": {
+        "label": "Non-Research Master’s project",
+        "benchmark": (
+            "Require a well-defined applied problem, integrated literature, justified professional or analytical methods, "
+            "credible evidence, sound interpretation and practical recommendations proportionate to the design."
+        ),
+    },
+    "research_masters": {
+        "label": "Research Master’s or MPhil dissertation",
+        "benchmark": (
+            "Require critical synthesis, defensible theoretical grounding, explicit methodological justification, "
+            "objective-method-result alignment and a clear contribution appropriate to research Master’s work."
+        ),
+    },
+    "professional_doctorate": {
+        "label": "Professional Doctorate thesis",
+        "benchmark": (
+            "Require doctoral rigour, a defensible original contribution to professional practice or policy, strong scholarly positioning, "
+            "methodological robustness, critical reflexivity and evidence-based implications for the field of practice."
+        ),
+    },
+    "phd": {
+        "label": "PhD thesis",
+        "benchmark": (
+            "Require an original contribution to knowledge, authoritative theoretical and empirical positioning, methodological rigour, "
+            "robustness, engagement with alternative explanations and a defensible scholarly contribution."
+        ),
     },
 }
 
 
 def _review_profile(depth: str) -> Dict[str, Any]:
     return REVIEW_LEVEL_PROFILES.get(depth, REVIEW_LEVEL_PROFILES["standard"])
+
+
+def _degree_profile(academic_level: Any) -> Dict[str, str]:
+    value = normalised(str(academic_level or "")).replace("-", " ")
+    if value == "phd" or value.startswith("doctor of philosophy"):
+        return DEGREE_LEVEL_PROFILES["phd"]
+    if "professional doctorate" in value or value.startswith("doctor of ") or value.startswith("doctoral"):
+        return DEGREE_LEVEL_PROFILES["professional_doctorate"]
+    # Check the non-research label first because the normalised phrase
+    # "non research masters" also contains "research masters".
+    if "non research masters" in value or "non research master" in value:
+        return DEGREE_LEVEL_PROFILES["non_research_masters"]
+    if "research masters" in value or "mphil" in value or "research master" in value:
+        return DEGREE_LEVEL_PROFILES["research_masters"]
+    return DEGREE_LEVEL_PROFILES["bachelors"]
+
+
+def _combined_benchmark(academic_level: Any, depth: str) -> Dict[str, str]:
+    degree = _degree_profile(academic_level)
+    intensity = _review_profile(depth)
+    return {
+        "degree_label": degree["label"],
+        "degree_standard": degree["benchmark"],
+        "review_intensity": intensity["label"],
+        "review_intensity_expectation": intensity["focus"],
+    }
 
 
 def _is_doctoral_level(academic_level: Any) -> bool:
@@ -160,16 +225,25 @@ def _pid(paragraph: Dict[str, Any]) -> str:
 
 
 def _payload(paragraph: Dict[str, Any]) -> Dict[str, Any]:
+    section_path = [clean_text(value) for value in paragraph.get("section_path") or [] if clean_text(value)]
     return {
         "id": _pid(paragraph),
         "text": clean_text(paragraph.get("text", "")),
         "heading": clean_text(paragraph.get("heading", "")),
+        "section_path": section_path,
+        "section_reference": section_path[-1] if section_path else clean_text(paragraph.get("heading", "")),
         "chapter_number": paragraph.get("chapter_number"),
         "page": paragraph.get("page"),
         "paragraph": paragraph.get("paragraph"),
         "is_heading": bool(paragraph.get("is_heading")),
         "source_filename": paragraph.get("source_filename", ""),
         "document_role": paragraph.get("document_role", "current"),
+        "source_kind": paragraph.get("source_kind", "paragraph"),
+        "table_index": paragraph.get("table_index"),
+        "table_row": paragraph.get("table_row"),
+        "table_number": clean_text(paragraph.get("table_number", "")),
+        "table_title": clean_text(paragraph.get("table_title", "")),
+        "table_caption": clean_text(paragraph.get("table_caption", "")),
     }
 
 
@@ -182,9 +256,14 @@ def _evidence(paragraph: Dict[str, Any]) -> Dict[str, Any]:
         "source_filename": value["source_filename"], "document_role": value["document_role"],
         "document_index": paragraph.get("document_index", 0), "paragraph_id": value["id"],
         "section_number": paragraph.get("section_number"),
+        "section_path": value.get("section_path") or [],
+        "section_reference": value.get("section_reference", ""),
         "source_kind": paragraph.get("source_kind", "paragraph"),
         "table_index": paragraph.get("table_index"),
         "table_row": paragraph.get("table_row"),
+        "table_number": value.get("table_number", ""),
+        "table_title": value.get("table_title", ""),
+        "table_caption": value.get("table_caption", ""),
         "matched_terms": [], "adequacy_terms": [], "rank_score": 1,
     }
 
@@ -287,6 +366,7 @@ def _batch_prompt(
 ) -> str:
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
+    benchmark = _combined_benchmark(summary.get("academic_level"), depth)
     sections = []
     for section in batch:
         sections.append({
@@ -381,8 +461,10 @@ def _batch_prompt(
                 "optional_chapters_detected", []
             ),
             "review_level_label": profile["label"],
-            "review_benchmark": profile["benchmark"],
-            "depth_expectation": profile["focus"],
+            "declared_degree_label": benchmark["degree_label"],
+            "review_benchmark": benchmark["degree_standard"],
+            "depth_expectation": benchmark["review_intensity_expectation"],
+            "review_intensity": benchmark["review_intensity"],
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -395,6 +477,7 @@ def _batch_prompt(
             "section_assessment_required_even_when_no_issue_is_found": True,
             "strengths_should_be_reported_where_deserved": True,
             "normal_issue_limit_per_section": profile["normal_issue_limit_per_section"],
+            "degree_standard_must_not_change_with_depth": True,
         },
         "accuracy_contract": {
             "do_not_introduce_external_countries_or_locations": True,
@@ -409,6 +492,10 @@ def _batch_prompt(
             "verify_model_specific_diagnostics_in_methods_and_results": True,
             "verify_statistical_values_against_tables_and_interpretations": True,
             "treat_local_statistical_flags_as_items_to_verify_not_automatic_conclusions": True,
+            "every_issue_must_use_evidence_from_its_own_section": True,
+            "every_issue_must_name_the_exact_section_or_subsection_heading": True,
+            "table_findings_must_name_the_supplied_table_number_and_title": True,
+            "generic_or_portable_comments_are_not_allowed": True,
         },
         "statistical_review_audit": review.get("statistical_review") or {},
         "institutional_structure_contract": {
@@ -423,7 +510,8 @@ def _batch_prompt(
             + complete_structure_instruction
             + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
-            "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied."
+            "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied. "
+            "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title."
         ),
         "sections": sections,
     }
@@ -438,6 +526,7 @@ def _verification_prompt(
 ) -> str:
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
+    benchmark = _combined_benchmark(summary.get("academic_level"), depth)
     proposals = []
     paragraphs: Dict[str, Dict[str, Any]] = {}
     for section_review in batch:
@@ -455,8 +544,9 @@ def _verification_prompt(
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
-            "review_benchmark": profile["benchmark"],
-            "depth_expectation": profile["focus"],
+            "declared_degree_label": benchmark["degree_label"],
+            "review_benchmark": benchmark["degree_standard"],
+            "depth_expectation": benchmark["review_intensity_expectation"],
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -468,14 +558,15 @@ def _verification_prompt(
             "Independently verify the proposed issues at the stated benchmark. Remove unsupported, repetitive or misplaced findings; "
             "correct severity and evidence; add important missed issues; and confirm that all sections received a substantive assessment. "
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
-            "For Advanced Review, apply doctoral expectations to originality, theoretical contribution, methodological defensibility, "
-            "robustness, alternative explanations and contribution to knowledge."
+            "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
+            "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
+            "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
 
 
-def _compact_advanced_audit_prompt(
+def _compact_quality_audit_prompt(
     review: Dict[str, Any],
     section_reviews: Sequence[Dict[str, Any]],
     context_lock: Dict[str, Any],
@@ -483,14 +574,11 @@ def _compact_advanced_audit_prompt(
     audit_paragraphs: Sequence[Dict[str, Any]],
     max_findings: int,
     max_source_chars: int,
+    depth: str,
 ) -> str:
-    """Build one compact doctoral audit instead of re-reviewing every batch.
-
-    The audit receives all section assessments, only the highest-priority
-    findings, and a focused evidence packet. This keeps doctoral quality
-    control while avoiding another full set of section-by-section API calls.
-    """
+    """Build one compact evidence audit instead of re-reviewing every batch."""
     summary = review.get("summary") or {}
+    benchmark = _combined_benchmark(summary.get("academic_level"), depth)
 
     all_issues = [
         issue
@@ -500,6 +588,10 @@ def _compact_advanced_audit_prompt(
     all_issues.sort(
         key=lambda item: (
             SEVERITY_ORDER.get(item.get("severity", "minor"), 9),
+            0 if any(
+                paragraph_index.get(pid, {}).get("source_kind") == "table_row"
+                for pid in item.get("evidence_paragraph_ids") or []
+            ) else 1,
             0 if item.get("source_verification_required") else 1,
             float(item.get("confidence") or 0.0),
         )
@@ -557,8 +649,10 @@ def _compact_advanced_audit_prompt(
         "review_context": {
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
-            "review_depth": "advanced",
-            "review_benchmark": REVIEW_LEVEL_PROFILES["advanced"]["benchmark"],
+            "review_depth": depth,
+            "declared_degree_label": benchmark["degree_label"],
+            "review_benchmark": benchmark["degree_standard"],
+            "review_intensity": benchmark["review_intensity"],
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -567,13 +661,11 @@ def _compact_advanced_audit_prompt(
         "section_assessments": proposals,
         "focused_source_paragraphs": source_rows,
         "instruction": (
-            "Conduct one compact doctoral quality audit. Verify the supplied "
-            "priority findings, remove unsupported or repetitive findings, "
-            "correct severity and evidence, and add only genuinely critical or "
-            "major issues missed by the primary review. Do not re-review every "
-            "minor wording point. Check originality, theory, methodological "
-            "defensibility, coherence, robustness, alternative explanations and "
-            "contribution to knowledge. Use only the confirmed study context."
+            "Conduct one compact evidence-grounded quality audit at the declared degree standard. "
+            "Verify the supplied priority findings, remove unsupported, generic, misplaced or repetitive findings, "
+            "correct severity and evidence, and add only genuinely material issues missed by the primary review. "
+            "Confirm the exact section or subsection heading for every finding. For table findings, confirm the supplied "
+            "table number, title and relevant row. Do not re-review every minor wording point. Use only the confirmed study context."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -583,23 +675,64 @@ def _valid_issue(
     issue: Dict[str, Any],
     paragraph_index: Dict[str, Dict[str, Any]],
     context_lock: Dict[str, Any],
+    *,
+    allowed_ids: Optional[set[str]] = None,
+    canonical_section: str = "",
 ) -> Optional[Dict[str, Any]]:
     try:
         parsed = AcademicIssue.model_validate(issue).model_dump()
     except Exception:
         return None
     parsed = sanitise_issue(parsed, context_lock)
-    parsed["evidence_paragraph_ids"] = [
-        pid for pid in parsed["evidence_paragraph_ids"] if pid in paragraph_index
+    evidence_ids = [
+        pid for pid in parsed["evidence_paragraph_ids"]
+        if pid in paragraph_index and (allowed_ids is None or pid in allowed_ids)
     ]
+    parsed["evidence_paragraph_ids"] = list(dict.fromkeys(evidence_ids))[:8]
+
+    # Unsupported comments are the main source of irrelevant annotations. Every
+    # academic finding must be anchored in the supplied section, including a
+    # claim that required content is absent or underdeveloped.
+    if not parsed["evidence_paragraph_ids"]:
+        return None
+
+    if canonical_section:
+        parsed["section"] = clean_text(canonical_section)
+    else:
+        first = paragraph_index[parsed["evidence_paragraph_ids"][0]]
+        source_section = clean_text(
+            (first.get("section_path") or [""])[-1]
+            or first.get("heading", "")
+        )
+        if source_section and "audit" not in normalised(parsed.get("section", "")):
+            parsed["section"] = source_section
+
     quote = clean_text(parsed.get("problematic_quote", ""))
     if quote and not any(
         quote in clean_text(paragraph_index[pid].get("text", ""))
         for pid in parsed["evidence_paragraph_ids"]
     ):
         parsed["problematic_quote"] = ""
-    if not parsed["evidence_paragraph_ids"]:
-        parsed["confidence"] = min(float(parsed["confidence"]), 0.55)
+        parsed["confidence"] = min(float(parsed["confidence"]), 0.72)
+
+    combined = normalised(
+        " ".join([
+            parsed.get("issue_title", ""),
+            parsed.get("assessment", ""),
+            parsed.get("required_action", ""),
+        ])
+    )
+    generic_phrases = {
+        "revise this section",
+        "improve the clarity",
+        "provide more detail",
+        "strengthen this section",
+        "improve academic writing",
+        "review this section",
+    }
+    if any(combined == phrase or combined.endswith(phrase) for phrase in generic_phrases):
+        return None
+
     return parsed
 
 
@@ -661,22 +794,63 @@ def _consolidate_repetitive_issues(issues: Sequence[Dict[str, Any]]) -> List[Dic
 def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     severity = issue.get("severity", "moderate")
     status, label = ACTIONABLE_STATUS[severity]
-    evidence = [_evidence(paragraph_index[pid]) for pid in issue.get("evidence_paragraph_ids", []) if pid in paragraph_index]
+    evidence = [
+        _evidence(paragraph_index[pid])
+        for pid in issue.get("evidence_paragraph_ids", [])
+        if pid in paragraph_index
+    ]
     assessment = clean_text(issue.get("assessment", ""))
     consequence = clean_text(issue.get("academic_consequence", ""))
     comment = assessment + (f" Academic implication: {consequence}" if consequence else "")
     section = clean_text(issue.get("section", "")) or "Chapter-wide review"
+
+    table_evidence = next(
+        (item for item in evidence if item.get("table_number")),
+        None,
+    )
+    table_reference = ""
+    if table_evidence:
+        number = clean_text(table_evidence.get("table_number", ""))
+        title = clean_text(table_evidence.get("table_title", ""))
+        table_reference = f"Table {number}" if number else "Table"
+        if title:
+            table_reference += f": {title}"
+
+    section_path = []
+    for item in evidence:
+        path = [clean_text(value) for value in item.get("section_path") or [] if clean_text(value)]
+        if path:
+            section_path = path
+            break
+
+    reference_label = section
+    if table_reference:
+        reference_label = f"{section}, {table_reference}"
+
     return {
-        "review_type": "academic_finding", "finding_id": issue.get("finding_id", ""),
-        "category": issue.get("category", "other"), "section": section,
-        "item": clean_text(issue.get("issue_title", "Academic issue")), "status": status,
-        "status_label": label, "severity": severity, "confidence": round(float(issue.get("confidence") or 0), 2),
-        "evidence": evidence, "comment": comment, "required_action": clean_text(issue.get("required_action", "")),
+        "review_type": "academic_finding",
+        "finding_id": issue.get("finding_id", ""),
+        "category": issue.get("category", "other"),
+        "section": section,
+        "section_reference": section,
+        "section_path": section_path,
+        "table_reference": table_reference,
+        "reference_label": reference_label,
+        "item": clean_text(issue.get("issue_title", "Academic issue")),
+        "status": status,
+        "status_label": label,
+        "severity": severity,
+        "confidence": round(float(issue.get("confidence") or 0), 2),
+        "evidence": evidence,
+        "comment": comment,
+        "required_action": clean_text(issue.get("required_action", "")),
         "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
         "guidance_type": issue.get("guidance_type", "direct_correction"),
         "source_verification_required": bool(issue.get("source_verification_required")),
         "context_guard_adjusted": bool(issue.get("context_guard_adjusted")),
-        "problematic_quote": clean_text(issue.get("problematic_quote", "")), "headings": [section],
+        "problematic_quote": clean_text(issue.get("problematic_quote", "")),
+        "headings": [section],
+        "annotation_eligible": bool(evidence),
     }
 
 
@@ -698,21 +872,27 @@ def _limit_light_issues(issues: Sequence[Dict[str, Any]], max_findings: int) -> 
     return selected[:max(1, max_findings)]
 
 
-def _light_readiness(score: float, issues: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
+def _light_readiness(
+    score: float,
+    issues: Sequence[Dict[str, Any]],
+    academic_level: Any = "",
+) -> Tuple[str, str]:
     critical = sum(1 for issue in issues if issue.get("severity") == "critical")
     major = sum(1 for issue in issues if issue.get("severity") == "major")
     moderate = sum(1 for issue in issues if issue.get("severity") == "moderate")
     if critical or major >= 3 or score < 60:
-        label = "Foundational revision required"
+        label = "Material revision required"
     elif major or moderate:
         label = "Targeted revision required"
     else:
-        label = "Meets the foundational review standard with minor refinement"
+        label = "Meets the declared degree standard with minor refinement"
+    degree = _degree_profile(academic_level)
     meaning = (
-        "Every detected section and subsection was reviewed against the standard expected of a Bachelor’s dissertation or non-research Master’s project. "
-        "The guidance addresses structure, coherence, evidence, alignment, essential methodology, interpretation, research-integrity warning signs and academic presentation at that level."
+        f"Every detected section and subsection was reviewed concisely against the standard expected of a {degree['label']}. "
+        "The review reports the most material issues while preserving the academic benchmark of the declared programme."
     )
     return label, meaning
+
 
 
 def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
@@ -984,7 +1164,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.8.0-grounded",
+            "pipeline": "academic-review-v1.8.5-grounded-comments",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1136,15 +1316,30 @@ async def enrich_review_with_academic_ai(
                 continue
 
             used_ids.add(id(data))
-            valid_issues = [valid for item in data.get("issues") or [] if (valid := _valid_issue(item, paragraph_index, context_lock))]
+            allowed_ids = {_pid(paragraph) for paragraph in section.get("paragraphs") or []}
+            canonical_section = clean_text(section.get("heading", "Untitled section"))
+            valid_issues = [
+                valid
+                for item in data.get("issues") or []
+                if (valid := _valid_issue(
+                    item,
+                    paragraph_index,
+                    context_lock,
+                    allowed_ids=allowed_ids,
+                    canonical_section=canonical_section,
+                ))
+            ]
             valid_strengths = []
             for strength in data.get("strengths") or []:
-                ids = [pid for pid in strength.get("evidence_paragraph_ids", []) if pid in paragraph_index]
+                ids = [
+                    pid for pid in strength.get("evidence_paragraph_ids", [])
+                    if pid in paragraph_index and pid in allowed_ids
+                ]
                 if ids:
                     row = dict(strength)
-                    row["evidence_paragraph_ids"] = ids
+                    row["evidence_paragraph_ids"] = list(dict.fromkeys(ids))[:6]
                     row["observation"], _ = sanitise_generated_text(row.get("observation", ""), context_lock)
-                    row["section"], _ = sanitise_generated_text(row.get("section", ""), context_lock)
+                    row["section"] = canonical_section
                     valid_strengths.append(row)
             section_assessment, _ = sanitise_generated_text(data.get("section_assessment", ""), context_lock)
             coverage_warning, _ = sanitise_generated_text(data.get("coverage_warning", ""), context_lock)
@@ -1294,45 +1489,65 @@ async def enrich_review_with_academic_ai(
         )
 
     verification_failed = locals().get("verification_failed", False)
-    if depth in {"light", "standard"}:
-        await _notify(
-            progress_callback,
-            68,
-            "Consolidating the academic review and guidance",
-        )
-    elif config.advanced_quality_control:
-        await _notify(
-            progress_callback,
-            68,
-            "Conducting one compact doctoral quality audit",
-        )
+    await _notify(
+        progress_callback,
+        68,
+        "Checking the relevance and accuracy of review comments",
+    )
 
-        all_primary = [
-            issue
-            for section_review in section_reviews
-            for issue in section_review["issues"]
-        ]
+    all_primary = [
+        issue
+        for section_review in section_reviews
+        for issue in section_review["issues"]
+    ]
 
-        audit_prompt = _compact_advanced_audit_prompt(
+    # Every review depth receives one compact evidence audit. The declared
+    # academic level sets the benchmark, while depth controls the number of
+    # findings examined and the intensity of the second pass.
+    if all_primary:
+        profile = _review_profile(depth)
+        audit_model = (
+            config.deepseek_advanced_model
+            if depth == "advanced"
+            else config.deepseek_review_model
+        )
+        audit_effort = (
+            config.deepseek_advanced_reasoning_effort
+            if depth == "advanced"
+            else config.deepseek_reasoning_effort
+        )
+        audit_tokens = (
+            config.advanced_audit_max_output_tokens
+            if depth == "advanced"
+            else (2600 if depth == "light" else 3800)
+        )
+        audit_max_findings = min(
+            int(profile.get("quality_control_max_findings", 24)),
+            max(1, len(all_primary)),
+        )
+        audit_prompt = _compact_quality_audit_prompt(
             review=review,
             section_reviews=section_reviews,
             context_lock=context_lock,
             paragraph_index=paragraph_index,
             audit_paragraphs=whole_audit,
-            max_findings=config.advanced_audit_max_findings,
+            max_findings=audit_max_findings,
             max_source_chars=max(config.max_map_input_chars, 30000),
+            depth=depth,
         )
 
         try:
             audit_hash = stable_hash({
-                "pipeline": "academic-audit-v1.8.0-grounded",
-                "model": config.deepseek_advanced_model,
-                "effort": config.deepseek_advanced_reasoning_effort,
-                "tokens": config.advanced_audit_max_output_tokens,
+                "pipeline": "academic-comment-audit-v1.8.5",
+                "depth": depth,
+                "academic_level": academic_level,
+                "model": audit_model,
+                "effort": audit_effort,
+                "tokens": audit_tokens,
                 "system_prompt": ACADEMIC_VERIFY_SYSTEM_PROMPT,
                 "user_prompt": audit_prompt,
             })
-            audit_stage_key = f"academic-audit-{audit_hash[:20]}"
+            audit_stage_key = f"academic-comment-audit-{audit_hash[:20]}"
             result = (
                 checkpoint_manager.load_provider_result(
                     audit_stage_key,
@@ -1347,16 +1562,16 @@ async def enrich_review_with_academic_ai(
                         audit_stage_key,
                         input_hash=audit_hash,
                         progress=68,
-                        message="Conducting the doctoral quality audit",
+                        message="Checking comment relevance and evidence",
                     )
                 result = await deepseek.complete_json(
-                    model=config.deepseek_advanced_model,
+                    model=audit_model,
                     system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
                     user_prompt=audit_prompt,
                     schema_model=AcademicVerificationBatch,
-                    purpose="advanced_compact_doctoral_audit",
-                    reasoning_effort=config.deepseek_advanced_reasoning_effort,
-                    max_output_tokens=config.advanced_audit_max_output_tokens,
+                    purpose=f"{depth}_compact_comment_accuracy_audit",
+                    reasoning_effort=audit_effort,
+                    max_output_tokens=audit_tokens,
                 )
                 if checkpoint_manager is not None:
                     checkpoint_manager.save_provider_result(
@@ -1364,7 +1579,7 @@ async def enrich_review_with_academic_ai(
                         result,
                         input_hash=audit_hash,
                         progress=76,
-                        message="Doctoral quality audit completed",
+                        message="Comment accuracy audit completed",
                     )
             usage_records.append(_usage_cost(result.usage, config))
             merged = _apply_verification(all_primary, result.data)
@@ -1379,27 +1594,20 @@ async def enrich_review_with_academic_ai(
 
             for section_review in section_reviews:
                 key = normalised(section_review["heading"])
-                section_review["issues"] = merged_by_section.pop(
-                    key,
-                    section_review["issues"],
-                )
+                section_review["issues"] = merged_by_section.pop(key, [])
 
-            leftovers = [
-                item
-                for values in merged_by_section.values()
-                for item in values
-            ]
-            if leftovers and section_reviews:
-                section_reviews[0]["issues"].extend(leftovers)
-
+            # Unmatched audit output is discarded rather than attached to an
+            # unrelated section. This prevents generic comments from drifting
+            # to the first chapter or subsection.
         except Exception:
             verification_failed = True
             for section_review in section_reviews:
                 section_review["coverage_warning"] = (
                     section_review.get("coverage_warning", "")
-                    + " The compact doctoral audit was unavailable; the primary "
-                      "advanced review remains available."
+                    + " The independent comment-accuracy audit was unavailable; "
+                      "the evidence-linked primary review remains available."
                 ).strip()
+
 
     all_issues = _consolidate_repetitive_issues(
         _deduplicate_issues(issue for section_review in section_reviews for issue in section_review["issues"])
@@ -1420,7 +1628,9 @@ async def enrich_review_with_academic_ai(
     incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)
     readiness_label, readiness_meaning = (
-        _light_readiness(score, all_issues) if depth == "light" else _readiness(score, all_issues, incomplete)
+        _light_readiness(score, all_issues, academic_level)
+        if depth == "light"
+        else _readiness(score, all_issues, incomplete)
     )
 
     summary = review.get("summary") or {}
@@ -1460,6 +1670,7 @@ async def enrich_review_with_academic_ai(
             break
 
     profile = _review_profile(depth)
+    benchmark = _combined_benchmark(academic_level, depth)
     actual_section_names = {
         normalised(section.get("heading", ""))
         for section in section_reviews
@@ -1469,7 +1680,10 @@ async def enrich_review_with_academic_ai(
         ))
     }
     summary.update({
-        "review_depth": depth, "review_benchmark": profile["benchmark"],
+        "review_depth": depth,
+        "review_benchmark": benchmark["degree_standard"],
+        "declared_degree_standard": benchmark["degree_label"],
+        "review_intensity": benchmark["review_intensity"],
         "academic_review_score": score, "overall_score": overall,
         "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
         "academic_review_complete": not incomplete,
@@ -1494,18 +1708,23 @@ async def enrich_review_with_academic_ai(
         contextual_summary = " ".join(contextual_parts[:2])
         review["overall_academic_assessment"] = (
             (contextual_summary + " " if contextual_summary else "")
-            + "Every detected section and subsection was assessed at the foundational standard expected of a Bachelor’s dissertation or non-research Master’s project. "
-            + "The review provides context-aware guidance and examples where these are needed to support revision."
+            + f"Every detected section and subsection was assessed concisely against the standard expected of a {benchmark['degree_label']}. "
+            + "The review reports the most material issues and provides context-aware guidance where revision is required."
         ).strip()
     review["priority_actions"] = priority
     review["ai_review"] = {
-        "review_depth": depth, "review_benchmark": profile["benchmark"],
+        "review_depth": depth,
+        "review_benchmark": benchmark["degree_standard"],
+        "declared_degree_standard": benchmark["degree_label"],
+        "review_intensity": benchmark["review_intensity"],
         "usage": [record.model_dump() for record in usage_records],
         "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
         "active_provider": "deepseek",
-        "advanced_second_pass": bool(depth == "advanced" and config.advanced_quality_control),
-        "advanced_audit_mode": "single_compact_audit" if depth == "advanced" else "not_applicable",
+        "comment_accuracy_second_pass": bool(all_primary),
+        "comment_accuracy_audit_mode": "single_compact_evidence_audit" if all_primary else "not_required",
+        "advanced_second_pass": bool(depth == "advanced" and all_primary),
+        "advanced_audit_mode": "single_compact_evidence_audit" if depth == "advanced" and all_primary else "not_applicable",
         "api_call_count": len(usage_records),
         "primary_batch_count": len(section_batches),
         "context_guard_enabled": True,

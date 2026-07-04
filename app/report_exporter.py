@@ -72,10 +72,26 @@ def _set_document_styles(doc: Document) -> None:
 def _location_text(evidence: Iterable[Dict[str, Any]]) -> str:
     values: List[str] = []
     for item in evidence:
-        parts = []
+        parts: List[str] = []
+        section = _clean(
+            item.get("section_reference")
+            or ((item.get("section_path") or [""])[-1] if item.get("section_path") else "")
+            or item.get("heading")
+        )
+        if section:
+            parts.append(section)
+        if item.get("source_kind") == "table_row" or item.get("table_number"):
+            number = _clean(item.get("table_number"))
+            title = _clean(item.get("table_title"))
+            table_label = f"Table {number}" if number else "Table"
+            if title:
+                table_label += f": {title}"
+            if item.get("table_row") is not None:
+                table_label += f", row {item['table_row']}"
+            parts.append(table_label)
         if item.get("page") is not None:
             parts.append(f'page {item["page"]}')
-        if item.get("paragraph") is not None:
+        if item.get("paragraph") is not None and not item.get("table_number"):
             parts.append(f'paragraph {item["paragraph"]}')
         if parts:
             values.append(", ".join(parts))
@@ -110,11 +126,14 @@ def _severity_rank(value: str) -> int:
 
 
 def _finding_anchor(row: Dict[str, Any]) -> Tuple[str, str]:
-    section = _normalised(row.get("section", "chapter-wide review"))
+    section = _normalised(row.get("section_reference") or row.get("section") or "chapter-wide review")
     evidence = row.get("evidence") or []
     if evidence:
         best = evidence[0]
-        anchor = f'{best.get("document_role", "current")}:{best.get("paragraph", "")}'
+        if best.get("source_kind") == "table_row" or best.get("table_index"):
+            anchor = f'table:{best.get("table_index", "")}:{best.get("table_row", "")}'
+        else:
+            anchor = f'{best.get("document_role", "current")}:{best.get("paragraph", "")}'
     else:
         anchor = f'missing:{_normalised(row.get("category", "other"))}'
     return section, anchor
@@ -125,7 +144,8 @@ def _group_findings(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in sorted(rows, key=lambda x: (_severity_rank(x.get("severity", "minor")), _normalised(x.get("item", "")))):
         key = _finding_anchor(row)
         group = groups.setdefault(key, {
-            "section": _clean(row.get("section", "Chapter-wide review")),
+            "section": _clean(row.get("section_reference") or row.get("section") or "Chapter-wide review"),
+            "reference_label": _clean(row.get("reference_label") or row.get("section_reference") or row.get("section")),
             "severity": row.get("severity", "moderate"),
             "rows": [],
             "evidence": row.get("evidence") or [],
@@ -248,7 +268,11 @@ def _add_review_point(doc: Document, group: Dict[str, Any], index: int) -> None:
     heading = doc.add_paragraph()
     heading.paragraph_format.space_before = Pt(7)
     heading.paragraph_format.space_after = Pt(2)
-    heading.add_run(f"Review point {index}: ").bold = True
+    reference = _clean(group.get("reference_label") or group.get("section"))
+    heading.add_run(f"Review point {index}").bold = True
+    if reference:
+        heading.add_run(f" — {reference}").bold = True
+    heading.add_run(": ").bold = True
     heading.add_run(_trim("; ".join(titles) if titles else "Academic revision required", 240)).bold = True
 
     _add_location(doc, group.get("evidence") or [])

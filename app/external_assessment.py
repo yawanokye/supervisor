@@ -12,7 +12,9 @@ from .assessment_schemas import (
     ExternalAssessmentCorrections,
     ExternalAssessmentDecision,
     ExternalAssessmentEvidence,
+    ExternalAssessmentEvidenceCore,
     ExternalAssessmentFoundation,
+    ExternalAssessmentIntegrity,
     ExternalAssessmentReport,
 )
 from .document_parser import clean_text, normalised
@@ -400,15 +402,42 @@ def _selected_evidence_for_stage(
             paragraphs,
             manifest,
             target_roles=("foundation", "literature_theory", "methodology"),
-            max_chars=30000 if not concise_retry else 19000,
+            max_chars=22000 if not concise_retry else 14000,
+            concise=concise_retry,
+        )
+    elif stage == "evidence_core":
+        selected = select_balanced_evidence(
+            paragraphs,
+            manifest,
+            target_roles=("results", "discussion", "conclusions"),
+            max_chars=26000 if not concise_retry else 16000,
+            concise=concise_retry,
+        )
+    elif stage == "integrity":
+        selected = select_balanced_evidence(
+            paragraphs,
+            manifest,
+            target_roles=(
+                "foundation",
+                "literature_theory",
+                "methodology",
+                "results",
+                "discussion",
+                "conclusions",
+                "ethics",
+                "references",
+            ),
+            max_chars=22000 if not concise_retry else 14000,
             concise=concise_retry,
         )
     elif stage == "evidence":
+        # Backwards-compatible combined evidence selection for saved v1.8.x
+        # checkpoints and direct helper tests.
         selected = select_balanced_evidence(
             paragraphs,
             manifest,
             target_roles=("results", "discussion", "conclusions", "ethics", "references"),
-            max_chars=38000 if not concise_retry else 23000,
+            max_chars=32000 if not concise_retry else 19000,
             concise=concise_retry,
         )
     else:
@@ -494,8 +523,71 @@ def _stage_prompt(
             "research problem, literature/theory and methods. Each domain must set "
             "coverage_status. Every fully or partly assessed domain must cite one or more allowed evidence_ids. Copy each "
             "ID exactly from allowed_evidence_ids and never derive it from a page or paragraph number. Each domain "
-            "assessment should normally remain below 240 words and each list should "
-            "contain no more than six concise items."
+            "assessment should normally remain below 210 words and each list should "
+            "contain no more than five concise items."
+        )
+    elif stage == "evidence_core":
+        selected_evidence = _selected_evidence_for_stage(
+            stage,
+            runtime_context,
+            manifest,
+            concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
+        )
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "document_manifest": shared["document_manifest"],
+            "review_summary": shared["review_summary"],
+            "overall_academic_review": shared["overall_academic_review"],
+            "study_context": shared["study_context"],
+            "statistical_review": shared["statistical_review"],
+            "material_findings": shared["material_findings"][:40],
+            "section_reviews": shared["section_reviews"][:40],
+            "alignment_findings": shared["alignment_findings"],
+            "discarded_derivative_findings": shared["discarded_derivative_findings"],
+            "selected_source_evidence": selected_evidence,
+            "allowed_evidence_ids": [item["id"] for item in selected_evidence],
+        }
+        instruction = (
+            "Prepare only the results, discussion, conclusions and structural "
+            "alignment part of the external examination. Apply the method-specific "
+            "expert checklist in the manifest. Judge reported values, diagnostics, "
+            "interpretations and alignment, not mere term presence. Each domain must "
+            "set coverage_status and cite one or more exact allowed_evidence_ids. "
+            "Keep each assessment below 210 words and each list to no more than five "
+            "concise items."
+        )
+    elif stage == "integrity":
+        selected_evidence = _selected_evidence_for_stage(
+            stage,
+            runtime_context,
+            manifest,
+            concise_retry=concise_retry,
+            additional_evidence_ids=additional_evidence_ids,
+        )
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "document_manifest": shared["document_manifest"],
+            "review_summary": shared["review_summary"],
+            "overall_academic_review": shared["overall_academic_review"],
+            "study_context": shared["study_context"],
+            "academic_strengths": shared["academic_strengths"][:16],
+            "material_findings": shared["material_findings"][:30],
+            "section_reviews": shared["section_reviews"][:30],
+            "discarded_derivative_findings": shared["discarded_derivative_findings"],
+            "selected_source_evidence": selected_evidence,
+            "allowed_evidence_ids": [item["id"] for item in selected_evidence],
+        }
+        instruction = (
+            "Prepare only the academic writing and presentation, ethics and research "
+            "integrity, originality and contribution, major strengths and publication "
+            "potential part of the external examination. Use exact source evidence. "
+            "Do not allege citation or reference misconduct unless the exact reference "
+            "entry is available in cited evidence. Each assessed domain must cite one "
+            "or more exact allowed_evidence_ids. Keep each assessment below 210 words "
+            "and each list to no more than five concise items."
         )
     elif stage == "evidence":
         selected_evidence = _selected_evidence_for_stage(
@@ -522,15 +614,9 @@ def _stage_prompt(
             "allowed_evidence_ids": [item["id"] for item in selected_evidence],
         }
         instruction = (
-            "Prepare only the evidence, interpretation and contribution part of "
-            "the external examination. Use the functional map to assess the actual "
-            "results, discussion and conclusion chapters, including structures with "
-            "more than five chapters. Apply the method-specific expert checklist in "
-            "the manifest. Judge reported values, diagnostics and interpretations, "
-            "not mere term presence. Each domain must set coverage_status. Every fully or partly assessed domain must cite "
-            "one or more allowed evidence_ids. Copy each ID exactly from allowed_evidence_ids and never derive it from a "
-            "page or paragraph number. Each domain assessment should normally "
-            "remain below 240 words and lists should contain no more than six items."
+            "Prepare the evidence, interpretation and contribution part of the "
+            "external examination. This combined stage is retained only for backwards "
+            "compatibility. Each assessed domain must cite exact allowed_evidence_ids."
         )
     elif stage == "corrections":
         allowed_ids = collect_evidence_ids(prior_outputs or {})
@@ -541,8 +627,8 @@ def _stage_prompt(
             "review_summary": shared["review_summary"],
             "foundation_assessment": (prior_outputs or {}).get("foundation", {}),
             "evidence_assessment": (prior_outputs or {}).get("evidence", {}),
-            "priority_actions": shared["priority_actions"],
-            "material_findings": shared["material_findings"],
+            "priority_actions": shared["priority_actions"][:30],
+            "material_findings": shared["material_findings"][:40],
             "previous_examiner_correction_follow_up": shared[
                 "previous_examiner_correction_follow_up"
             ],
@@ -561,7 +647,7 @@ def _stage_prompt(
             "Every correction must cite one or more allowed evidence_ids already "
             "used in the verified domain assessments. Verify every factual and "
             "numerical claim against cited_source_evidence. Include no more than 35 "
-            "material corrections and 18 thesis-specific oral questions."
+            "material corrections and 14 thesis-specific oral questions."
         )
     elif stage == "decision":
         payload = {
@@ -761,6 +847,19 @@ def _domain_fields_for_stage(stage: str) -> Sequence[str]:
             "literature_and_theoretical_foundation",
             "methodology_and_procedures",
         )
+    if stage == "evidence_core":
+        return (
+            "results_or_findings",
+            "discussion_and_interpretation",
+            "conclusions_recommendations_and_contribution",
+            "structural_coherence_and_alignment",
+        )
+    if stage == "integrity":
+        return (
+            "academic_writing_and_presentation",
+            "ethics_and_research_integrity",
+            "originality_and_contribution",
+        )
     if stage == "evidence":
         return (
             "results_or_findings",
@@ -783,7 +882,7 @@ def _allowed_ids_for_stage(
     concise_retry: bool,
     additional_evidence_ids: Sequence[str] = (),
 ) -> List[str]:
-    if stage in {"foundation", "evidence"}:
+    if stage in {"foundation", "evidence_core", "integrity", "evidence"}:
         evidence = _selected_evidence_for_stage(
             stage,
             runtime_context,
@@ -1049,7 +1148,6 @@ async def _complete_assessment_stage(
     valid_manifest_ids = set(manifest.get("valid_evidence_ids") or [])
     attempts = (
         {"concise": False, "grounding_retry": False},
-        {"concise": False, "grounding_retry": True},
         {"concise": True, "grounding_retry": True},
     )
 
@@ -1076,7 +1174,7 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.8.1-grounded-evidence-retry",
+            "pipeline": "external-assessment-v1.8.4-fast-grounded-parallel",
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
@@ -1138,6 +1236,12 @@ async def _complete_assessment_stage(
                 purpose=f"external_thesis_assessment_{stage}",
                 reasoning_effort=reasoning_effort,
                 max_output_tokens=max_output_tokens,
+                request_timeout_seconds=(
+                    config.external_assessment_request_timeout_seconds
+                ),
+                request_max_retries=(
+                    config.external_assessment_request_max_retries
+                ),
             )
             stage_feedback = _validate_stage_output(
                 stage,
@@ -1241,6 +1345,55 @@ async def enrich_with_external_assessment(
         if hasattr(result, "__await__"):
             await result
 
+    async def run_parallel(
+        specs: Dict[str, Any],
+        *,
+        start_progress: int,
+        end_progress: int,
+        phase_label: str,
+    ) -> Dict[str, Any]:
+        """Run independent grounded stages concurrently and report each completion."""
+
+        task_to_stage: Dict[asyncio.Task[Any], str] = {}
+        for stage_name, coroutine in specs.items():
+            task = asyncio.create_task(
+                asyncio.wait_for(
+                    coroutine,
+                    timeout=config.external_assessment_stage_timeout_seconds,
+                )
+            )
+            task_to_stage[task] = stage_name
+
+        completed: Dict[str, Any] = {}
+        total = max(1, len(task_to_stage))
+        try:
+            pending = set(task_to_stage)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    stage_name = task_to_stage[task]
+                    completed[stage_name] = await task
+                    fraction = len(completed) / total
+                    value = round(
+                        start_progress
+                        + (end_progress - start_progress) * fraction
+                    )
+                    label = stage_name.replace("_", " ").title()
+                    await progress(
+                        value,
+                        f"{label} completed. {phase_label} continues in parallel",
+                    )
+        except Exception:
+            for task in task_to_stage:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*task_to_stage, return_exceptions=True)
+            raise
+        return completed
+
     paragraphs = runtime_context.get("current_paragraphs") or []
     manifest = build_document_manifest(
         paragraphs,
@@ -1248,17 +1401,27 @@ async def enrich_with_external_assessment(
     )
     review["external_document_manifest"] = compact_manifest_for_prompt(manifest)
 
-    foundation_ids = _allowed_ids_for_stage(
-        "foundation", runtime_context, manifest, None, concise_retry=False
-    )
-    evidence_ids = _allowed_ids_for_stage(
-        "evidence", runtime_context, manifest, None, concise_retry=False
-    )
-    if not foundation_ids or not evidence_ids:
+    required_stage_ids = {
+        stage: _allowed_ids_for_stage(
+            stage,
+            runtime_context,
+            manifest,
+            None,
+            concise_retry=False,
+        )
+        for stage in ("foundation", "evidence_core", "integrity")
+    }
+    missing_stages = [
+        stage for stage, evidence_ids in required_stage_ids.items()
+        if not evidence_ids
+    ]
+    if missing_stages:
         raise ExternalAssessmentValidationError(
-            "The external examination was stopped because the source evidence could "
-            "not be distributed across the foundation and results stages. Re-export "
-            "the thesis as a complete text-based DOCX or PDF and submit it again."
+            "The external examination was stopped because source evidence could "
+            "not be distributed to these assessment stages: "
+            + ", ".join(missing_stages)
+            + ". Re-export the thesis as a complete text-based DOCX or PDF and "
+              "submit it again."
         )
 
     provider = DeepSeekProvider(config)
@@ -1267,92 +1430,135 @@ async def enrich_with_external_assessment(
 
     await progress(
         87,
-        "Validating document coverage and assessing the thesis with grounded evidence",
+        "Assessing foundation, findings and research integrity in parallel",
     )
-    foundation_task = _complete_assessment_stage(
-        provider,
-        stage="foundation",
-        schema_model=ExternalAssessmentFoundation,
-        review=review,
-        runtime_context=runtime_context,
-        metadata=metadata,
-        manifest=manifest,
-        config=config,
-        prior_outputs=None,
-        max_output_tokens=config.external_assessment_foundation_max_output_tokens,
-        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
-        checkpoint_manager=checkpoint_manager,
+    analysis_results = await run_parallel(
+        {
+            "foundation": _complete_assessment_stage(
+                provider,
+                stage="foundation",
+                schema_model=ExternalAssessmentFoundation,
+                review=review,
+                runtime_context=runtime_context,
+                metadata=metadata,
+                manifest=manifest,
+                config=config,
+                prior_outputs=None,
+                max_output_tokens=(
+                    config.external_assessment_foundation_max_output_tokens
+                ),
+                reasoning_effort=(
+                    config.deepseek_advanced_primary_reasoning_effort
+                ),
+                checkpoint_manager=checkpoint_manager,
+            ),
+            "evidence_core": _complete_assessment_stage(
+                provider,
+                stage="evidence_core",
+                schema_model=ExternalAssessmentEvidenceCore,
+                review=review,
+                runtime_context=runtime_context,
+                metadata=metadata,
+                manifest=manifest,
+                config=config,
+                prior_outputs=None,
+                max_output_tokens=(
+                    config.external_assessment_evidence_max_output_tokens
+                ),
+                reasoning_effort=(
+                    config.deepseek_advanced_primary_reasoning_effort
+                ),
+                checkpoint_manager=checkpoint_manager,
+            ),
+            "integrity": _complete_assessment_stage(
+                provider,
+                stage="integrity",
+                schema_model=ExternalAssessmentIntegrity,
+                review=review,
+                runtime_context=runtime_context,
+                metadata=metadata,
+                manifest=manifest,
+                config=config,
+                prior_outputs=None,
+                max_output_tokens=(
+                    config.external_assessment_integrity_max_output_tokens
+                ),
+                reasoning_effort=(
+                    config.deepseek_advanced_primary_reasoning_effort
+                ),
+                checkpoint_manager=checkpoint_manager,
+            ),
+        },
+        start_progress=87,
+        end_progress=92,
+        phase_label="The remaining evidence domains",
     )
-    evidence_task = _complete_assessment_stage(
-        provider,
-        stage="evidence",
-        schema_model=ExternalAssessmentEvidence,
-        review=review,
-        runtime_context=runtime_context,
-        metadata=metadata,
-        manifest=manifest,
-        config=config,
-        prior_outputs=None,
-        max_output_tokens=config.external_assessment_evidence_max_output_tokens,
-        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
-        checkpoint_manager=checkpoint_manager,
-    )
-    foundation, evidence = await asyncio.gather(
-        asyncio.wait_for(
-            foundation_task,
-            timeout=config.external_assessment_stage_timeout_seconds,
-        ),
-        asyncio.wait_for(
-            evidence_task,
-            timeout=config.external_assessment_stage_timeout_seconds,
-        ),
-    )
+
+    foundation = analysis_results["foundation"]
+    evidence_core = analysis_results["evidence_core"]
+    integrity = analysis_results["integrity"]
     outputs["foundation"] = foundation.data
-    outputs["evidence"] = evidence.data
-    results.extend([foundation, evidence])
-    await progress(91, "Foundation and evidence assessment completed")
+    evidence_payload = {
+        **evidence_core.data,
+        **integrity.data,
+    }
+    outputs["evidence"] = ExternalAssessmentEvidence.model_validate(
+        evidence_payload
+    ).model_dump()
+    results.extend([foundation, evidence_core, integrity])
 
-    await progress(93, "Preparing corrections and oral examination questions")
-    corrections = await asyncio.wait_for(
-        _complete_assessment_stage(
-        provider,
-        stage="corrections",
-        schema_model=ExternalAssessmentCorrections,
-        review=review,
-        runtime_context=runtime_context,
-        metadata=metadata,
-        manifest=manifest,
-        config=config,
-        prior_outputs=outputs,
-        max_output_tokens=config.external_assessment_corrections_max_output_tokens,
-        reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
-            checkpoint_manager=checkpoint_manager,
-        ),
-        timeout=config.external_assessment_stage_timeout_seconds,
+    await progress(
+        93,
+        "Preparing corrections and the independent recommendation in parallel",
     )
+    synthesis_results = await run_parallel(
+        {
+            "corrections": _complete_assessment_stage(
+                provider,
+                stage="corrections",
+                schema_model=ExternalAssessmentCorrections,
+                review=review,
+                runtime_context=runtime_context,
+                metadata=metadata,
+                manifest=manifest,
+                config=config,
+                prior_outputs=outputs,
+                max_output_tokens=(
+                    config.external_assessment_corrections_max_output_tokens
+                ),
+                reasoning_effort=(
+                    config.deepseek_advanced_primary_reasoning_effort
+                ),
+                checkpoint_manager=checkpoint_manager,
+            ),
+            "decision": _complete_assessment_stage(
+                provider,
+                stage="decision",
+                schema_model=ExternalAssessmentDecision,
+                review=review,
+                runtime_context=runtime_context,
+                metadata=metadata,
+                manifest=manifest,
+                config=config,
+                prior_outputs=outputs,
+                max_output_tokens=(
+                    config.external_assessment_decision_max_output_tokens
+                ),
+                reasoning_effort=(
+                    config.deepseek_advanced_primary_reasoning_effort
+                ),
+                checkpoint_manager=checkpoint_manager,
+            ),
+        },
+        start_progress=93,
+        end_progress=96,
+        phase_label="The final synthesis",
+    )
+    corrections = synthesis_results["corrections"]
+    decision = synthesis_results["decision"]
     outputs["corrections"] = corrections.data
-    results.append(corrections)
-
-    await progress(95, "Finalising the independent examiner recommendation")
-    decision = await asyncio.wait_for(
-        _complete_assessment_stage(
-        provider,
-        stage="decision",
-        schema_model=ExternalAssessmentDecision,
-        review=review,
-        runtime_context=runtime_context,
-        metadata=metadata,
-        manifest=manifest,
-        config=config,
-        prior_outputs=outputs,
-        max_output_tokens=config.external_assessment_decision_max_output_tokens,
-        reasoning_effort=config.deepseek_advanced_reasoning_effort,
-            checkpoint_manager=checkpoint_manager,
-        ),
-        timeout=config.external_assessment_stage_timeout_seconds,
-    )
     outputs["decision"] = decision.data
-    results.append(decision)
+    results.extend([corrections, decision])
 
     merged = {
         **outputs["foundation"],
@@ -1383,7 +1589,7 @@ async def enrich_with_external_assessment(
 
     review["external_assessment"] = assessment
     review["external_assessment_usage"] = {
-        "generation_mode": "staged_grounded",
+        "generation_mode": "parallel_grounded",
         "api_call_count": len(usage_records),
         "estimated_cost_usd": round(total_cost, 6),
         "calls": usage_records,
@@ -1400,7 +1606,9 @@ async def enrich_with_external_assessment(
             + len(usage_records)
         )
         ai_review["external_assessment_call"] = True
-        ai_review["external_assessment_generation_mode"] = "staged_grounded"
+        ai_review["external_assessment_generation_mode"] = (
+            "parallel_grounded"
+        )
 
     summary = review.setdefault("summary", {})
     summary.update({
@@ -1413,8 +1621,8 @@ async def enrich_with_external_assessment(
         "external_recommendation_label": assessment["recommendation_label"],
         "chapter_one_gate_status": assessment["chapter_one_gate_status"],
         "external_assessment_available": True,
-        "external_assessment_generation_mode": "staged_grounded",
-        "external_assessment_stage_count": 4,
+        "external_assessment_generation_mode": "parallel_grounded",
+        "external_assessment_stage_count": 5,
         "external_assessment_manifest_hash": manifest.get("manifest_hash"),
         "external_assessment_coverage_status": manifest.get("coverage_status"),
         "external_assessment_coverage_score": manifest.get("coverage_score"),

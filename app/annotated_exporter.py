@@ -10,6 +10,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
+from docx.table import Table
 
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
@@ -123,7 +124,25 @@ def _comment_body(row: Dict[str, Any]) -> str:
         action = assessment or "Revise this passage to address the identified academic weakness."
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
     example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
-    body = action
+
+    reference = clean_text(
+        row.get("reference_label")
+        or row.get("section_reference")
+        or row.get("section")
+    )
+    if not row.get("table_reference"):
+        table_evidence = next(
+            (item for item in row.get("evidence") or [] if item.get("table_number")),
+            None,
+        )
+        if table_evidence:
+            number = clean_text(table_evidence.get("table_number", ""))
+            title = clean_text(table_evidence.get("table_title", ""))
+            table_reference = f"Table {number}" if number else "Table"
+            if title:
+                table_reference += f": {title}"
+            reference = f"{reference}, {table_reference}" if reference else table_reference
+    body = f"{reference}: {action}" if reference else action
     if example:
         body += f" Example: {example}"
     return _shorten_comment(body)
@@ -219,14 +238,85 @@ def _merge_nearby_span_groups(
     return merged
 
 
-def _paragraph_number_map(document) -> Dict[int, Paragraph]:
-    output: Dict[int, Paragraph] = {}
-    counter = 0
-    for paragraph in document.paragraphs:
-        if clean_text(paragraph.text):
-            counter += 1
-            output[counter] = paragraph
-    return output
+_TABLE_CAPTION_RE = re.compile(
+    r"^\s*table\s+(?P<number>[A-Za-z]?\d+(?:\.\d+)*|[IVXLC]+)\b\s*[:.\-–—]?\s*(?P<title>.*)$",
+    flags=re.I,
+)
+
+
+def _docx_blocks(document):
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield Paragraph(child, document)
+        elif child.tag == qn("w:tbl"):
+            yield Table(child, document)
+
+
+def _source_locator_map(document):
+    output: Dict[int, Dict[str, Any]] = {}
+    tables: Dict[int, Dict[str, Any]] = {}
+    paragraph_no = 0
+    table_index = 0
+    pending_caption: Optional[Dict[str, Any]] = None
+
+    for block in _docx_blocks(document):
+        if isinstance(block, Table):
+            table_index += 1
+            table_info = {
+                "table": block,
+                "caption_paragraph": (pending_caption or {}).get("paragraph"),
+                "table_number": (pending_caption or {}).get("table_number", str(table_index)),
+                "table_title": (pending_caption or {}).get("table_title", ""),
+            }
+            tables[table_index] = table_info
+            caption_number = int((pending_caption or {}).get("paragraph_number") or 0)
+            if caption_number and caption_number in output:
+                output[caption_number].update({
+                    "kind": "table_caption",
+                    "table_index": table_index,
+                    "table": block,
+                    **table_info,
+                })
+            for row_index, row in enumerate(block.rows, start=1):
+                values = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
+                if not values:
+                    continue
+                paragraph_no += 1
+                cell_paragraphs = []
+                for cell in row.cells:
+                    cell_paragraphs.extend(
+                        paragraph for paragraph in cell.paragraphs
+                        if clean_text(paragraph.text)
+                    )
+                output[paragraph_no] = {
+                    "kind": "table_row",
+                    "table_index": table_index,
+                    "table_row": row_index,
+                    "table": block,
+                    "cell_paragraphs": cell_paragraphs,
+                    **table_info,
+                }
+            pending_caption = None
+            continue
+
+        text = clean_text(block.text)
+        if not text:
+            continue
+        paragraph_no += 1
+        output[paragraph_no] = {
+            "kind": "paragraph",
+            "paragraph": block,
+        }
+        match = _TABLE_CAPTION_RE.match(text)
+        if match:
+            pending_caption = {
+                "paragraph": block,
+                "paragraph_number": paragraph_no,
+                "table_number": clean_text(match.group("number")),
+                "table_title": clean_text(match.group("title")),
+            }
+
+    return output, tables
 
 
 def _find_heading(document, headings: Iterable[str]) -> Optional[Paragraph]:
@@ -267,6 +357,18 @@ def _insert_green_comment_after(paragraph: Paragraph, comments: List[str]) -> Pa
     return new_para
 
 
+def _insert_green_comment_after_table(table: Table, comments: List[str]) -> Paragraph:
+    new_p = OxmlElement("w:p")
+    table._tbl.addnext(new_p)
+    new_para = Paragraph(new_p, table._parent)
+    grouped = _format_comment_group(comments)
+    run = new_para.add_run(grouped)
+    run._r.get_or_add_rPr()
+    _set_run_colour(run._r, COMMENT_GREEN)
+    run.italic = True
+    return new_para
+
+
 def _append_review_notes(document, comments: List[str]) -> None:
     if not comments:
         return
@@ -297,53 +399,103 @@ def _remove_trailing_empty_paragraphs(document, keep: int = 1) -> None:
 
 def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     document = Document(io.BytesIO(source_bytes))
-    paragraph_map = _paragraph_number_map(document)
+    source_map, table_map = _source_locator_map(document)
 
-    # Evidence-linked issues are inserted immediately after the relevant red sentence.
+    # Exact quotations may be marked in red. When no exact quotation is
+    # available, the comment is placed after the correct paragraph rather than
+    # colouring an arbitrary sentence. Table findings are placed after the
+    # relevant table and explicitly identify the table number.
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
+    after_paragraph: Dict[int, List[str]] = defaultdict(list)
+    by_table: Dict[int, List[str]] = defaultdict(list)
     missing_by_heading: Dict[Tuple[str, ...], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
 
-    review_rows = list(review.get("academic_findings", [])) + list(review.get("alignment_results", [])) + list(review.get("revision_results", []))
+    review_rows = (
+        list(review.get("academic_findings", []))
+        + list(review.get("alignment_results", []))
+        + list(review.get("revision_results", []))
+    )
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
+        if row.get("annotation_eligible") is False:
+            continue
+
         comment = _comment_body(row)
         evidence = [
             item for item in (row.get("evidence") or [])
-            if not item.get("is_heading") and item.get("document_role", "current") == "current"
+            if not item.get("is_heading")
+            and item.get("document_role", "current") == "current"
         ]
         if evidence:
             best = evidence[0]
-            paragraph_number = best.get("paragraph")
-            paragraph = paragraph_map.get(paragraph_number)
-            if paragraph is not None:
-                span = _best_span(
-                    paragraph.text,
-                    best.get("matched_terms") or [],
-                    row.get("problematic_quote", ""),
-                )
-                by_paragraph[paragraph_number][span].append(comment)
-                continue
-        headings = tuple(row.get("headings") or [])
+            try:
+                paragraph_number = int(best.get("paragraph"))
+            except (TypeError, ValueError):
+                paragraph_number = 0
+            locator = source_map.get(paragraph_number)
+            if locator is not None:
+                if locator.get("kind") in {"table_row", "table_caption"} or best.get("table_index"):
+                    table_index = int(locator.get("table_index") or best.get("table_index") or 0)
+                    if table_index:
+                        by_table[table_index].append(comment)
+                        continue
+                paragraph = locator.get("paragraph")
+                if paragraph is not None:
+                    quote = clean_text(row.get("problematic_quote", ""))
+                    exact_start = paragraph.text.find(quote) if quote else -1
+                    if exact_start >= 0:
+                        by_paragraph[paragraph_number][
+                            (exact_start, exact_start + len(quote))
+                        ].append(comment)
+                    else:
+                        after_paragraph[paragraph_number].append(comment)
+                    continue
+
+        headings = tuple(row.get("headings") or [row.get("section_reference") or row.get("section")])
+        headings = tuple(value for value in headings if clean_text(value))
         if headings:
             missing_by_heading[headings].append(comment)
         else:
             fallback_comments.append(comment)
 
     for paragraph_number, span_groups in by_paragraph.items():
-        paragraph = paragraph_map.get(paragraph_number)
+        locator = source_map.get(paragraph_number) or {}
+        paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        # Merge overlapping or immediately adjacent findings, then work backwards so
-        # inserted comments do not alter earlier character offsets.
         merged_groups = _merge_nearby_span_groups(span_groups)
         for (start, end), comments in reversed(merged_groups):
             combined = _format_comment_group(comments)
-            _mark_span_and_insert_comment(paragraph, start, end, combined)
+            if not _mark_span_and_insert_comment(paragraph, start, end, combined):
+                after_paragraph[paragraph_number].extend(comments)
 
-    # Missing requirements have no source text to colour. Place the green instruction
-    # directly below the most relevant section heading.
+    for paragraph_number, comments in after_paragraph.items():
+        locator = source_map.get(paragraph_number) or {}
+        paragraph = locator.get("paragraph")
+        if paragraph is not None:
+            _insert_green_comment_after(paragraph, list(dict.fromkeys(comments)))
+        else:
+            fallback_comments.extend(comments)
+
+    # Work in reverse document order so inserting after one table does not alter
+    # the relative position of comments for later tables.
+    for table_index in sorted(by_table, reverse=True):
+        table_info = table_map.get(table_index) or {}
+        table = table_info.get("table")
+        comments = list(dict.fromkeys(by_table[table_index]))
+        if table is not None:
+            _insert_green_comment_after_table(table, comments)
+        else:
+            caption = table_info.get("caption_paragraph")
+            if caption is not None:
+                _insert_green_comment_after(caption, comments)
+            else:
+                fallback_comments.extend(comments)
+
+    # Findings about absent or underdeveloped material are placed under the
+    # exact supplied section or subsection heading.
     for headings, comments in missing_by_heading.items():
         unique_comments = list(dict.fromkeys(comments))
         heading = _find_heading(document, headings)

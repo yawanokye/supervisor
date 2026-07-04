@@ -338,6 +338,8 @@ class DeepSeekProvider:
         purpose: str,
         reasoning_effort: Optional[str] = None,
         max_output_tokens: Optional[int] = None,
+        request_timeout_seconds: Optional[int] = None,
+        request_max_retries: Optional[int] = None,
     ) -> ProviderResult:
         contract = _json_contract(schema_model)
         reinforced_system = (
@@ -402,8 +404,16 @@ class DeepSeekProvider:
                         "Content-Type": "application/json",
                     },
                     payload=request_body,
-                    timeout_seconds=self.config.timeout_seconds,
-                    max_retries=self.config.max_retries,
+                    timeout_seconds=(
+                        request_timeout_seconds
+                        if request_timeout_seconds is not None
+                        else self.config.timeout_seconds
+                    ),
+                    max_retries=(
+                        request_max_retries
+                        if request_max_retries is not None
+                        else self.config.max_retries
+                    ),
                 )
 
                 raw = _extract_json_text(_deepseek_output_text(payload))
