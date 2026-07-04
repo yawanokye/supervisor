@@ -34,9 +34,9 @@ def test_issue_limits_are_concise_but_level_calibrated():
     assert REVIEW_LEVEL_PROFILES["advanced"]["normal_issue_limit_per_section"] == 5
 
 
-def test_single_compact_audit_is_present_for_all_depths():
+def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.8.5" in source
-    assert "single_compact_evidence_audit" in source
-    assert "verification_batches = _batch" not in source
-    assert "AI_RECOVERY_BATCH_SIZE" not in source  # config owns env parsing
+    assert "academic-comment-audit-v1.8.6-universal" in source
+    assert "Accuracy is mandatory at every review depth" in source
+    assert "verification_batches" in source
+    assert "audit_model = config.deepseek_advanced_model" in source

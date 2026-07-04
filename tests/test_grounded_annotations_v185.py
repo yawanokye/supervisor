@@ -78,10 +78,10 @@ def test_annotated_table_comment_names_section_and_table_without_arbitrary_red_t
 
     annotated = build_annotated_docx(source, review)
     out = Document(io.BytesIO(annotated))
-    text = "\n".join(paragraph.text for paragraph in out.paragraphs)
+    comments = [comment.text for comment in out.comments]
 
-    assert "4.2 Regression Results, Table 4.1: Regression estimates" in text
-    assert "Explain the coefficient" in text
+    assert any("4.2 Regression Results, Table 4.1: Regression estimates" in text for text in comments)
+    assert any("Explain the coefficient" in text for text in comments)
     assert 'w:val="C00000"' not in out.element.xml
 
 
@@ -190,15 +190,13 @@ def test_table_caption_evidence_is_linked_to_the_table_for_annotation():
 
     annotated = build_annotated_docx(source, review)
     out = Document(io.BytesIO(annotated))
-    body_xml = out.element.body.xml
-    comment_position = body_xml.find("Supervisor comment")
-    table_position = body_xml.find("w:tbl")
-
-    assert "5.3 Measurement Model, Table 5.2: Construct reliability and validity" in "\n".join(
-        paragraph.text for paragraph in out.paragraphs
+    comments = [comment.text for comment in out.comments]
+    assert any(
+        "5.3 Measurement Model, Table 5.2: Construct reliability and validity" in text
+        for text in comments
     )
-    assert table_position >= 0
-    assert comment_position > table_position
+    assert len(comments) == 1
+    assert "w:commentRangeStart" in out.element.body.xml
 
 
 @pytest.mark.parametrize("academic_level, expected_label", [
