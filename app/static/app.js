@@ -685,6 +685,22 @@ async function waitForReview(pollUrl, options = {}) {
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
         return review;
       }
+      if (job.status === "failed" && job.resume_url) {
+        const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
+        loadingMessage.textContent = savedUnits
+          ? `The review stopped safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Recovering the interrupted stage…`
+          : "The review stopped safely. Recovering the interrupted stage…";
+        if (!resumeRequested) {
+          resumeRequested = true;
+          try {
+            await requestJobResume(job.resume_url);
+          } catch (_) {
+            // The portal keeps the manual Recover action available.
+          }
+        }
+        pollDelay = 5000;
+        continue;
+      }
       if (job.status === "failed") {
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
         const terminalError = new Error(
