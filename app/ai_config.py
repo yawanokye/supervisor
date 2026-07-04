@@ -114,6 +114,7 @@ class HybridAIConfig:
     external_assessment_evidence_max_output_tokens: int = 4600
     external_assessment_corrections_max_output_tokens: int = 4200
     external_assessment_decision_max_output_tokens: int = 3000
+    external_assessment_stage_timeout_seconds: int = 1200
 
     @classmethod
     def from_env(cls) -> "HybridAIConfig":
@@ -194,6 +195,10 @@ class HybridAIConfig:
             external_assessment_decision_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_DECISION_MAX_OUTPUT_TOKENS",
                 3000,
+            ),
+            external_assessment_stage_timeout_seconds=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS",
+                1200,
             ),
         )
 

@@ -33,7 +33,7 @@ from .auth import (
     validate_password,
     verify_secret,
 )
-from .database import ReviewRecord, SessionLocal, User, get_db, init_db
+from .database import ReviewCheckpoint, ReviewRecord, SessionLocal, User, get_db, init_db
 from .checkpointing import (
     CheckpointManager,
     load_job_payload,
@@ -72,6 +72,10 @@ JOB_STALE_AFTER_SECONDS = max(
     JOB_HEARTBEAT_SECONDS * 2,
     int(os.getenv("JOB_STALE_AFTER_SECONDS", "180")),
 )
+STAGE_STALE_AFTER_SECONDS = max(
+    600,
+    int(os.getenv("STAGE_STALE_AFTER_SECONDS", "1800")),
+)
 MAX_AUTO_RESUMES = max(0, int(os.getenv("MAX_AUTO_RESUMES", "3")))
 AUTO_RESUME_JOBS = os.getenv("AUTO_RESUME_JOBS", "true").strip().lower() in {
     "1", "true", "yes", "on"
@@ -83,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.7.0",
+    version="1.8.3",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -102,6 +106,7 @@ ANNOTATED_CACHE: Dict[str, bytes] = {}
 AI_USAGE_CACHE: Dict[str, dict] = {}
 JOB_CACHE: Dict[str, Dict[str, Any]] = {}
 BACKGROUND_TASKS: set[asyncio.Task] = set()
+JOB_TASKS: Dict[str, asyncio.Task] = {}
 RUNNING_JOB_IDS: set[str] = set()
 SCHEDULED_JOB_IDS: set[str] = set()
 LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
@@ -422,6 +427,15 @@ async def lecturer_portal(request: Request, db: Session = Depends(get_db)):
     if user.must_change_password:
         return RedirectResponse("/account/password", status_code=303)
     reviews = db.query(ReviewRecord).filter(ReviewRecord.lecturer_id == user.id).order_by(ReviewRecord.created_at.desc()).limit(100).all()
+    now = datetime.now(timezone.utc)
+    for row in reviews:
+        row.is_stalled = _is_stalled_record(db, row)
+        last_activity = _stage_last_activity(db, row)
+        row.stage_age_minutes = (
+            int(max(0, (now - last_activity).total_seconds()) // 60)
+            if last_activity
+            else 0
+        )
     total = len(reviews)
     completed = sum(1 for row in reviews if row.status == "completed")
     processing = sum(1 for row in reviews if row.status in {"queued", "processing", "paused"})
@@ -767,6 +781,47 @@ def _claim_job(job_id: str, *, resumed: bool) -> bool:
     return True
 
 
+
+
+def _stage_last_activity(db: Session, record: ReviewRecord) -> Optional[datetime]:
+    if not record.current_stage:
+        return _normalise_db_datetime(record.started_at or record.created_at)
+    checkpoint = (
+        db.query(ReviewCheckpoint)
+        .filter(
+            ReviewCheckpoint.job_id == record.job_id,
+            ReviewCheckpoint.stage_key == record.current_stage,
+        )
+        .first()
+    )
+    value = checkpoint.updated_at if checkpoint else (record.started_at or record.created_at)
+    return _normalise_db_datetime(value)
+
+
+def _is_stalled_record(db: Session, record: ReviewRecord) -> bool:
+    if record.status != "processing":
+        return False
+    last_activity = _stage_last_activity(db, record)
+    if not last_activity:
+        return False
+    return (datetime.now(timezone.utc) - last_activity).total_seconds() >= STAGE_STALE_AFTER_SECONDS
+
+
+def _assert_job_lease(job_id: str) -> None:
+    with SessionLocal() as db:
+        record = (
+            db.query(ReviewRecord)
+            .filter(ReviewRecord.job_id == job_id)
+            .first()
+        )
+        if (
+            not record
+            or record.status != "processing"
+            or record.lease_owner != WORKER_ID
+        ):
+            raise asyncio.CancelledError()
+
+
 def _release_job_lease(job_id: str) -> None:
     with SessionLocal() as db:
         record = (
@@ -788,7 +843,7 @@ def _heartbeat_job(job_id: str) -> None:
             .filter(ReviewRecord.job_id == job_id)
             .first()
         )
-        if not record or record.status == "completed":
+        if not record or record.status != "processing":
             return
         if record.lease_owner not in {None, WORKER_ID}:
             return
@@ -844,10 +899,12 @@ def _schedule_review_job(
     task = asyncio.create_task(
         _run_review_job(job_id, payload, resumed=resumed)
     )
+    JOB_TASKS[job_id] = task
     BACKGROUND_TASKS.add(task)
 
     def _cleanup(completed: asyncio.Task) -> None:
         SCHEDULED_JOB_IDS.discard(job_id)
+        JOB_TASKS.pop(job_id, None)
         BACKGROUND_TASKS.discard(completed)
 
     task.add_done_callback(_cleanup)
@@ -1067,6 +1124,7 @@ async def _run_review_job(
             config = HybridAIConfig.from_env()
 
             async def progress_callback(value: int, message: str) -> None:
+                _assert_job_lease(job_id)
                 _job_update(
                     job_id,
                     progress=value,
@@ -1238,6 +1296,7 @@ async def _run_review_job(
             else:
                 ANNOTATED_CACHE[review["review_id"]] = annotated_data
 
+        _assert_job_lease(job_id)
         REVIEW_CACHE[review["review_id"]] = review
         await asyncio.to_thread(
             save_review_json,
@@ -1356,7 +1415,7 @@ async def _run_review_job(
             recoverable=True,
             resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        if AUTO_RESUME_JOBS:
+        if AUTO_RESUME_JOBS and not str(current_stage).startswith("external-"):
             asyncio.create_task(_delayed_auto_resume(job_id))
     except AIProviderError as exc:
         logger.exception("Expert review provider failure")
@@ -1381,7 +1440,7 @@ async def _run_review_job(
             recoverable=True,
             resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        if AUTO_RESUME_JOBS:
+        if AUTO_RESUME_JOBS and not str(current_stage).startswith("external-"):
             asyncio.create_task(_delayed_auto_resume(job_id))
     except Exception as exc:
         logger.exception("Unexpected background review failure")

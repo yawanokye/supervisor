@@ -1298,8 +1298,14 @@ async def enrich_with_external_assessment(
         checkpoint_manager=checkpoint_manager,
     )
     foundation, evidence = await asyncio.gather(
-        foundation_task,
-        evidence_task,
+        asyncio.wait_for(
+            foundation_task,
+            timeout=config.external_assessment_stage_timeout_seconds,
+        ),
+        asyncio.wait_for(
+            evidence_task,
+            timeout=config.external_assessment_stage_timeout_seconds,
+        ),
     )
     outputs["foundation"] = foundation.data
     outputs["evidence"] = evidence.data
@@ -1307,7 +1313,8 @@ async def enrich_with_external_assessment(
     await progress(91, "Foundation and evidence assessment completed")
 
     await progress(93, "Preparing corrections and oral examination questions")
-    corrections = await _complete_assessment_stage(
+    corrections = await asyncio.wait_for(
+        _complete_assessment_stage(
         provider,
         stage="corrections",
         schema_model=ExternalAssessmentCorrections,
@@ -1319,13 +1326,16 @@ async def enrich_with_external_assessment(
         prior_outputs=outputs,
         max_output_tokens=config.external_assessment_corrections_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_primary_reasoning_effort,
-        checkpoint_manager=checkpoint_manager,
+            checkpoint_manager=checkpoint_manager,
+        ),
+        timeout=config.external_assessment_stage_timeout_seconds,
     )
     outputs["corrections"] = corrections.data
     results.append(corrections)
 
     await progress(95, "Finalising the independent examiner recommendation")
-    decision = await _complete_assessment_stage(
+    decision = await asyncio.wait_for(
+        _complete_assessment_stage(
         provider,
         stage="decision",
         schema_model=ExternalAssessmentDecision,
@@ -1337,7 +1347,9 @@ async def enrich_with_external_assessment(
         prior_outputs=outputs,
         max_output_tokens=config.external_assessment_decision_max_output_tokens,
         reasoning_effort=config.deepseek_advanced_reasoning_effort,
-        checkpoint_manager=checkpoint_manager,
+            checkpoint_manager=checkpoint_manager,
+        ),
+        timeout=config.external_assessment_stage_timeout_seconds,
     )
     outputs["decision"] = decision.data
     results.append(decision)
