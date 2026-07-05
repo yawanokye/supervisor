@@ -345,7 +345,7 @@ class HybridAIConfig:
                 "AI_ADVANCED_SECTION_BATCH_SIZE", 4
             ),
             verification_batch_size=_env_int(
-                "AI_VERIFICATION_BATCH_SIZE", 48
+                "AI_VERIFICATION_BATCH_SIZE", 12
             ),
             recovery_batch_size=_env_int("AI_RECOVERY_BATCH_SIZE", 6),
             max_recovery_batches=_env_int("AI_MAX_RECOVERY_BATCHES", 2),

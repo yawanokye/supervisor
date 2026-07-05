@@ -16,7 +16,7 @@ from docx.table import Table
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.1-native-comments-user-author"
+ANNOTATION_EXPORT_VERSION = "1.9.5-native-comments-validated-output"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -143,6 +143,8 @@ def _comment_body(row: Dict[str, Any]) -> str:
                 table_reference += f": {title}"
             reference = f"{reference}, {table_reference}" if reference else table_reference
     body = f"{reference}: {action}" if reference else action
+    if row.get("manual_confirmation_required"):
+        body += " [Manual confirmation recommended because the independent audit request was unavailable; the comment passed exact evidence and placement checks.]"
     if example:
         body += f" Example: {example}"
     return _shorten_comment(body)
@@ -540,6 +542,15 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
             int(item.get("paragraph") or 0),
         )
     return sorted(evidence, key=rank)
+
+def native_comment_count(docx_bytes: bytes) -> int:
+    """Return the number of native Word comments in an exported DOCX."""
+    try:
+        document = Document(io.BytesIO(docx_bytes))
+        return len(list(document.comments))
+    except Exception:
+        return 0
+
 
 def build_annotated_docx(
     source_bytes: bytes,

@@ -17,10 +17,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
-from .academic_ai_engine import enrich_review_with_academic_ai
+from .academic_ai_engine import ReviewOutputValidationError, enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_providers import AIProviderError
-from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx
+from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, native_comment_count
 from .auth import (
     authenticate,
     create_bootstrap_admin,
@@ -1032,7 +1032,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.4-unified-supervisory-and-external",
+            "pipeline": "review-pipeline-v1.9.5-adaptive-audit-and-output-validation",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1138,7 +1138,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.3-simplified-chapter-review",
+                "pipeline": "academic-review-complete-v1.9.5-adaptive-audit-output",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1256,10 +1256,26 @@ async def _run_review_job(
             is_external = (
                 payload.get("workflow_type") == "external_assessment"
             )
+            actionable_findings = [
+                row for row in review.get("academic_findings") or []
+                if row.get("status") in {
+                    "partly_meets_requirement",
+                    "does_not_meet_requirement",
+                    "manual_review_required",
+                }
+                and row.get("annotation_eligible") is not False
+            ]
             review["summary"]["annotated_document_available"] = (
                 not is_external
                 and payload["filename"].lower().endswith(".docx")
+                and bool(actionable_findings)
             )
+            if not is_external and not actionable_findings:
+                review["summary"]["annotation_warning"] = (
+                    "No grounded actionable comments were available for annotation. "
+                    "The review must be rebuilt rather than downloading an empty annotated document."
+                )
+                review["summary"]["review_rebuild_recommended"] = True
             review["summary"].update({
                 "checkpoint_resume_enabled": True,
                 "checkpoint_count": checkpoints.completed_count(),
@@ -1304,6 +1320,10 @@ async def _run_review_job(
                         review,
                         reviewer_name or None,
                     )
+                    if native_comment_count(annotated_data) < 1:
+                        raise RuntimeError(
+                            "The annotated DOCX was generated without native Word comments."
+                        )
                     ANNOTATED_CACHE[review["review_id"]] = annotated_data
                     save_annotated(review["review_id"], annotated_data)
                     review["summary"].update({
@@ -1350,7 +1370,10 @@ async def _run_review_job(
                 )
                 record.current_stage = "completed"
                 record.checkpoint_count = checkpoints.completed_count()
-                record.recoverable = False
+                record.recoverable = bool(
+                    summary.get("review_rebuild_recommended")
+                    and payload_available(job_id)
+                )
                 record.overall_score = float(
                     summary.get("overall_score") or 0
                 )
@@ -1374,7 +1397,10 @@ async def _run_review_job(
             ),
             current_stage="completed",
             checkpoint_count=checkpoints.completed_count(),
-            recoverable=False,
+            recoverable=bool(
+                review.get("summary", {}).get("review_rebuild_recommended")
+                and payload_available(job_id)
+            ),
             review_id=review["review_id"],
             result_url=f'/api/review/{review["review_id"]}',
         )
@@ -1428,6 +1454,32 @@ async def _run_review_job(
                 if saved_payload_available
                 else None
             ),
+        )
+    except ReviewOutputValidationError as exc:
+        checkpoints.mark_failed(current_stage, str(exc))
+        saved_payload_available = payload_available(job_id)
+        _job_update(
+            job_id,
+            status="paused" if saved_payload_available else "failed",
+            message=(
+                "Review paused because usable comments could not be validated"
+                if saved_payload_available
+                else "Review stopped because usable comments could not be validated"
+            ),
+            error=(
+                clean_text(str(exc))
+                + (
+                    " The upload and completed extraction are saved. Select Resume once "
+                    "to retry only the academic review and comment audit."
+                    if saved_payload_available else ""
+                )
+            ),
+            current_stage=current_stage,
+            checkpoint_count=checkpoints.completed_count(),
+            retryable=saved_payload_available,
+            recoverable=saved_payload_available,
+            payload_available=saved_payload_available,
+            resume_url=(f"/api/review/jobs/{job_id}/resume" if saved_payload_available else None),
         )
     except (ValueError, AIConfigurationError) as exc:
         checkpoints.mark_failed(current_stage, str(exc))
@@ -1882,15 +1934,52 @@ async def resume_review_job(
     ):
         raise HTTPException(status_code=404, detail="Review job not found.")
     if record.status == "completed":
+        completed_review = (
+            REVIEW_CACHE.get(record.review_id)
+            or (load_review_json(record.review_id) if record.review_id else None)
+            or {}
+        )
+        completed_summary = completed_review.get("summary") or {}
+        limited_output = bool(
+            completed_summary.get("review_rebuild_recommended")
+            or completed_summary.get("readiness_label") == "Review completed with a limitation"
+            or (
+                float(completed_summary.get("overall_score") or 0.0) < 85.0
+                and not (completed_review.get("academic_findings") or [])
+            )
+        )
+        if not (limited_output and payload_available(job_id)):
+            return {
+                "job_id": job_id,
+                "status": "completed",
+                "review_id": record.review_id,
+                "result_url": (
+                    f"/api/review/{record.review_id}"
+                    if record.review_id
+                    else None
+                ),
+            }
+        record.status = "queued"
+        record.message = "Rebuild requested for the limited review output"
+        record.error = None
+        record.recoverable = True
+        record.completed_at = None
+        db.commit()
+        JOB_CACHE.pop(job_id, None)
+        scheduled = _schedule_review_job(job_id, resumed=True)
+        if "text/html" in request.headers.get("accept", ""):
+            _set_flash(
+                request,
+                "The limited review is being rebuilt from the saved document extraction.",
+                "success",
+            )
+            return RedirectResponse("/portal", status_code=303)
         return {
             "job_id": job_id,
-            "status": "completed",
-            "review_id": record.review_id,
-            "result_url": (
-                f"/api/review/{record.review_id}"
-                if record.review_id
-                else None
-            ),
+            "status": "queued" if scheduled else record.status,
+            "progress": int(record.progress or 2),
+            "message": record.message,
+            "poll_url": f"/api/review/jobs/{job_id}",
         }
     if record.status in {"queued", "processing"} or job_id in RUNNING_JOB_IDS:
         return {

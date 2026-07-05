@@ -38,6 +38,10 @@ from .supervisory_accuracy_guard import (
 )
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
+class ReviewOutputValidationError(RuntimeError):
+    """Raised when a review would complete without usable, grounded feedback."""
+
+
 ACTIONABLE_STATUS = {
     "critical": ("does_not_meet_requirement", "Critical revision"),
     "major": ("does_not_meet_requirement", "Major revision"),
@@ -1207,6 +1211,8 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "problematic_quote": clean_text(issue.get("problematic_quote", "")),
         "headings": [section],
         "annotation_eligible": bool(evidence),
+        "verification_status": issue.get("verification_status", "deterministic_or_primary"),
+        "manual_confirmation_required": bool(issue.get("manual_confirmation_required")),
     }
 
 
@@ -1516,7 +1522,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.3-chapter-packet-review",
+            "pipeline": "academic-review-v1.9.5-adaptive-audit-output",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1814,8 +1820,10 @@ async def enrich_review_with_academic_ai(
 
     # Accuracy is mandatory at every review depth. Light, Standard and
     # Advanced differ in the amount of feedback shown, not in factual
-    # verification. Every proposed issue therefore receives an independent
-    # evidence audit using the strongest configured review model.
+    # verification. Proposed findings are audited in small batches. A failed
+    # batch is split once into focused sub-batches before a deterministic,
+    # evidence-grounded fallback is used. This prevents an otherwise useful
+    # review from being exported with an empty report and no Word comments.
     if all_primary:
         audit_model = config.openai_final_audit_model
         audit_effort = config.openai_final_audit_reasoning_effort
@@ -1827,9 +1835,10 @@ async def enrich_review_with_academic_ai(
         verification_batches: List[List[Dict[str, Any]]] = []
         pending: List[Dict[str, Any]] = []
         pending_issues = 0
+        batch_limit = max(4, config.verification_batch_size)
         for section_review in section_reviews:
             count = max(1, len(section_review.get("issues") or []))
-            if pending and pending_issues + count > max(4, config.verification_batch_size):
+            if pending and pending_issues + count > batch_limit:
                 verification_batches.append(pending)
                 pending = []
                 pending_issues = 0
@@ -1838,11 +1847,31 @@ async def enrich_review_with_academic_ai(
         if pending:
             verification_batches.append(pending)
 
-        async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
+        def split_failed_batch(
+            batch: Sequence[Dict[str, Any]], max_issues: int = 4
+        ) -> List[List[Dict[str, Any]]]:
+            pieces: List[Dict[str, Any]] = []
+            for section_review in batch:
+                issues = list(section_review.get("issues") or [])
+                if not issues:
+                    continue
+                for offset in range(0, len(issues), max_issues):
+                    copy = dict(section_review)
+                    copy["issues"] = issues[offset:offset + max_issues]
+                    pieces.append(copy)
+            return [[piece] for piece in pieces]
+
+        async def verify_batch(
+            batch_label: str,
+            batch: Sequence[Dict[str, Any]],
+            *,
+            retry: bool = False,
+        ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.3-compact-gpt-5.4",
-                "batch": batch_index,
+                "pipeline": "academic-comment-audit-v1.9.5-adaptive-batches",
+                "batch": batch_label,
+                "retry": retry,
                 "depth": depth,
                 "academic_level": academic_level,
                 "model": audit_model,
@@ -1864,14 +1893,20 @@ async def enrich_review_with_academic_ai(
                         stage_key,
                         input_hash=audit_hash,
                         progress=68,
-                        message=f"Verifying review comments {batch_index + 1} of {len(verification_batches)}",
+                        message=(
+                            "Retrying a focused comment audit"
+                            if retry else "Verifying review comments"
+                        ),
                     )
                 result = await openai.complete_json(
                     model=audit_model,
                     system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
                     user_prompt=prompt,
                     schema_model=AcademicVerificationBatch,
-                    purpose=f"{depth}_universal_comment_accuracy_audit",
+                    purpose=(
+                        f"{depth}_focused_comment_accuracy_retry"
+                        if retry else f"{depth}_universal_comment_accuracy_audit"
+                    ),
                     reasoning_effort=audit_effort,
                     max_output_tokens=audit_tokens,
                 )
@@ -1885,14 +1920,40 @@ async def enrich_review_with_academic_ai(
                     )
             return result
 
-        audit_results = await _run_limited(
-            [verify_batch(index, batch) for index, batch in enumerate(verification_batches)],
+        initial_results = await _run_limited(
+            [
+                verify_batch(str(index), batch)
+                for index, batch in enumerate(verification_batches)
+            ],
             min(config.max_parallel_calls, max(1, len(verification_batches))),
         )
 
+        audit_units: List[Tuple[List[Dict[str, Any]], Any, bool]] = []
+        retry_specs: List[Tuple[str, List[Dict[str, Any]]]] = []
+        for batch_index, (batch, result) in enumerate(
+            zip(verification_batches, initial_results)
+        ):
+            if isinstance(result, Exception):
+                for retry_index, retry_batch in enumerate(split_failed_batch(batch)):
+                    retry_specs.append((f"{batch_index}-retry-{retry_index}", retry_batch))
+            else:
+                audit_units.append((list(batch), result, False))
+
+        if retry_specs:
+            retry_results = await _run_limited(
+                [
+                    verify_batch(label, retry_batch, retry=True)
+                    for label, retry_batch in retry_specs
+                ],
+                min(2, config.max_parallel_calls, max(1, len(retry_specs))),
+            )
+            for (_, retry_batch), result in zip(retry_specs, retry_results):
+                audit_units.append((retry_batch, result, True))
+
         verified_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         successful_audits = 0
-        for batch, result in zip(verification_batches, audit_results):
+        fallback_audits = 0
+        for batch, result, was_retry in audit_units:
             batch_primary = [
                 issue for section_review in batch
                 for issue in section_review.get("issues") or []
@@ -1902,15 +1963,11 @@ async def enrich_review_with_academic_ai(
                 for section_review in batch
                 for paragraph in section_review.get("source_section", {}).get("paragraphs") or []
             }
-            if isinstance(result, Exception):
+            fallback_mode = isinstance(result, Exception)
+            if fallback_mode:
                 verification_failed = True
-                # Preserve only well-supported primary findings. The deterministic
-                # gate below still removes false absence claims, wrong locations
-                # and ungrounded table references.
-                merged = [
-                    item for item in batch_primary
-                    if float(item.get("confidence") or 0.0) >= 0.82
-                ]
+                fallback_audits += 1
+                merged = list(batch_primary)
             else:
                 successful_audits += 1
                 usage_records.append(_usage_cost(result.usage, config))
@@ -1918,6 +1975,11 @@ async def enrich_review_with_academic_ai(
 
             valid_rows: List[Dict[str, Any]] = []
             for item in merged:
+                if fallback_mode:
+                    severity = str(item.get("severity") or "minor").lower()
+                    confidence = float(item.get("confidence") or 0.0)
+                    if severity == "minor" or confidence < 0.60:
+                        continue
                 valid = _valid_issue(
                     item, paragraph_index, context_lock, allowed_ids=allowed_ids
                 )
@@ -1927,6 +1989,17 @@ async def enrich_review_with_academic_ai(
                 valid_rows, paragraph_index, current
             )
             for valid in gated_rows:
+                if fallback_mode:
+                    valid["verification_status"] = "deterministic_fallback"
+                    valid["manual_confirmation_required"] = True
+                    valid["confidence"] = min(
+                        float(valid.get("confidence") or 0.0), 0.72
+                    )
+                else:
+                    valid["verification_status"] = (
+                        "focused_ai_audit" if was_retry else "independent_ai_audit"
+                    )
+                    valid["manual_confirmation_required"] = False
                 verified_by_section[normalised(valid.get("section", ""))].append(valid)
 
         for section_review in section_reviews:
@@ -1944,13 +2017,14 @@ async def enrich_review_with_academic_ai(
                 if target is not None:
                     target["issues"].extend(values)
 
-        if successful_audits < len(verification_batches):
+        if fallback_audits:
             verification_failed = True
             for section_review in section_reviews:
                 section_review["coverage_warning"] = (
                     section_review.get("coverage_warning", "")
                     + " One or more independent accuracy-audit batches were unavailable; "
-                      "only high-confidence, deterministically grounded findings were retained."
+                      "the displayed comments passed exact evidence and placement checks "
+                      "but are marked for manual confirmation."
                 ).strip()
 
 
@@ -1969,6 +2043,17 @@ async def enrich_review_with_academic_ai(
     all_issues = _consolidate_repetitive_issues(
         _deduplicate_issues(raw_issues)
     )
+    if not all_issues:
+        low_scoring_sections = [
+            section for section in section_reviews
+            if float(section.get("section_score") or 0.0) < 75.0
+        ]
+        if low_scoring_sections:
+            raise ReviewOutputValidationError(
+                "The academic reviewer identified weaknesses, but no grounded "
+                "findings survived the accuracy audit. The review has been "
+                "paused instead of exporting an empty report and an unannotated document."
+            )
     strengths = []
     seen = set()
     for section_review in section_reviews:
@@ -2053,6 +2138,14 @@ async def enrich_review_with_academic_ai(
         "accuracy_gate_dropped": accuracy_gate_stats.get("dropped", 0),
         "accuracy_gate_adjusted": accuracy_gate_stats.get("adjusted", 0),
         "universal_accuracy_audit_applied": True,
+        "verified_finding_count": sum(
+            1 for issue in all_issues
+            if issue.get("verification_status") in {"independent_ai_audit", "focused_ai_audit"}
+        ),
+        "manual_confirmation_finding_count": sum(
+            1 for issue in all_issues if issue.get("manual_confirmation_required")
+        ),
+        "review_rebuild_recommended": bool(incomplete and not finding_rows),
     })
     review["study_context"] = public_context(context_lock)
     review["academic_findings"] = finding_rows
