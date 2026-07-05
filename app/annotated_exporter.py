@@ -16,7 +16,7 @@ from docx.table import Table
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.8.8-native-comments-factual-placement"
+ANNOTATION_EXPORT_VERSION = "1.9.1-native-comments-user-author"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -190,7 +190,38 @@ def _replace_run_with_parts(run, before: str, marked: str, after: str):
     return created
 
 
-def _add_native_comment(document, runs: Sequence[Run], comment: str) -> bool:
+def _reviewer_initials(name: str) -> str:
+    words = [part for part in re.split(r"\s+", clean_text(name)) if part]
+    if not words:
+        return "RV"
+    initials = "".join(part[0] for part in words if part[0].isalnum()).upper()
+    return (initials or "RV")[:8]
+
+
+def _comment_identity(
+    review: Dict[str, Any], comment_author: Optional[str] = None
+) -> Tuple[str, str]:
+    summary = review.get("summary") or {}
+    metadata = review.get("assessment_metadata") or {}
+    author = clean_text(
+        comment_author
+        or summary.get("reviewer_name")
+        or summary.get("examiner_name")
+        or metadata.get("examiner_name")
+        or review.get("reviewer_name")
+        or "Reviewer"
+    )
+    return author, _reviewer_initials(author)
+
+
+def _add_native_comment(
+    document,
+    runs: Sequence[Run],
+    comment: str,
+    *,
+    author: str,
+    initials: str,
+) -> bool:
     usable = [run for run in runs if run is not None and clean_text(run.text)]
     if not usable:
         return False
@@ -201,8 +232,8 @@ def _add_native_comment(document, runs: Sequence[Run], comment: str) -> bool:
     document.add_comment(
         runs=usable,
         text=clean_text(comment),
-        author="Supervisor Assistant",
-        initials="SA",
+        author=author,
+        initials=initials,
     )
     return True
 
@@ -213,6 +244,9 @@ def _mark_span_and_insert_comment(
     start: int,
     end: int,
     comment: str,
+    *,
+    author: str,
+    initials: str,
 ) -> bool:
     """Anchor a native comment to an exact text range.
 
@@ -244,7 +278,9 @@ def _mark_span_and_insert_comment(
     if not marked_elements:
         return False
     anchor_runs = [Run(element, paragraph) for element in marked_elements]
-    return _add_native_comment(document, anchor_runs, comment)
+    return _add_native_comment(
+        document, anchor_runs, comment, author=author, initials=initials
+    )
 
 def _merge_nearby_span_groups(
     span_groups: Dict[Tuple[int, int], List[str]],
@@ -397,10 +433,23 @@ def _find_heading(
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _comment_on_paragraph(document, paragraph: Paragraph, comments: List[str]) -> bool:
+def _comment_on_paragraph(
+    document,
+    paragraph: Paragraph,
+    comments: List[str],
+    *,
+    author: str,
+    initials: str,
+) -> bool:
     grouped = _format_comment_group(comments)
     runs = [run for run in paragraph.runs if clean_text(run.text)]
-    return bool(grouped and runs and _add_native_comment(document, runs, grouped))
+    return bool(
+        grouped
+        and runs
+        and _add_native_comment(
+            document, runs, grouped, author=author, initials=initials
+        )
+    )
 
 
 def _comment_on_table(
@@ -408,19 +457,30 @@ def _comment_on_table(
     table: Table,
     comments: List[str],
     caption: Optional[Paragraph] = None,
+    *,
+    author: str,
+    initials: str,
 ) -> bool:
     grouped = _format_comment_group(comments)
     if not grouped:
         return False
     if caption is not None:
         runs = [run for run in caption.runs if clean_text(run.text)]
-        if runs and _add_native_comment(document, runs, grouped):
+        if runs and _add_native_comment(
+            document, runs, grouped, author=author, initials=initials
+        ):
             return True
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
                 runs = [run for run in paragraph.runs if clean_text(run.text)]
-                if runs and _add_native_comment(document, runs, grouped):
+                if runs and _add_native_comment(
+                    document,
+                    runs,
+                    grouped,
+                    author=author,
+                    initials=initials,
+                ):
                     return True
     return False
 
@@ -439,7 +499,9 @@ def _first_native_anchor(document) -> Optional[Paragraph]:
     return None
 
 
-def _attach_document_level_comments(document, comments: List[str]) -> None:
+def _attach_document_level_comments(
+    document, comments: List[str], *, author: str, initials: str
+) -> None:
     """Keep unplaced findings in the Review pane without changing body text."""
     unique = list(dict.fromkeys(clean_text(value) for value in comments if clean_text(value)))
     if not unique:
@@ -452,7 +514,9 @@ def _attach_document_level_comments(document, comments: List[str]) -> None:
     for start in range(0, len(unique), 4):
         batch = unique[start:start + 4]
         prefixed = [f"Document-level review note. {value}" for value in batch]
-        if not _comment_on_paragraph(document, anchor, prefixed):
+        if not _comment_on_paragraph(
+            document, anchor, prefixed, author=author, initials=initials
+        ):
             raise RuntimeError("A native Word comment could not be anchored.")
 
 
@@ -477,8 +541,13 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
         )
     return sorted(evidence, key=rank)
 
-def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
+def build_annotated_docx(
+    source_bytes: bytes,
+    review: Dict[str, Any],
+    comment_author: Optional[str] = None,
+) -> bytes:
     document = Document(io.BytesIO(source_bytes))
+    author, initials = _comment_identity(review, comment_author)
     source_map, table_map = _source_locator_map(document)
 
     # All annotations are native Word comments. Exact quotations are used as
@@ -557,7 +626,10 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         merged_groups = _merge_nearby_span_groups(span_groups)
         for (start, end), comments in reversed(merged_groups):
             combined = _format_comment_group(comments)
-            if not _mark_span_and_insert_comment(document, paragraph, start, end, combined):
+            if not _mark_span_and_insert_comment(
+                document, paragraph, start, end, combined,
+                author=author, initials=initials,
+            ):
                 after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
@@ -565,7 +637,9 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         paragraph = locator.get("paragraph")
         if paragraph is not None:
             unique = list(dict.fromkeys(comments))
-            if not _comment_on_paragraph(document, paragraph, unique):
+            if not _comment_on_paragraph(
+                document, paragraph, unique, author=author, initials=initials
+            ):
                 fallback_comments.extend(unique)
         else:
             fallback_comments.extend(comments)
@@ -577,10 +651,15 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         comments = list(dict.fromkeys(by_table[table_index]))
         caption = table_info.get("caption_paragraph")
         if table is not None:
-            if not _comment_on_table(document, table, comments, caption=caption):
+            if not _comment_on_table(
+                document, table, comments, caption=caption,
+                author=author, initials=initials,
+            ):
                 fallback_comments.extend(comments)
         elif caption is not None:
-            if not _comment_on_paragraph(document, caption, comments):
+            if not _comment_on_paragraph(
+                document, caption, comments, author=author, initials=initials
+            ):
                 fallback_comments.extend(comments)
         else:
             fallback_comments.extend(comments)
@@ -591,7 +670,10 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         unique_comments = list(dict.fromkeys(comments))
         heading = _find_heading(document, headings, chapter_number=chapter_number)
         if heading is not None:
-            if not _comment_on_paragraph(document, heading, unique_comments):
+            if not _comment_on_paragraph(
+                document, heading, unique_comments,
+                author=author, initials=initials,
+            ):
                 fallback_comments.extend(unique_comments)
         else:
             fallback_comments.extend(unique_comments)
@@ -599,6 +681,8 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     _attach_document_level_comments(
         document,
         list(dict.fromkeys(fallback_comments)),
+        author=author,
+        initials=initials,
     )
     output = io.BytesIO()
     document.save(output)

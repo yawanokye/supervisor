@@ -1138,6 +1138,7 @@ async def _complete_assessment_stage(
     manifest: Dict[str, Any],
     config: HybridAIConfig,
     prior_outputs: Optional[Dict[str, Any]],
+    model: str,
     max_output_tokens: int,
     reasoning_effort: str,
     checkpoint_manager: Optional[CheckpointManager] = None,
@@ -1174,14 +1175,14 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.8.9-openai-o3-mini-parallel",
+            "pipeline": "external-assessment-v1.9.1-gpt-5.4-parallel",
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
             "validation_feedback": _feedback_for_prompt(feedback),
             "additional_evidence_ids": additional_evidence_ids,
             "manifest_hash": manifest.get("manifest_hash"),
-            "model": config.openai_review_model,
+            "model": model,
             "reasoning_effort": reasoning_effort,
             "max_output_tokens": max_output_tokens,
             "system_prompt": EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
@@ -1229,7 +1230,7 @@ async def _complete_assessment_stage(
             )
         try:
             result = await provider.complete_json(
-                model=config.openai_review_model,
+                model=model,
                 system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 schema_model=schema_model,
@@ -1309,14 +1310,13 @@ def _costed_usage(result: Any, config: HybridAIConfig) -> tuple[Any, float]:
         0,
         result.usage.input_tokens - result.usage.cached_input_tokens,
     )
+    input_price, cached_price, output_price = config.openai_prices_for_model(
+        result.usage.model
+    )
     estimated_cost = (
-        uncached / 1_000_000 * config.openai_review_input_price
-        + result.usage.cached_input_tokens
-        / 1_000_000
-        * config.openai_review_cached_input_price
-        + result.usage.output_tokens
-        / 1_000_000
-        * config.openai_review_output_price
+        uncached / 1_000_000 * input_price
+        + result.usage.cached_input_tokens / 1_000_000 * cached_price
+        + result.usage.output_tokens / 1_000_000 * output_price
     )
     usage = result.usage.model_copy(
         update={"estimated_cost_usd": round(estimated_cost, 6)}
@@ -1444,11 +1444,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
+                model=config.openai_external_model,
                 max_output_tokens=(
                     config.external_assessment_foundation_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_review_reasoning_effort
+                    config.openai_external_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1462,11 +1463,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
+                model=config.openai_external_model,
                 max_output_tokens=(
                     config.external_assessment_evidence_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_review_reasoning_effort
+                    config.openai_external_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1480,11 +1482,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
+                model=config.openai_external_model,
                 max_output_tokens=(
                     config.external_assessment_integrity_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_review_reasoning_effort
+                    config.openai_external_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1523,11 +1526,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=outputs,
+                model=config.openai_external_model,
                 max_output_tokens=(
                     config.external_assessment_corrections_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_review_reasoning_effort
+                    config.openai_external_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1541,11 +1545,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=outputs,
+                model=config.openai_external_model,
                 max_output_tokens=(
                     config.external_assessment_decision_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_review_reasoning_effort
+                    config.openai_external_decision_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),

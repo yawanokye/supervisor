@@ -223,6 +223,83 @@ def _is_doctoral_level(academic_level: Any) -> bool:
     )
 
 
+def _is_research_intensive_level(academic_level: Any) -> bool:
+    value = normalised(str(academic_level or "")).replace("-", " ")
+    if "non research master" in value:
+        return False
+    return (
+        _is_doctoral_level(academic_level)
+        or "research masters" in value
+        or "research master" in value
+        or "mphil" in value
+    )
+
+
+_EXPERT_SECTION_TERMS = (
+    "problem statement", "statement of the problem", "research problem",
+    "purpose of the study", "research objective", "research question",
+    "hypothesis", "significance", "originality", "contribution",
+    "literature review", "theoretical review", "theoretical framework",
+    "conceptual review", "conceptual framework", "empirical review",
+    "research gap", "research method", "methodology", "research approach",
+    "research design", "population", "sampling", "sample size", "instrument",
+    "measurement", "validity", "reliability", "trustworthiness",
+    "data collection", "data analysis", "model specification", "diagnostic",
+    "assumption", "result", "finding", "analysis", "regression", "anova",
+    "correlation", "structural equation", "sem", "pls", "econometric",
+    "discussion", "conclusion", "recommendation", "alignment", "coherence",
+    "whole chapter", "cross chapter", "external examination",
+)
+
+
+def _section_requires_expert_model(
+    section: Dict[str, Any], academic_level: Any
+) -> bool:
+    """Use GPT-5.4 for high-risk academic reasoning at research levels.
+
+    Bachelor's and non-research master's chapter drafting remains on the faster
+    GPT-5.4 mini model. Research master's and doctoral reviews escalate methods,
+    results, discussion, contribution and cross-chapter synthesis to GPT-5.4.
+    """
+    if not _is_research_intensive_level(academic_level):
+        return False
+    # Doctoral work is high-stakes throughout, so every substantive section is
+    # reviewed by GPT-5.4. Research master's work escalates the academically
+    # decisive sections while routine descriptive material remains on the mini
+    # model for speed.
+    if _is_doctoral_level(academic_level):
+        return True
+    parts = [
+        clean_text(section.get("heading", "")),
+        " ".join(clean_text(value) for value in section.get("section_path") or []),
+        " ".join(
+            clean_text(paragraph.get("text", ""))[:1200]
+            for paragraph in section.get("paragraphs") or []
+        ),
+    ]
+    haystack = normalised(" ".join(parts))
+    return any(term in haystack for term in _EXPERT_SECTION_TERMS)
+
+
+def _batch_model_route(
+    batch: Sequence[Dict[str, Any]],
+    academic_level: Any,
+    config: HybridAIConfig,
+) -> Tuple[str, str]:
+    if any(
+        _section_requires_expert_model(section, academic_level)
+        for section in batch
+    ):
+        return (
+            config.openai_expert_model,
+            config.openai_expert_reasoning_effort,
+        )
+    return (
+        config.openai_chapter_model,
+        config.openai_chapter_reasoning_effort,
+    )
+
+
 def _pid(paragraph: Dict[str, Any]) -> str:
     role = paragraph.get("document_role", "current")
     number = int(paragraph.get("paragraph") or 0)
@@ -1046,9 +1123,7 @@ def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
         p_cache = config.deepseek_pro_cached_input_price
         p_out = config.deepseek_pro_output_price
     else:
-        p_in = config.openai_review_input_price
-        p_cache = config.openai_review_cached_input_price
-        p_out = config.openai_review_output_price
+        p_in, p_cache, p_out = config.openai_prices_for_model(usage.model)
 
     cost = (
         uncached / 1_000_000 * p_in
@@ -1261,24 +1336,16 @@ async def enrich_review_with_academic_ai(
     for index, section in enumerate(sections):
         section["section_key"] = _section_key(section, index)
 
+    provider = openai
     if depth == "light":
-        provider = openai
-        primary_model = config.openai_review_model
-        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.light_max_output_tokens
         primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
         batch_size = config.light_section_batch_size
     elif depth == "standard":
-        provider = openai
-        primary_model = config.openai_review_model
-        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.standard_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
     else:
-        provider = openai
-        primary_model = config.openai_review_model
-        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.advanced_section_batch_size
@@ -1310,7 +1377,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.8.9-openai-o3-mini",
+            "pipeline": "academic-review-v1.9.1-openai-tiered-expert",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1370,8 +1437,7 @@ async def enrich_review_with_academic_ai(
         [
             primary_call(
                 batch,
-                primary_model,
-                primary_effort,
+                *_batch_model_route(batch, academic_level, config),
                 "batched_academic_review",
                 primary_tokens,
                 track_primary_progress=True,
@@ -1523,18 +1589,13 @@ async def enrich_review_with_academic_ai(
         if section["section_key"] not in reviewed_keys
     ]
     if retry_sections:
-        if depth in {"light", "standard"}:
-            recovery_model = config.openai_review_model
-            recovery_effort = config.openai_review_reasoning_effort
-            recovery_tokens = (
-                config.light_max_output_tokens
-                if depth == "light"
-                else config.standard_max_output_tokens
-            )
-        else:
-            recovery_model = config.openai_review_model
-            recovery_effort = config.openai_review_reasoning_effort
-            recovery_tokens = config.advanced_max_output_tokens
+        recovery_tokens = (
+            config.light_max_output_tokens
+            if depth == "light"
+            else config.standard_max_output_tokens
+            if depth == "standard"
+            else config.advanced_max_output_tokens
+        )
 
         recovery_batches = _batch(
             retry_sections,
@@ -1545,8 +1606,7 @@ async def enrich_review_with_academic_ai(
             [
                 primary_call(
                     batch,
-                    recovery_model,
-                    recovery_effort,
+                    *_batch_model_route(batch, academic_level, config),
                     "section_review_recovery",
                     recovery_tokens,
                 )
@@ -1567,20 +1627,23 @@ async def enrich_review_with_academic_ai(
     reviewed_keys = {row["section_key"] for row in section_reviews}
     retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
     if retry_sections:
-        if depth in {"light", "standard"}:
-            recovery_model = config.openai_review_model
-            recovery_effort = config.openai_review_reasoning_effort
-            recovery_tokens = (
-                config.light_max_output_tokens
-                if depth == "light"
-                else config.standard_max_output_tokens
-            )
-        else:
-            recovery_model = config.openai_review_model
-            recovery_effort = config.openai_review_reasoning_effort
-            recovery_tokens = config.advanced_max_output_tokens
+        recovery_tokens = (
+            config.light_max_output_tokens
+            if depth == "light"
+            else config.standard_max_output_tokens
+            if depth == "standard"
+            else config.advanced_max_output_tokens
+        )
         retry_results = await _run_limited(
-            [primary_call([section], recovery_model, recovery_effort, "section_review_recovery", recovery_tokens) for section in retry_sections],
+            [
+                primary_call(
+                    [section],
+                    *_batch_model_route([section], academic_level, config),
+                    "section_review_recovery",
+                    recovery_tokens,
+                )
+                for section in retry_sections
+            ],
             config.max_parallel_calls,
         )
         for section, result in zip(retry_sections, retry_results):
@@ -1665,8 +1728,8 @@ async def enrich_review_with_academic_ai(
     # verification. Every proposed issue therefore receives an independent
     # evidence audit using the strongest configured review model.
     if all_primary:
-        audit_model = config.openai_review_model
-        audit_effort = config.openai_review_reasoning_effort
+        audit_model = config.openai_final_audit_model
+        audit_effort = config.openai_final_audit_reasoning_effort
         audit_tokens = max(
             config.advanced_audit_max_output_tokens,
             min(config.advanced_max_output_tokens, 6800),
@@ -1689,7 +1752,7 @@ async def enrich_review_with_academic_ai(
         async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.8.9-openai-o3-mini",
+                "pipeline": "academic-comment-audit-v1.9.1-gpt-5.4",
                 "batch": batch_index,
                 "depth": depth,
                 "academic_level": academic_level,

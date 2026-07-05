@@ -495,7 +495,7 @@ class OpenAIProvider:
             or self.config.openai_reasoning_effort
             or "high"
         ).strip().lower()
-        if effort not in {"low", "medium", "high"}:
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
             effort = "high"
 
         base_input = [

@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.0",
+    version="1.9.1",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.9.0",
+        "version": "1.9.1",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1031,11 +1031,14 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.8.0",
+            "pipeline": "review-pipeline-v1.9.1-tiered-openai-user-comments",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
         })
+        reviewer_name = clean_text(
+            (payload.get("assessment_metadata") or {}).get("examiner_name")
+        )
         final_checkpoint = checkpoints.load(
             "pipeline-final",
             expected_input_hash=final_hash,
@@ -1053,7 +1056,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.8.9-openai-o3-mini",
+                "pipeline": "document-analysis-v1.9.1-tiered-openai",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1134,11 +1137,15 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.8.9-openai-o3-mini",
+                "pipeline": "academic-review-complete-v1.9.1-tiered-openai",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
-                "model": config.openai_review_model,
-                "review_model": config.openai_review_model,
+                "chapter_model": config.openai_chapter_model,
+                "expert_model": config.openai_expert_model,
+                "final_audit_model": config.openai_final_audit_model,
+                "chapter_reasoning_effort": config.openai_chapter_reasoning_effort,
+                "expert_reasoning_effort": config.openai_expert_reasoning_effort,
+                "final_audit_reasoning_effort": config.openai_final_audit_reasoning_effort,
                 "quality_control": config.advanced_quality_control,
             })
             current_stage = "academic-review-complete"
@@ -1183,7 +1190,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.8.9-openai-o3-mini-parallel",
+                    "pipeline": "external-assessment-complete-v1.9.1-gpt-5.4-parallel",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"
@@ -1243,6 +1250,8 @@ async def _run_review_job(
                     review["ai_review"]
                 )
             review = _strip_internal_ai_metadata(review)
+            if reviewer_name:
+                review.setdefault("summary", {})["reviewer_name"] = reviewer_name
             is_external = (
                 payload.get("workflow_type") == "external_assessment"
             )
@@ -1263,6 +1272,9 @@ async def _run_review_job(
                 progress=97,
                 message="Final review data assembled",
             )
+
+        if reviewer_name:
+            review.setdefault("summary", {})["reviewer_name"] = reviewer_name
 
         current_stage = "document-export"
         _job_update(
@@ -1289,6 +1301,7 @@ async def _run_review_job(
                         build_annotated_docx,
                         payload["data"],
                         review,
+                        reviewer_name or None,
                     )
                     ANNOTATED_CACHE[review["review_id"]] = annotated_data
                     save_annotated(review["review_id"], annotated_data)
@@ -2060,7 +2073,17 @@ async def export_annotated_document(review_id: str, request: Request, db: Sessio
             source_name = str((payload or {}).get("filename") or record.filename or "")
             if not source_data or not source_name.lower().endswith(".docx"):
                 raise ValueError("The saved source is not an annotatable DOCX file.")
-            data = await asyncio.to_thread(build_annotated_docx, source_data, review)
+            comment_author = clean_text(
+                (record.lecturer.full_name if record.lecturer else "")
+                or summary.get("reviewer_name")
+                or user.full_name
+            )
+            data = await asyncio.to_thread(
+                build_annotated_docx,
+                source_data,
+                review,
+                comment_author or None,
+            )
             ANNOTATED_CACHE[review_id] = data
             await asyncio.to_thread(save_annotated, review_id, data)
             summary.update({
