@@ -88,9 +88,16 @@ class HybridAIConfig:
     openai_expert_reasoning_effort: str
     openai_final_audit_model: str
     openai_final_audit_reasoning_effort: str
+    # Compatibility aliases for older deployments.
     openai_external_model: str
     openai_external_reasoning_effort: str
     openai_external_decision_reasoning_effort: str
+
+    # Active external-examination roles.
+    openai_external_domain_model: str
+    openai_external_domain_reasoning_effort: str
+    openai_external_adjudicator_model: str
+    openai_external_adjudicator_reasoning_effort: str
 
     confidence_threshold: float
     max_context_chars_per_rule: int
@@ -102,6 +109,10 @@ class HybridAIConfig:
     timeout_seconds: int
     max_retries: int
     max_parallel_calls: int
+    chapter_review_concurrency: int
+    chapter_packet_max_chars: int
+    chapter_recovery_concurrency: int
+    chapter_recovery_max_output_tokens: int
     section_batch_size: int
     light_section_batch_size: int
     advanced_section_batch_size: int
@@ -162,8 +173,10 @@ class HybridAIConfig:
     external_assessment_foundation_max_output_tokens: int = 8000
     external_assessment_evidence_max_output_tokens: int = 8000
     external_assessment_integrity_max_output_tokens: int = 6500
+    # Legacy fields retained for compatibility with old environment files.
     external_assessment_corrections_max_output_tokens: int = 8000
     external_assessment_decision_max_output_tokens: int = 5000
+    external_assessment_adjudication_max_output_tokens: int = 11000
     external_assessment_stage_timeout_seconds: int = 900
     external_assessment_request_timeout_seconds: int = 360
     external_assessment_request_max_retries: int = 0
@@ -189,8 +202,14 @@ class HybridAIConfig:
         audit_model = os.getenv(
             "OPENAI_FINAL_AUDIT_MODEL", expert_model
         ).strip()
-        external_model = os.getenv(
+        legacy_external_model = os.getenv(
             "OPENAI_EXTERNAL_MODEL", expert_model
+        ).strip()
+        external_domain_model = os.getenv(
+            "OPENAI_EXTERNAL_DOMAIN_MODEL", legacy_external_model
+        ).strip()
+        external_adjudicator_model = os.getenv(
+            "OPENAI_EXTERNAL_ADJUDICATOR_MODEL", legacy_external_model
         ).strip()
 
         chapter_effort = _normalise_effort(
@@ -202,12 +221,25 @@ class HybridAIConfig:
         audit_effort = _normalise_effort(
             os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", expert_effort)
         )
-        external_effort = _normalise_effort(
+        legacy_external_effort = _normalise_effort(
             os.getenv("OPENAI_EXTERNAL_REASONING_EFFORT", expert_effort)
         )
-        decision_effort = _normalise_effort(
+        legacy_decision_effort = _normalise_effort(
             os.getenv(
                 "OPENAI_EXTERNAL_DECISION_REASONING_EFFORT", "xhigh"
+            ),
+            default="xhigh",
+        )
+        external_domain_effort = _normalise_effort(
+            os.getenv(
+                "OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT",
+                legacy_external_effort,
+            )
+        )
+        external_adjudicator_effort = _normalise_effort(
+            os.getenv(
+                "OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT",
+                legacy_decision_effort,
             ),
             default="xhigh",
         )
@@ -269,9 +301,13 @@ class HybridAIConfig:
             openai_expert_reasoning_effort=expert_effort,
             openai_final_audit_model=audit_model,
             openai_final_audit_reasoning_effort=audit_effort,
-            openai_external_model=external_model,
-            openai_external_reasoning_effort=external_effort,
-            openai_external_decision_reasoning_effort=decision_effort,
+            openai_external_model=external_domain_model,
+            openai_external_reasoning_effort=external_domain_effort,
+            openai_external_decision_reasoning_effort=external_adjudicator_effort,
+            openai_external_domain_model=external_domain_model,
+            openai_external_domain_reasoning_effort=external_domain_effort,
+            openai_external_adjudicator_model=external_adjudicator_model,
+            openai_external_adjudicator_reasoning_effort=external_adjudicator_effort,
 
             confidence_threshold=_env_float(
                 "AI_CONFIDENCE_THRESHOLD", 0.78, 0.0, 1.0
@@ -289,6 +325,18 @@ class HybridAIConfig:
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 300),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 4),
+            chapter_review_concurrency=_env_int(
+                "AI_CHAPTER_REVIEW_CONCURRENCY", 4
+            ),
+            chapter_packet_max_chars=_env_int(
+                "AI_CHAPTER_PACKET_MAX_CHARS", 120000
+            ),
+            chapter_recovery_concurrency=_env_int(
+                "AI_CHAPTER_RECOVERY_CONCURRENCY", 2
+            ),
+            chapter_recovery_max_output_tokens=_env_int(
+                "AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS", 7000
+            ),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
             light_section_batch_size=_env_int(
                 "AI_LIGHT_SECTION_BATCH_SIZE", 6
@@ -297,7 +345,7 @@ class HybridAIConfig:
                 "AI_ADVANCED_SECTION_BATCH_SIZE", 4
             ),
             verification_batch_size=_env_int(
-                "AI_VERIFICATION_BATCH_SIZE", 24
+                "AI_VERIFICATION_BATCH_SIZE", 48
             ),
             recovery_batch_size=_env_int("AI_RECOVERY_BATCH_SIZE", 6),
             max_recovery_batches=_env_int("AI_MAX_RECOVERY_BATCHES", 2),
@@ -377,6 +425,9 @@ class HybridAIConfig:
             external_assessment_decision_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_DECISION_MAX_OUTPUT_TOKENS", 5000
             ),
+            external_assessment_adjudication_max_output_tokens=_env_int(
+                "AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS", 11000
+            ),
             external_assessment_stage_timeout_seconds=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS", 900
             ),
@@ -439,6 +490,8 @@ class HybridAIConfig:
             self.openai_expert_model.lower(),
             self.openai_final_audit_model.lower(),
             self.openai_external_model.lower(),
+            self.openai_external_domain_model.lower(),
+            self.openai_external_adjudicator_model.lower(),
         }
         if value in expert_models:
             return (

@@ -1032,7 +1032,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.2-stable-coverage-recovery",
+            "pipeline": "review-pipeline-v1.9.4-unified-supervisory-and-external",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1138,7 +1138,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.2-stable-coverage-recovery",
+                "pipeline": "academic-review-complete-v1.9.3-simplified-chapter-review",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1191,7 +1191,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.9.1-gpt-5.4-parallel",
+                    "pipeline": "external-assessment-complete-v1.9.4-three-examiners-one-adjudicator",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"

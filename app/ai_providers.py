@@ -206,12 +206,13 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
     elif name == "DecisionBatch":
         value.setdefault("decisions", [])
 
-    elif name == "ExternalAssessmentReport":
+    elif name in {"ExternalAssessmentReport", "ExternalAssessmentAdjudication"}:
         if isinstance(value.get("external_assessment"), dict):
             value = dict(value["external_assessment"])
         elif isinstance(value.get("report"), dict):
             value = dict(value["report"])
-        value.setdefault("major_strengths", [])
+        if name == "ExternalAssessmentReport":
+            value.setdefault("major_strengths", [])
         value.setdefault("corrections", [])
         value.setdefault("oral_examination_questions", [])
         value.setdefault("priority_corrections_before_award", [])

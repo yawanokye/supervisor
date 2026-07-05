@@ -9,6 +9,7 @@ from .ai_config import HybridAIConfig
 from .ai_providers import AIProviderError, OpenAIProvider
 from .checkpointing import CheckpointManager, stable_hash
 from .assessment_schemas import (
+    ExternalAssessmentAdjudication,
     ExternalAssessmentCorrections,
     ExternalAssessmentDecision,
     ExternalAssessmentEvidence,
@@ -618,6 +619,51 @@ def _stage_prompt(
             "external examination. This combined stage is retained only for backwards "
             "compatibility. Each assessed domain must cite exact allowed_evidence_ids."
         )
+    elif stage == "adjudication":
+        allowed_ids = collect_evidence_ids(prior_outputs or {})
+        payload = {
+            "examination_information": shared["examination_information"],
+            "assessment_rules": shared["assessment_rules"],
+            "document_manifest": shared["document_manifest"],
+            "review_summary": shared["review_summary"],
+            "examiner_a_intellectual_foundation": (prior_outputs or {}).get(
+                "foundation", {}
+            ),
+            "examiner_b_evidence_and_contribution": (prior_outputs or {}).get(
+                "evidence_core", {}
+            ),
+            "examiner_c_integrity_and_presentation": (prior_outputs or {}).get(
+                "integrity", {}
+            ),
+            "previous_examiner_correction_follow_up": shared[
+                "previous_examiner_correction_follow_up"
+            ],
+            "priority_actions": shared["priority_actions"][:30],
+            "alignment_findings": shared["alignment_findings"],
+            "allowed_evidence_ids": allowed_ids,
+            "cited_source_evidence": evidence_catalog(
+                paragraphs,
+                allowed_ids,
+                text_limit=1100 if not concise_retry else 750,
+            ),
+        }
+        instruction = (
+            "Act as the final independent adjudicator. Audit the three domain "
+            "examiner reports against cited_source_evidence and produce, in one "
+            "internally consistent decision, the consolidated corrections schedule, "
+            "priority corrections before award, oral examination questions, overall "
+            "academic judgement, final recommendation and rationale, correction-"
+            "verification arrangements, viva recommendation, confidential comments "
+            "to the university and examiner declaration. Consolidate duplicates, "
+            "reject unsupported or misplaced concerns, and ensure correction severity "
+            "is proportionate to the final recommendation. Every correction must cite "
+            "one or more exact allowed_evidence_ids. Verify every factual and numerical "
+            "claim against cited_source_evidence. If manifest coverage is limited or "
+            "insufficient, use assessment_withheld_incomplete_extraction with low "
+            "confidence. Include no more than 35 material corrections and 14 thesis-"
+            "specific oral questions. Keep the candidate-facing rationale below 340 "
+            "words and confidential comments below 280 words."
+        )
     elif stage == "corrections":
         allowed_ids = collect_evidence_ids(prior_outputs or {})
         payload = {
@@ -891,7 +937,7 @@ def _allowed_ids_for_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         return [item["id"] for item in evidence]
-    if stage == "corrections":
+    if stage in {"adjudication", "corrections"}:
         return collect_evidence_ids(prior_outputs or {})
     return list(manifest.get("valid_evidence_ids") or [])
 
@@ -964,7 +1010,7 @@ def _validate_stage_output(
                 f"{field} cites evidence outside the manifest's relevant research function."
             )
 
-    if stage == "corrections":
+    if stage in {"adjudication", "corrections"}:
         for index, item in enumerate(data.get("corrections") or [], start=1):
             if not item.get("evidence_ids"):
                 feedback.append(f"Correction {index} has no evidence_ids.")
@@ -991,7 +1037,7 @@ def _validate_stage_output(
             f"{item['path']} makes a high-risk reference allegation without citing the exact reference-list evidence."
         )
 
-    if stage == "decision":
+    if stage in {"adjudication", "decision"}:
         recommendation = data.get("final_recommendation")
         if manifest.get("coverage_status") in {"limited", "insufficient"} and recommendation != "assessment_withheld_incomplete_extraction":
             feedback.append(
@@ -1175,7 +1221,7 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.9.1-gpt-5.4-parallel",
+            "pipeline": "external-assessment-v1.9.4-three-examiners-one-adjudicator",
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
@@ -1430,7 +1476,7 @@ async def enrich_with_external_assessment(
 
     await progress(
         87,
-        "Assessing foundation, findings and research integrity in parallel",
+        "Three independent examiners are assessing the thesis in parallel",
     )
     analysis_results = await run_parallel(
         {
@@ -1444,12 +1490,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
-                model=config.openai_external_model,
+                model=config.openai_external_domain_model,
                 max_output_tokens=(
                     config.external_assessment_foundation_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_external_reasoning_effort
+                    config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1463,12 +1509,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
-                model=config.openai_external_model,
+                model=config.openai_external_domain_model,
                 max_output_tokens=(
                     config.external_assessment_evidence_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_external_reasoning_effort
+                    config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1482,12 +1528,12 @@ async def enrich_with_external_assessment(
                 manifest=manifest,
                 config=config,
                 prior_outputs=None,
-                model=config.openai_external_model,
+                model=config.openai_external_domain_model,
                 max_output_tokens=(
                     config.external_assessment_integrity_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_external_reasoning_effort
+                    config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1511,65 +1557,50 @@ async def enrich_with_external_assessment(
     results.extend([foundation, evidence_core, integrity])
 
     await progress(
-        93,
-        "Preparing corrections and the independent recommendation in parallel",
+        94,
+        "The final adjudicator is consolidating corrections and recommendation",
     )
-    synthesis_results = await run_parallel(
-        {
-            "corrections": _complete_assessment_stage(
+    try:
+        adjudication = await asyncio.wait_for(
+            _complete_assessment_stage(
                 provider,
-                stage="corrections",
-                schema_model=ExternalAssessmentCorrections,
+                stage="adjudication",
+                schema_model=ExternalAssessmentAdjudication,
                 review=review,
                 runtime_context=runtime_context,
                 metadata=metadata,
                 manifest=manifest,
                 config=config,
-                prior_outputs=outputs,
-                model=config.openai_external_model,
+                prior_outputs={
+                    "foundation": outputs["foundation"],
+                    "evidence_core": evidence_core.data,
+                    "integrity": integrity.data,
+                },
+                model=config.openai_external_adjudicator_model,
                 max_output_tokens=(
-                    config.external_assessment_corrections_max_output_tokens
+                    config.external_assessment_adjudication_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.openai_external_reasoning_effort
+                    config.openai_external_adjudicator_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
-            "decision": _complete_assessment_stage(
-                provider,
-                stage="decision",
-                schema_model=ExternalAssessmentDecision,
-                review=review,
-                runtime_context=runtime_context,
-                metadata=metadata,
-                manifest=manifest,
-                config=config,
-                prior_outputs=outputs,
-                model=config.openai_external_model,
-                max_output_tokens=(
-                    config.external_assessment_decision_max_output_tokens
-                ),
-                reasoning_effort=(
-                    config.openai_external_decision_reasoning_effort
-                ),
-                checkpoint_manager=checkpoint_manager,
-            ),
-        },
-        start_progress=93,
-        end_progress=96,
-        phase_label="The final synthesis",
-    )
-    corrections = synthesis_results["corrections"]
-    decision = synthesis_results["decision"]
-    outputs["corrections"] = corrections.data
-    outputs["decision"] = decision.data
-    results.extend([corrections, decision])
+            timeout=config.external_assessment_stage_timeout_seconds,
+        )
+    except asyncio.TimeoutError as exc:
+        raise AIProviderError(
+            "The final external-examination adjudication timed out safely. "
+            "Resume the review to reuse the three completed examiner reports."
+        ) from exc
+
+    outputs["adjudication"] = adjudication.data
+    results.append(adjudication)
+    await progress(96, "The final external-examination adjudication is complete")
 
     merged = {
         **outputs["foundation"],
         **outputs["evidence"],
-        **outputs["corrections"],
-        **outputs["decision"],
+        **outputs["adjudication"],
     }
     try:
         validated = ExternalAssessmentReport.model_validate(merged)
@@ -1594,7 +1625,7 @@ async def enrich_with_external_assessment(
 
     review["external_assessment"] = assessment
     review["external_assessment_usage"] = {
-        "generation_mode": "parallel_grounded",
+        "generation_mode": "three_examiners_one_adjudicator",
         "api_call_count": len(usage_records),
         "estimated_cost_usd": round(total_cost, 6),
         "calls": usage_records,
@@ -1612,7 +1643,7 @@ async def enrich_with_external_assessment(
         )
         ai_review["external_assessment_call"] = True
         ai_review["external_assessment_generation_mode"] = (
-            "parallel_grounded"
+            "three_examiners_one_adjudicator"
         )
 
     summary = review.setdefault("summary", {})
@@ -1626,8 +1657,8 @@ async def enrich_with_external_assessment(
         "external_recommendation_label": assessment["recommendation_label"],
         "chapter_one_gate_status": assessment["chapter_one_gate_status"],
         "external_assessment_available": True,
-        "external_assessment_generation_mode": "parallel_grounded",
-        "external_assessment_stage_count": 5,
+        "external_assessment_generation_mode": "three_examiners_one_adjudicator",
+        "external_assessment_stage_count": 4,
         "external_assessment_manifest_hash": manifest.get("manifest_hash"),
         "external_assessment_coverage_status": manifest.get("coverage_status"),
         "external_assessment_coverage_score": manifest.get("coverage_score"),

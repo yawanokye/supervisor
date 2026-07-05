@@ -153,6 +153,33 @@ class ExternalAssessmentDecision(StrictAssessmentModel):
     examiner_declaration: str
 
 
+class ExternalAssessmentAdjudication(StrictAssessmentModel):
+    """Single final adjudication combining corrections and the recommendation.
+
+    Keeping these outputs in one schema prevents a separately generated correction
+    schedule from contradicting the examiner's final recommendation.
+    """
+
+    corrections: List[CorrectionItem] = Field(default_factory=list, max_length=40)
+    oral_examination_questions: List[OralExaminationQuestion] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    priority_corrections_before_award: List[str] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    corrections_verification_assessment: str
+    overall_academic_judgement: str
+    final_recommendation: FinalRecommendation
+    recommendation_rationale: str
+    confidential_comments_to_university: str
+    recommendation_confidence: Literal["high", "moderate", "low"]
+    corrections_verification_by: str
+    viva_recommendation: VivaRecommendation
+    examiner_declaration: str
+
+
 class ExternalAssessmentReport(StrictAssessmentModel):
     study_summary: str
     overall_academic_judgement: str

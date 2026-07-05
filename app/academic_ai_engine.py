@@ -534,6 +534,58 @@ def _batch(values: Sequence[Any], size: int) -> List[List[Any]]:
     return [list(values[i:i + max(1, size)]) for i in range(0, len(values), max(1, size))]
 
 
+def _chapter_review_packets(
+    sections: Sequence[Dict[str, Any]],
+    max_chars: int,
+) -> List[List[Dict[str, Any]]]:
+    """Build stable chapter-level review packets.
+
+    A chapter is reviewed in one request whenever it fits the configured context
+    budget. Long chapters are split only at section boundaries. Synthetic
+    cross-chapter audit units remain separate. This reduces API round trips and
+    prevents a later recovery pass from repeatedly rediscovering the same
+    chapter structure.
+    """
+    packets: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    current_key: Any = object()
+    current_chars = 0
+
+    def section_chars(section: Dict[str, Any]) -> int:
+        return sum(
+            len(clean_text(paragraph.get("text", ""))) + 120
+            for paragraph in section.get("paragraphs") or []
+        ) + 900
+
+    def packet_key(section: Dict[str, Any]) -> Tuple[str, Any]:
+        if section.get("alignment_audit") or section.get("revision_audit"):
+            return ("synthetic", section.get("section_key"))
+        chapter = section.get("chapter_number")
+        if isinstance(chapter, int):
+            return ("chapter", chapter)
+        path = tuple(normalised(value) for value in section.get("section_path") or [])
+        return ("back_matter", path[0] if path else "unassigned")
+
+    for section in sections:
+        key = packet_key(section)
+        size = section_chars(section)
+        must_flush = bool(
+            current
+            and (key != current_key or current_chars + size > max_chars)
+        )
+        if must_flush:
+            packets.append(current)
+            current = []
+            current_chars = 0
+        if not current:
+            current_key = key
+        current.append(section)
+        current_chars += size
+    if current:
+        packets.append(current)
+    return packets
+
+
 def _section_key(section: Dict[str, Any], index: int) -> str:
     """Return a short, stable identifier that models can reproduce exactly.
 
@@ -1438,9 +1490,13 @@ async def enrich_review_with_academic_ai(
             "The selected review service is not configured on the server."
         )
 
-    section_batches = _batch(sections, batch_size)
+    # Review complete chapters in parallel. A long chapter is split only at
+    # section boundaries when it exceeds the configured packet budget.
+    section_batches = _chapter_review_packets(
+        sections, config.chapter_packet_max_chars
+    )
 
-    await _notify(progress_callback, 35, "Reviewing chapter sections")
+    await _notify(progress_callback, 35, "Reviewing chapters in parallel")
 
     completed_primary_batches = 0
     progress_lock = asyncio.Lock()
@@ -1460,7 +1516,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.1-openai-tiered-expert",
+            "pipeline": "academic-review-v1.9.3-chapter-packet-review",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1483,7 +1539,7 @@ async def enrich_review_with_academic_ai(
                     stage_key,
                     input_hash=input_hash,
                     progress=35,
-                    message=f"Reviewing section group containing {len(batch)} unit(s)",
+                    message=f"Reviewing chapter packet containing {len(batch)} section(s)",
                 )
             result = await provider.complete_json(
                 model=model,
@@ -1500,7 +1556,7 @@ async def enrich_review_with_academic_ai(
                     result,
                     input_hash=input_hash,
                     progress=53,
-                    message="Academic section group completed",
+                    message="Academic chapter packet completed",
                 )
 
         if track_primary_progress:
@@ -1512,7 +1568,7 @@ async def enrich_review_with_academic_ai(
                 await _notify(
                     progress_callback,
                     min(progress, 53),
-                    f"Reviewed section group {completed_primary_batches} of {len(section_batches)}",
+                    f"Reviewed chapter packet {completed_primary_batches} of {len(section_batches)}",
                 )
         return result
 
@@ -1527,12 +1583,12 @@ async def enrich_review_with_academic_ai(
             )
             for batch in section_batches
         ],
-        config.max_parallel_calls,
+        min(config.chapter_review_concurrency, max(1, len(section_batches))),
     )
     await _notify(
         progress_callback,
-        54,
-        "Completing section coverage and checking omitted sections",
+        58,
+        "Checking chapter coverage",
     )
 
     usage_records: List[AIUsageRecord] = []
@@ -1664,241 +1720,82 @@ async def enrich_review_with_academic_ai(
         else:
             consume_batch(batch, result)
 
-    # Retry omitted sections in grouped recovery batches. This prevents one
-    # additional API call for every omitted subsection.
+    # Recover omissions once at chapter-packet level. The previous pipeline
+    # attempted grouped, single-section and focused recovery in sequence, which
+    # could loop at 64 percent. One compact chapter retry preserves quality while
+    # bounding latency and API calls.
     reviewed_keys = {row["section_key"] for row in section_reviews}
-    retry_sections = [
-        section for section in sections
-        if section["section_key"] not in reviewed_keys
-    ]
-    if retry_sections:
-        recovery_tokens = (
-            config.light_max_output_tokens
-            if depth == "light"
-            else config.standard_max_output_tokens
-            if depth == "standard"
-            else config.advanced_max_output_tokens
-        )
-
-        recovery_batches = _batch(
-            retry_sections,
-            config.recovery_batch_size,
-        )[: config.max_recovery_batches]
-
-        retry_results = await _run_limited(
-            [
-                primary_call(
-                    batch,
-                    *_batch_model_route(batch, academic_level, config),
-                    "section_review_recovery",
-                    recovery_tokens,
-                )
-                for batch in recovery_batches
-            ],
-            min(config.max_parallel_calls, len(recovery_batches) or 1),
-        )
-        for batch, result in zip(recovery_batches, retry_results):
-            if not isinstance(result, Exception):
-                consume_batch(batch, result)
-
-        await _notify(
-            progress_callback,
-            62,
-            "Completing coverage checks",
-        )
-
-    reviewed_keys = {row["section_key"] for row in section_reviews}
-    retry_sections = [
+    missing_sections = [
         section for section in sections
         if section["section_key"] not in reviewed_keys
     ]
     recovery_errors: Dict[str, str] = {}
-    if retry_sections:
-        recovery_tokens = (
-            config.light_max_output_tokens
-            if depth == "light"
-            else config.standard_max_output_tokens
-            if depth == "standard"
-            else config.advanced_max_output_tokens
-        )
-        retry_results = await _run_limited(
-            [
-                primary_call(
-                    [section],
-                    *_batch_model_route([section], academic_level, config),
-                    "section_review_recovery",
-                    recovery_tokens,
-                )
-                for section in retry_sections
-            ],
-            config.max_parallel_calls,
-        )
-        for section, result in zip(retry_sections, retry_results):
-            if not isinstance(result, Exception):
-                consume_batch([section], result)
-            else:
-                recovery_errors[section["section_key"]] = str(result)
-        await _notify(
-            progress_callback,
-            64,
-            "Recovering any section omitted from the first review pass",
-        )
+    verification_failed = False
 
-    # A compact expert-only recovery pass prevents one repeatedly omitted or
-    # truncated section from forcing the entire job into a pause/resume loop.
-    reviewed_keys = {row["section_key"] for row in section_reviews}
-    focused_sections = [
-        section for section in sections
-        if section["section_key"] not in reviewed_keys
-    ]
-    if focused_sections:
-        focused_total = len(focused_sections)
-        focused_lock = asyncio.Lock()
-        focused_completed = 0
+    if missing_sections:
+        recovery_packets = _chapter_review_packets(
+            missing_sections,
+            max(24000, config.chapter_packet_max_chars // 2),
+        )
+        recovery_tokens = min(
+            primary_tokens, config.chapter_recovery_max_output_tokens
+        )
+        completed_recovery_packets = 0
+        recovery_progress_lock = asyncio.Lock()
 
-        async def focused_recovery_call(
-            section: Dict[str, Any],
+        async def recover_chapter_packet(
+            packet: Sequence[Dict[str, Any]],
         ) -> ProviderResult:
-            nonlocal focused_completed
-            prompt = _focused_section_recovery_prompt(
-                review, section, context_lock, depth
+            nonlocal completed_recovery_packets
+            result = await primary_call(
+                packet,
+                *_batch_model_route(packet, academic_level, config),
+                "chapter_packet_coverage_recovery",
+                recovery_tokens,
             )
-            focused_hash = stable_hash({
-                "pipeline": "academic-focused-section-recovery-v1.9.2",
-                "section_key": section["section_key"],
-                "model": config.openai_expert_model,
-                "effort": config.openai_expert_reasoning_effort,
-                "tokens": config.focused_recovery_max_output_tokens,
-                "system_prompt": FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
-                "user_prompt": prompt,
-            })
-            stage_key = f"academic-focused-recovery-{focused_hash[:20]}"
-            result = (
-                checkpoint_manager.load_provider_result(
-                    stage_key, expected_input_hash=focused_hash
-                )
-                if checkpoint_manager is not None else None
-            )
-            if result is None:
-                if checkpoint_manager is not None:
-                    checkpoint_manager.mark_running(
-                        stage_key,
-                        input_hash=focused_hash,
-                        progress=64,
-                        message=(
-                            "Running focused recovery for "
-                            + clean_text(section.get("heading", "section"))
-                        ),
-                    )
-                result = await provider.complete_json(
-                    model=config.openai_expert_model,
-                    system_prompt=FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
-                    user_prompt=prompt,
-                    schema_model=AcademicSectionReviewItem,
-                    purpose="focused_section_coverage_recovery",
-                    reasoning_effort=config.openai_expert_reasoning_effort,
-                    max_output_tokens=config.focused_recovery_max_output_tokens,
-                    request_timeout_seconds=(
-                        config.focused_recovery_timeout_seconds
-                    ),
-                    request_max_retries=0,
-                )
-                if checkpoint_manager is not None:
-                    checkpoint_manager.save_provider_result(
-                        stage_key,
-                        result,
-                        input_hash=focused_hash,
-                        progress=67,
-                        message="Focused section recovery completed",
-                    )
-            async with focused_lock:
-                focused_completed += 1
-                progress = 64 + int(3 * focused_completed / max(1, focused_total))
+            async with recovery_progress_lock:
+                completed_recovery_packets += 1
+                progress = 58 + int(6 * completed_recovery_packets / max(1, len(recovery_packets)))
                 await _notify(
                     progress_callback,
-                    min(67, progress),
-                    f"Recovered omitted section {focused_completed} of {focused_total}",
+                    min(64, progress),
+                    f"Recovered chapter packet {completed_recovery_packets} of {len(recovery_packets)}",
                 )
             return result
 
-        focused_results = await _run_limited(
-            [focused_recovery_call(section) for section in focused_sections],
+        recovery_results = await _run_limited(
+            [recover_chapter_packet(packet) for packet in recovery_packets],
             min(
-                config.focused_recovery_parallel_calls,
-                max(1, len(focused_sections)),
+                config.chapter_recovery_concurrency,
+                max(1, len(recovery_packets)),
             ),
         )
-        for section, result in zip(focused_sections, focused_results):
+        for packet, result in zip(recovery_packets, recovery_results):
             if isinstance(result, Exception):
-                recovery_errors[section["section_key"]] = str(result)
+                for section in packet:
+                    recovery_errors[section["section_key"]] = str(result)
                 continue
-            wrapped = ProviderResult(
-                data={"reviews": [result.data]},
-                usage=result.usage,
-            )
-            consume_batch([section], wrapped)
+            consume_batch(packet, result)
 
     reviewed_keys = {row["section_key"] for row in section_reviews}
     still_missing = [
         section for section in sections
         if section["section_key"] not in reviewed_keys
     ]
-    short_missing = [
-        section for section in still_missing
-        if len(section.get("paragraphs") or []) <= 2
-        and sum(
-            len(clean_text(paragraph.get("text", "")))
-            for paragraph in section.get("paragraphs") or []
-        ) <= 1200
-    ]
-
-    if (
-        still_missing
-        and len(still_missing) <= config.max_short_section_fallbacks
-        and len(short_missing) == len(still_missing)
-    ):
-        verification_failed = True
-        for section in still_missing:
-            section_reviews.append({
-                "section_key": section["section_key"],
-                "heading": clean_text(
-                    section.get("heading", "Untitled section")
-                ),
-                "chapter_number": section.get("chapter_number"),
-                "section_path": list(section.get("section_path") or []),
-                "part": section.get("part", 1),
-                "paragraph_count": len(section.get("paragraphs") or []),
-                "section_score": 50.0,
-                "section_assessment": (
-                    "This short section was included in the chapter-wide context, "
-                    "but the provider did not return a separate section assessment. "
-                    "Manual confirmation is recommended."
-                ),
-                "coverage_warning": (
-                    "Separate model output was unavailable for this short section."
-                ),
-                "strengths": [],
-                "issues": [],
-                "source_section": section,
-            })
-        still_missing = []
-
     if still_missing:
         verification_failed = True
-        unresolved_count = len(still_missing)
         for section in still_missing:
             section_reviews.append(
                 _unresolved_section_fallback(
-                    section,
-                    recovery_errors.get(section["section_key"], ""),
+                    section, recovery_errors.get(section["section_key"], "")
                 )
             )
         await _notify(
             progress_callback,
-            67,
+            64,
             (
-                f"Preserved {unresolved_count} unresolved section"
-                f"{'s' if unresolved_count != 1 else ''} without unsupported comments"
+                f"Preserved {len(still_missing)} unresolved section"
+                f"{'s' if len(still_missing) != 1 else ''} without unsupported comments"
             ),
         )
 
@@ -1944,7 +1841,7 @@ async def enrich_review_with_academic_ai(
         async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.2-gpt-5.4",
+                "pipeline": "academic-comment-audit-v1.9.3-compact-gpt-5.4",
                 "batch": batch_index,
                 "depth": depth,
                 "academic_level": academic_level,
@@ -2191,6 +2088,10 @@ async def enrich_review_with_academic_ai(
         "advanced_audit_mode": "single_compact_evidence_audit" if depth == "advanced" and all_primary else "not_applicable",
         "api_call_count": len(usage_records),
         "primary_batch_count": len(section_batches),
+        "primary_packet_mode": "chapter_level_parallel",
+        "chapter_packet_max_chars": config.chapter_packet_max_chars,
+        "coverage_recovery_mode": "single_chapter_packet_retry",
+        "verification_batch_size": config.verification_batch_size,
         "context_guard_enabled": True,
     }
     await _notify(progress_callback, 86, "Preparing the annotated review")
