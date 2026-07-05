@@ -11,6 +11,11 @@ def test_fast_defaults(monkeypatch):
         "AI_LIGHT_SECTION_BATCH_SIZE",
         "AI_ADVANCED_SECTION_BATCH_SIZE",
         "AI_STRUCTURED_OUTPUT_RETRIES",
+        "OPENAI_CHAPTER_MODEL",
+        "OPENAI_EXPERT_MODEL",
+        "OPENAI_FINAL_AUDIT_MODEL",
+        "OPENAI_EXTERNAL_MODEL",
+        "OPENAI_REVIEW_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -19,8 +24,10 @@ def test_fast_defaults(monkeypatch):
     assert config.section_batch_size == 5
     assert config.advanced_section_batch_size == 4
     assert config.structured_output_retries == 0
-    assert config.openai_review_model == "o3-mini"
-    assert config.openai_review_reasoning_effort == "high"
+    assert config.openai_chapter_model == "gpt-5.4-mini"
+    assert config.openai_expert_model == "gpt-5.4"
+    assert config.openai_final_audit_model == "gpt-5.4"
+    assert config.openai_chapter_reasoning_effort == "high"
 
 
 def test_typical_chapter_needs_four_advanced_primary_batches():
@@ -36,7 +43,7 @@ def test_issue_limits_are_concise_but_level_calibrated():
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.8.9-openai-o3-mini" in source
+    assert "academic-comment-audit-v1.9.1-gpt-5.4" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
-    assert "audit_model = config.openai_review_model" in source
+    assert "audit_model = config.openai_final_audit_model" in source

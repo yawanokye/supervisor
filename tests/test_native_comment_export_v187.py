@@ -49,6 +49,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
         if row.get("source_kind") == "table_row" and row.get("table_row") == 2
     )
     review = {
+        "summary": {"reviewer_name": "Anokye Mohammed Adam"},
         "academic_findings": [
             {
                 "status": "partly_meets_requirement",
@@ -78,11 +79,14 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.8.8-native-comments-factual-placement"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.1-native-comments-user-author"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     assert len(list(after.comments)) == 2
-    comment_text = "\n".join(comment.text for comment in after.comments)
+    comments = list(after.comments)
+    comment_text = "\n".join(comment.text for comment in comments)
+    assert all(comment.author == "Anokye Mohammed Adam" for comment in comments)
+    assert all(comment.initials == "AMA" for comment in comments)
     assert "Remove the claim" in comment_text
     assert "Table 4.1: Regression estimates" in comment_text
     assert all("Supervisor comment" not in paragraph.text for paragraph in after.paragraphs)
@@ -104,6 +108,7 @@ def test_unplaced_feedback_uses_document_level_native_comment_not_inserted_notes
     source = _docx_bytes(document)
 
     review = {
+        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong"},
         "academic_findings": [
             {
                 "status": "does_not_meet_requirement",
@@ -124,6 +129,35 @@ def test_unplaced_feedback_uses_document_level_native_comment_not_inserted_notes
     assert _visible_content(after) == _visible_content(before)
     comments = list(after.comments)
     assert len(comments) == 1
+    assert comments[0].author == "Dr Priscilla Boafowaa Oppong"
+    assert comments[0].initials == "DPBO"
     assert "Document-level review note" in comments[0].text
     assert "Add the required section" in comments[0].text
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(p.text for p in after.paragraphs)
+
+
+def test_explicit_comment_author_overrides_review_metadata():
+    document = Document()
+    document.add_paragraph("Text requiring review.")
+    source = _docx_bytes(document)
+    rows = extract_docx(source)
+    evidence = next(row for row in rows if "requiring review" in row.get("text", ""))
+    review = {
+        "summary": {"reviewer_name": "Stored Reviewer"},
+        "academic_findings": [{
+            "status": "partly_meets_requirement",
+            "section": "Body",
+            "section_reference": "Body",
+            "required_action": "Clarify this statement.",
+            "problematic_quote": "requiring review",
+            "evidence": [{**evidence, "document_role": "current"}],
+            "annotation_eligible": True,
+        }],
+    }
+    output = Document(io.BytesIO(build_annotated_docx(
+        source, review, "Anokye Mohammed Adam"
+    )))
+    comments = list(output.comments)
+    assert len(comments) == 1
+    assert comments[0].author == "Anokye Mohammed Adam"
+    assert comments[0].initials == "AMA"
