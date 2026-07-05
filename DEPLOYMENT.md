@@ -2,7 +2,7 @@
 
 ## Environment variables
 
-Set `DEEPSEEK_API_KEY`. Light, Standard and Advanced Review use DeepSeek. Every review depth receives an independent factual-accuracy audit with the strongest configured model and maximum reasoning. Review depth changes breadth, not the accuracy threshold.
+Set `OPENAI_API_KEY`. Light, Standard and Advanced Review, the universal accuracy audit, recovery passes and External Assessment now use OpenAI `o3-mini` through the Responses API. Review depth changes breadth, not the factual-accuracy threshold.
 
 ## Commands
 
@@ -12,7 +12,7 @@ Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 
 Health check: `/health`
 
-After replacing an earlier deployment, use **Clear build cache & deploy**. Remove obsolete OpenAI-only routing variables if they are no longer needed.
+After replacing an earlier deployment, use **Clear build cache & deploy**. Keep the existing database and persistent review storage.
 
 
 ## Review-depth settings
@@ -27,7 +27,7 @@ AI_ADVANCED_MAX_OUTPUT_TOKENS=10000
 AI_ADVANCED_SECOND_PASS=true
 ```
 
-All three review depths use DeepSeek and the selected academic-level benchmark. Light, Standard and Advanced Review all receive a separate evidence-grounded accuracy audit. Advanced depth may be broader, but no depth bypasses factual validation.
+All three review depths use OpenAI o3-mini and the selected academic-level benchmark. Light, Standard and Advanced Review all receive a separate evidence-grounded accuracy audit. Advanced depth may be broader, but no depth bypasses factual validation.
 
 ## Institutional portal deployment
 
@@ -78,22 +78,21 @@ of stopping the service.
 
 ## AI provider variables
 
-One DeepSeek API key enables all three review levels:
+One OpenAI API key enables all three review levels and External Assessment:
 
 ```text
-DEEPSEEK_API_KEY=...
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
-DEEPSEEK_ADVANCED_MODEL=deepseek-v4-pro
-DEEPSEEK_THINKING_ENABLED=true
-DEEPSEEK_REASONING_EFFORT=high
-DEEPSEEK_ADVANCED_REASONING_EFFORT=max
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_REVIEW_MODEL=o3-mini
+OPENAI_REVIEW_REASONING_EFFORT=high
+PRICE_OPENAI_REVIEW_INPUT=1.10
+PRICE_OPENAI_REVIEW_CACHED_INPUT=0.55
+PRICE_OPENAI_REVIEW_OUTPUT=4.40
 AI_ADVANCED_SECOND_PASS=true
-AI_ADVANCED_SECTION_BATCH_SIZE=2
-AI_VERIFICATION_BATCH_SIZE=2
+AI_VERIFICATION_BATCH_SIZE=24
 ```
 
-Every review depth performs a separate DeepSeek factual quality-control pass using the strongest configured review model. OpenAI is no longer required for active review routing. Provider names are not displayed in the supervisor or student interface.
+The application uses the Responses API with strict structured outputs. Provider names remain hidden from supervisors and students. Legacy DeepSeek variables may remain unset.
 
 ## Long-running review jobs
 
@@ -105,9 +104,9 @@ AI_JOB_MAX_SECONDS=5400
 
 A completed job returns a small polling response containing a result URL. The full review is fetched separately, which prevents oversized polling responses and reduces browser failures.
 
-## Faster DeepSeek review workflow
+## Faster OpenAI o3-mini review workflow
 
-Version 1.4.1 reduces the number of model requests substantially.
+The grouped review workflow reduces the number of OpenAI requests substantially.
 
 - Light Review processes up to 6 sections per request.
 - Standard Review processes up to 5 sections per request.
@@ -127,8 +126,8 @@ AI_RECOVERY_BATCH_SIZE=6
 AI_MAX_RECOVERY_BATCHES=2
 AI_STRUCTURED_OUTPUT_RETRIES=0
 
-DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT=high
-DEEPSEEK_ADVANCED_REASONING_EFFORT=max
+OPENAI_REVIEW_MODEL=o3-mini
+OPENAI_REVIEW_REASONING_EFFORT=high
 AI_ADVANCED_SECOND_PASS=true
 AI_ADVANCED_AUDIT_MAX_FINDINGS=24
 ```
@@ -174,3 +173,25 @@ No new environment variable is required. Keep the existing persistent database a
 Version 1.8.7 makes native Microsoft Word comments the only annotated-document output. Use **Clear build cache & deploy** and confirm `python-docx==1.2.0` is installed.
 
 Keep the existing persistent review storage mounted. When a user downloads an annotated document created by an older exporter, the app regenerates it from the saved source DOCX and current review findings. If that source payload is no longer available, the app asks for a fresh review rather than serving a legacy file with comments inserted into the text.
+
+## v1.8.8 factual placement deployment
+
+Version 1.8.8 corrects false and misplaced supervisory comments. Use **Clear build cache & deploy** and keep `python-docx==1.2.0`.
+
+The document-analysis, primary-review, comment-audit and completed supervisory-review checkpoint keys have changed. Reviews generated with v1.8.7 or earlier must be submitted as fresh supervisory reviews, or regenerated from the stored original DOCX, so the revised section map and factual-placement controls are applied. External-assessment checkpoints are unaffected.
+
+No new environment variable is required. Keep the existing database and persistent review storage mounted.
+
+## v1.8.9 OpenAI o3-mini deployment
+
+Version 1.8.9 changes all active model routing to OpenAI `o3-mini`. Set `OPENAI_API_KEY`, then use **Clear build cache & deploy**. The review, accuracy-audit, recovery and External Assessment checkpoint hashes changed so old provider outputs are not reused. Keep the existing database and persistent review storage.
+
+Recommended values:
+
+```env
+OPENAI_REVIEW_MODEL=o3-mini
+OPENAI_REVIEW_REASONING_EFFORT=high
+AI_MAX_PARALLEL_CALLS=4
+AI_MAX_RETRIES=1
+AI_STRUCTURED_OUTPUT_RETRIES=0
+```

@@ -25,12 +25,16 @@ services:
         value: 45
       - key: JOB_LEASE_SECONDS
         value: 240
+      - key: OPENAI_REVIEW_MODEL
+        value: o3-mini
+      - key: OPENAI_REVIEW_REASONING_EFFORT
+        value: high
       - key: AI_MAX_PARALLEL_CALLS
         value: 4
       - key: AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS
-        value: 600
+        value: 900
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS
-        value: 240
+        value: 360
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
         value: 0
     disk:

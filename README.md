@@ -1,12 +1,14 @@
-# ProjectReady AI Supervisor Assistant 1.8.7
+# ProjectReady AI Supervisor Assistant 1.8.9
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
+
+Version 1.8.9 moves all active supervisory review and external examination calls to OpenAI o3-mini through the Responses API. The factual-placement, exact-evidence, native Word comment and recommendation safeguards from v1.8.8 remain active.
 
 ## Review philosophy
 
 The official thesis self-evaluation checklist is used internally as a coverage guide. It is not presented to the student as the review, and its item numbers are not shown in the dashboard, annotated document or Word report.
 
-All three review levels examine every detected section and subsection. The difference is the academic benchmark and degree of critical scrutiny, not the amount of the document covered.
+All three review levels examine every detected substantive section and subsection. Structural chapter markers, chapter titles and heading-only parent containers are mapped but are not treated as missing-content sections. The difference is the academic benchmark and degree of critical scrutiny, not the amount of the document covered.
 
 The review covers, where relevant:
 
@@ -35,7 +37,7 @@ Every selected depth receives complete section coverage, source-grounded finding
 
 ## Coverage safeguard
 
-The app requires one substantive assessment for every detected section and subsection. Short or apparently adequate sections cannot be silently omitted. Missing section reviews are retried individually. The job fails rather than exporting a report when any section remains unreviewed.
+The app requires one substantive assessment for every detected substantive section and subsection. Short or apparently adequate sections cannot be silently omitted. Missing section reviews are retried individually. The job fails rather than exporting a report when any section remains unreviewed.
 
 ## Annotated Word output
 
@@ -62,10 +64,10 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 ## Model routing
 
-- Light, Standard and Advanced Review use the selected academic-level benchmark.
-- Every depth receives an independent evidence-grounded accuracy audit using the strongest configured review model and maximum reasoning.
-- Advanced depth may provide more extensive feedback, but it does not receive a lower or higher factual-accuracy threshold than the other depths.
-- OpenAI is not required for active review routing.
+- Light, Standard and Advanced Review use OpenAI `o3-mini` through the Responses API.
+- `OPENAI_REVIEW_REASONING_EFFORT=high` is the default for the primary review, recovery passes, the universal accuracy audit and External Assessment.
+- Review depth controls breadth and detail. It does not relax factual verification or evidence requirements.
+- Structured JSON output is enforced for every model stage before findings are accepted.
 - Review requests run as background jobs and the browser polls for progress.
 
 ## Run locally
@@ -142,6 +144,9 @@ Lecturers can:
 ### Required production environment variables
 
 ```env
+OPENAI_API_KEY=sk-...
+OPENAI_REVIEW_MODEL=o3-mini
+OPENAI_REVIEW_REASONING_EFFORT=high
 DATABASE_URL=postgresql://...
 SESSION_SECRET=use-a-long-random-secret
 COOKIE_SECURE=true
@@ -174,7 +179,7 @@ Provider names remain hidden from supervisors and students.
 - The selected review depth determines breadth and detail.
 - Every depth receives a universal accuracy audit, exact evidence validation and deterministic expert checks before export.
 
-Every review covers every detected section and subsection. No selected depth is permitted to bypass factual validation.
+Every review covers every detected substantive section and subsection. No selected depth is permitted to bypass factual validation.
 
 The internal academic guide is adapted from the supplied thesis self-evaluation framework. It is used only to support coverage and is never shown as checklist codes in the report.
 

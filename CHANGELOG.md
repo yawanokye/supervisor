@@ -1,3 +1,32 @@
+## v1.8.9
+
+- Moves all active supervisory-review, universal accuracy-audit, recovery and External Assessment calls to OpenAI `o3-mini` through the Responses API.
+- Requires `OPENAI_API_KEY` for Light, Standard and Advanced reviews. Legacy DeepSeek settings remain dormant for backwards compatibility only.
+- Uses strict OpenAI structured outputs for every academic-review and examination stage.
+- Applies high reasoning effort by default while preserving the same factual manifest, exact evidence, table-placement and recommendation safeguards at every review depth.
+- Adds OpenAI-specific incomplete-response and output-truncation detection so recoverable jobs pause or retry safely rather than accepting partial JSON.
+- Adds request-level timeout and retry overrides to the OpenAI provider for External Assessment stages.
+- Increases reasoning-model output budgets and timeouts to reduce truncation on long scholarly reviews without weakening the evidence checks.
+- Updates cost tracking to the current configured o3-mini token rates.
+- Changes document, academic-review, accuracy-audit and External Assessment checkpoint hashes so older provider outputs are not reused.
+- Keeps provider and model names out of the supervisor and student interface.
+- Passed 153 automated tests, including Responses API payload, strict-schema and incomplete-output regression tests.
+
+## v1.8.8
+
+- Treats institutional chapter structures as whole-chapter coverage guides rather than content requirements for the chapter heading or each subsection.
+- Excludes bare chapter markers, chapter titles and heading-only parent containers from substantive section review, preventing false instructions to populate already complete chapters.
+- Recognises the chapter Introduction as the place for a concise chapter purpose and roadmap, and suppresses requests for a second introduction under the chapter title when one already exists.
+- Rejects unsupported claims about ANOVA, regression, correlation, tables or other analyses in strengths, findings and section summaries unless the cited section contains that material.
+- Requires the named section or subsection to appear in the evidence for every comment, including cross-section findings.
+- Preserves cross-section method evidence while anchoring table-related comments to the exact cited table, and removes evidence from unrelated tables.
+- Uses exact, chapter-aware heading matching for native Word comments, preventing comments from being attached to keywords or same-named sections in another chapter.
+- Keeps same-named sections, such as Introduction and Chapter Summary, separate by chapter in the supervisor report.
+- Stops keyword entries and reference-list entries from being misclassified as independent academic sections.
+- Separates References and Appendices from Chapter Five so back-matter comments are not reported under the conclusion chapter.
+- Builds the study-context summary from the title, abstract, purpose, problem, delimitation, study area and population rather than countries or sectors mentioned only in the literature review.
+- Invalidates earlier document-analysis, section-review, accuracy-audit and completed-review checkpoints so inaccurate v1.8.7 findings are not restored.
+- Passed 151 automated tests, including attachment-derived regressions for Chapter Three structure, ANOVA claims, exact table placement, back matter and chapter-aware section grouping.
 ## v1.8.7
 
 - Makes native Microsoft Word comments the only annotation output mode.
