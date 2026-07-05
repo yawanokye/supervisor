@@ -749,6 +749,14 @@ async function waitForReview(pollUrl, options = {}) {
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
         return review;
       }
+      if (job.status === "queued" && job.recoverable) {
+        const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
+        loadingMessage.textContent = savedUnits
+          ? `${job.message || "Retrying the interrupted stage automatically"} · ${savedUnits} checkpoint${savedUnits === 1 ? "" : "s"} saved`
+          : (job.message || "Retrying the interrupted stage automatically");
+        pollDelay = 4000;
+        continue;
+      }
       if (job.status === "failed" && job.resume_url) {
         const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
         loadingMessage.textContent = savedUnits

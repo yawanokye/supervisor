@@ -336,3 +336,28 @@ input[type="text"]:focus,input[type="password"]:focus,input[type="email"]:focus,
 .table-action-danger:hover{background:#991b1b}
 .loading-stop-button{margin-top:14px;border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:10px;padding:9px 13px;font-weight:800;cursor:pointer}
 .loading-stop-button:hover{background:#fff1f2}
+
+/* v1.9.7 supervisor token allocation and page-capacity planning */
+.token-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px}
+.token-summary-grid article{padding:18px;border:1px solid var(--line);border-radius:17px;background:#fff;box-shadow:0 9px 28px rgba(22,34,56,.05)}
+.token-summary-grid span,.token-summary-grid strong,.token-summary-grid small{display:block}
+.token-summary-grid span{font-size:.75rem;color:var(--muted);font-weight:750}
+.token-summary-grid strong{margin-top:5px;font-size:1.45rem;color:var(--ink)}
+.token-summary-grid small{margin-top:5px;color:var(--muted);font-size:.7rem;line-height:1.4}
+.card-intro{max-width:780px;margin:7px 0 0;color:var(--muted);font-size:.84rem;line-height:1.55}
+.quota-state{padding:7px 11px;border-radius:999px;font-size:.7rem;font-weight:850;white-space:nowrap}
+.quota-state.enabled{background:#e8f7ee;color:#176b3a}.quota-state.planning{background:#fff4df;color:#8a5b00}
+.bulk-token-form{display:grid;grid-template-columns:1.1fr 1fr 1fr 1.25fr 1.4fr 1.5fr auto;gap:10px;align-items:end;padding:15px;border:1px solid #d9dfff;border-radius:15px;background:#f7f8ff;margin-bottom:20px}
+.bulk-token-form label{display:grid;gap:6px}.bulk-token-form label>span{font-size:.7rem;color:var(--muted);font-weight:800}.bulk-token-form input,.bulk-token-form select,.inline-token-form input,.inline-token-form select{width:100%;min-height:39px;border:1px solid var(--line);border-radius:9px;background:#fff;padding:8px 9px;color:var(--ink)}
+.bulk-token-form .primary-button{min-height:39px;white-space:nowrap}
+.token-table{min-width:1180px}.token-table td{vertical-align:middle}.token-table-wrap{max-height:620px;border:1px solid var(--line);border-radius:13px}.token-table thead{position:sticky;top:0;background:#fff;z-index:2}
+.inline-token-form{display:grid;grid-template-columns:105px 100px 92px 130px auto;gap:6px;align-items:center;min-width:560px}
+.token-method-note{margin:15px 0 0;padding:12px 14px;border-radius:11px;background:var(--soft);color:var(--muted);font-size:.76rem;line-height:1.55}
+.token-positive{color:var(--success)}.token-negative{color:var(--danger)}
+.supervisor-token-card{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:24px;padding:20px 22px;border:1px solid #cfd7ff;border-radius:18px;background:linear-gradient(135deg,#f2f4ff,#fff)}
+.supervisor-token-card h2{margin:2px 0 0}.supervisor-token-card p:last-child{margin:7px 0 0;color:var(--muted);font-size:.85rem}
+.token-card-metrics{display:grid;grid-template-columns:repeat(2,minmax(95px,1fr));gap:9px}.token-card-metrics span{padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;text-align:center}.token-card-metrics strong,.token-card-metrics small{display:block}.token-card-metrics small{margin-top:3px;color:var(--muted);font-size:.7rem}
+.workspace-token-banner{display:flex;align-items:center;justify-content:space-between;gap:24px;margin:0 0 22px;padding:16px 18px;border:1px solid #cfd7ff;border-radius:16px;background:linear-gradient(135deg,#f2f4ff,#fff)}
+.workspace-token-banner span,.workspace-token-banner strong{display:block}.workspace-token-banner span{font-size:.72rem;color:var(--muted);font-weight:800}.workspace-token-banner strong{margin-top:3px;font-size:1.25rem}.workspace-token-banner p{max-width:720px;margin:0;color:var(--muted);font-size:.8rem;line-height:1.5}
+@media(max-width:1150px){.token-summary-grid{grid-template-columns:repeat(3,1fr)}.bulk-token-form{grid-template-columns:repeat(3,1fr)}.bulk-token-form .bulk-note{grid-column:span 2}.bulk-token-form .primary-button{width:100%}}
+@media(max-width:760px){.token-summary-grid{grid-template-columns:1fr 1fr}.bulk-token-form{grid-template-columns:1fr}.bulk-token-form .bulk-note{grid-column:auto}.supervisor-token-card,.workspace-token-banner{display:block}.token-card-metrics{margin-top:14px}.workspace-token-banner p{margin-top:9px}}
