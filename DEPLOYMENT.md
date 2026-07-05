@@ -228,3 +228,17 @@ Version 1.9.1 replaces the single-model o3-mini workflow with role-based routing
 - Native Word comments use the logged-in lecturer’s full name and automatically derived initials, not “Supervisor Assistant”.
 
 Use **Clear build cache & deploy**, retain the database and persistent disk, and remove `OPENAI_REVIEW_MODEL=o3-mini` from Render. Set the role-specific variables listed in the AI provider section. The review, audit and External Assessment checkpoint hashes changed, so earlier model outputs are not reused. Existing annotated files are regenerated with the named comment author when the original source DOCX remains in persistent storage. Otherwise, submit a fresh review.
+
+
+## v1.9.2 focused section recovery
+
+Recommended values:
+
+```env
+AI_FOCUSED_RECOVERY_PARALLEL_CALLS=2
+AI_FOCUSED_RECOVERY_MAX_OUTPUT_TOKENS=4200
+AI_FOCUSED_RECOVERY_TIMEOUT_SECONDS=240
+MAX_AUTO_RESUMES=3
+```
+
+After deployment, a job already paused repeatedly at 64% may have reached the automatic-resume limit. Open Review History and select Resume once. Existing extraction and completed provider checkpoints are reused.

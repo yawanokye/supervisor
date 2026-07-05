@@ -1,3 +1,14 @@
+# Changelog
+
+## v1.9.2 - Stable section recovery
+
+- Fixed the repeated pause/resume loop at 64% during section coverage recovery.
+- Added a compact GPT-5.4 focused recovery request for each omitted section.
+- Reuses completed section checkpoints and retries only unresolved sections.
+- Preserves unresolved sections without inventing comments or labelling present content as missing.
+- Added progress messages from 64% to 67% during focused recovery.
+- Limited automatic resumes so the browser and server cannot restart the same failing stage indefinitely.
+
 ## v1.9.1
 
 - Replaces the single o3-mini workflow with role-based OpenAI routing.

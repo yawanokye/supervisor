@@ -270,3 +270,8 @@ AI_MAX_PARALLEL_CALLS=4
 ```
 
 The temporary fallback path permits the app to remain available but cannot preserve uploaded files across a redeploy. For horizontal scaling beyond one Render instance, replace the disk-backed payload store with S3-compatible object storage because a Render disk is attached to only one service instance.
+
+
+## v1.9.2 section recovery
+
+When a structured chapter response omits one or more sections, the app now runs a compact focused expert recovery only for those sections. Completed checkpoints are reused. Automatic resume attempts are bounded, preventing a job from cycling indefinitely at 64%.

@@ -19,6 +19,12 @@ services:
         value: /tmp/projectready-supervisor/reviews
       - key: AUTO_RESUME_JOBS
         value: true
+      - key: AI_FOCUSED_RECOVERY_PARALLEL_CALLS
+        value: 2
+      - key: AI_FOCUSED_RECOVERY_MAX_OUTPUT_TOKENS
+        value: 4200
+      - key: AI_FOCUSED_RECOVERY_TIMEOUT_SECONDS
+        value: 240
       - key: MAX_AUTO_RESUMES
         value: 3
       - key: JOB_HEARTBEAT_SECONDS
