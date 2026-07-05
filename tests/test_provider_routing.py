@@ -75,7 +75,8 @@ def test_academic_engine_uses_tiered_review_and_expert_audit():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     assert "provider = openai" in source
     assert "_batch_model_route(batch, academic_level, config)" in source
-    assert 'purpose=f"{depth}_universal_comment_accuracy_audit"' in source
+    assert "universal_comment_accuracy_audit" in source
+    assert "focused_comment_accuracy_retry" in source
     assert "audit_model = config.openai_final_audit_model" in source
     assert "audit_effort = config.openai_final_audit_reasoning_effort" in source
     assert '"active_provider": "openai"' in source

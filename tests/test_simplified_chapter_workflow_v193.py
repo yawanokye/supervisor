@@ -70,12 +70,12 @@ def test_fast_chapter_defaults(monkeypatch):
     assert config.chapter_packet_max_chars == 120000
     assert config.chapter_recovery_concurrency == 2
     assert config.chapter_recovery_max_output_tokens == 7000
-    assert config.verification_batch_size == 48
+    assert config.verification_batch_size == 12
 
 
 def test_old_three_stage_section_recovery_removed():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v1.9.3-chapter-packet-review" in source
+    assert "academic-review-v1.9.5-adaptive-audit-output" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source

@@ -24,7 +24,7 @@ def test_fast_defaults(monkeypatch):
     config = HybridAIConfig.from_env()
     assert config.chapter_review_concurrency == 4
     assert config.chapter_packet_max_chars == 120000
-    assert config.verification_batch_size == 48
+    assert config.verification_batch_size == 12
     assert config.structured_output_retries == 0
     assert config.openai_chapter_model == "gpt-5.4-mini"
     assert config.openai_expert_model == "gpt-5.4"
@@ -45,7 +45,7 @@ def test_issue_limits_are_concise_but_level_calibrated():
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.9.3-compact-gpt-5.4" in source
+    assert "academic-comment-audit-v1.9.5-adaptive-batches" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
     assert "_chapter_review_packets" in source

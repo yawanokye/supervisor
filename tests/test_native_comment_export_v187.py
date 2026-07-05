@@ -5,7 +5,7 @@ import zipfile
 
 from docx import Document
 
-from app.annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx
+from app.annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, native_comment_count
 from app.document_parser import extract_docx
 
 
@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.1-native-comments-user-author"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.5-native-comments-validated-output"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     assert len(list(after.comments)) == 2
