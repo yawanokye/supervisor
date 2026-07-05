@@ -43,7 +43,7 @@ def test_issue_limits_are_concise_but_level_calibrated():
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.9.1-gpt-5.4" in source
+    assert "academic-comment-audit-v1.9.2-gpt-5.4" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
     assert "audit_model = config.openai_final_audit_model" in source
