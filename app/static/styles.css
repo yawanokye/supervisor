@@ -330,3 +330,9 @@ input[type="text"]:focus,input[type="password"]:focus,input[type="email"]:focus,
 .inline-action-form{margin:0}
 .table-action-button{border:0;background:var(--brand);color:#fff;border-radius:9px;padding:7px 10px;font-size:.76rem;font-weight:800;cursor:pointer}
 .table-action-button:hover{background:var(--brand-dark)}
+
+.status-record-stopped{background:#f3f4f6;color:#4b5563}
+.table-action-danger{background:var(--danger)}
+.table-action-danger:hover{background:#991b1b}
+.loading-stop-button{margin-top:14px;border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:10px;padding:9px 13px;font-weight:800;cursor:pointer}
+.loading-stop-button:hover{background:#fff1f2}

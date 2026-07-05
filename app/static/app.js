@@ -35,6 +35,7 @@ const lightReviewNote = document.getElementById("lightReviewNote");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
+const stopReviewButton = document.getElementById("stopReviewButton");
 const scopeStructureHelp = document.getElementById("scopeStructureHelp");
 const workflowHelp = document.getElementById("workflowHelp");
 const assessmentMetadataFields = document.getElementById("assessmentMetadataFields");
@@ -640,6 +641,56 @@ async function requestJobResume(resumeUrl) {
   return true;
 }
 
+function setStopReviewUrl(stopUrl) {
+  if (!stopReviewButton) return;
+  if (stopUrl) {
+    stopReviewButton.dataset.stopUrl = stopUrl;
+    stopReviewButton.classList.remove("hidden");
+    stopReviewButton.disabled = false;
+    stopReviewButton.textContent = "Stop review";
+  } else {
+    stopReviewButton.dataset.stopUrl = "";
+    stopReviewButton.classList.add("hidden");
+  }
+}
+
+async function requestJobStop(stopUrl) {
+  if (!stopUrl) return false;
+  const csrf = form.querySelector('input[name="csrf_token"]')?.value || "";
+  const body = new FormData();
+  body.set("csrf_token", csrf);
+  const response = await fetch(stopUrl, {
+    method: "POST",
+    body,
+    headers: { "Accept": "application/json" },
+  });
+  await readJsonSafely(response);
+  return true;
+}
+
+if (stopReviewButton) {
+  stopReviewButton.addEventListener("click", async () => {
+    const stopUrl = stopReviewButton.dataset.stopUrl || "";
+    if (!stopUrl) return;
+    const confirmed = window.confirm(
+      "Stop this review? Completed checkpoints will be kept and you can resume later."
+    );
+    if (!confirmed) return;
+    stopReviewButton.disabled = true;
+    stopReviewButton.textContent = "Stopping…";
+    loadingMessage.textContent = "Stopping the review safely and saving completed checkpoints…";
+    try {
+      await requestJobStop(stopUrl);
+      localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+      window.location.assign("/portal");
+    } catch (error) {
+      stopReviewButton.disabled = false;
+      stopReviewButton.textContent = "Stop review";
+      showFormError(error.message || "The review could not be stopped.");
+    }
+  });
+}
+
 async function waitForReview(pollUrl, options = {}) {
   const started = Number(options.startedAt || Date.now());
   const maximumWait = 2 * 60 * 60 * 1000;
@@ -672,6 +723,7 @@ async function waitForReview(pollUrl, options = {}) {
       temporaryFailures = 0;
       pollDelay = Date.now() - started > 30 * 60 * 1000 ? 10000 : 2500;
       const highestProgress = updateProgress(job);
+      setStopReviewUrl(job.stop_url || (job.job_id ? `/api/review/jobs/${encodeURIComponent(job.job_id)}/stop` : ""));
 
       localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify({
         pollUrl,
@@ -681,7 +733,18 @@ async function waitForReview(pollUrl, options = {}) {
         highestProgress
       }));
 
+      if (job.status === "stopped") {
+        localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        setStopReviewUrl("");
+        const stoppedError = new Error(
+          job.message || "The review was stopped. Completed checkpoints were retained."
+        );
+        stoppedError.terminal = true;
+        stoppedError.stopped = true;
+        throw stoppedError;
+      }
       if (job.status === "completed") {
+        setStopReviewUrl("");
         const review = await fetchCompletedReview(job);
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
         return review;
@@ -704,6 +767,7 @@ async function waitForReview(pollUrl, options = {}) {
       }
       if (job.status === "failed") {
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        setStopReviewUrl("");
         const terminalError = new Error(
           job.error || job.message || "The review could not be completed."
         );
@@ -841,10 +905,16 @@ form.addEventListener("submit", async event => {
       highestProgress: highestDisplayedProgress
     };
     localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify(activeJob));
+    setStopReviewUrl(queued.stop_url || `/api/review/jobs/${encodeURIComponent(queued.job_id)}/stop`);
     const review = await waitForReview(queued.poll_url, activeJob);
     renderReview(review);
     loadingState.classList.add("hidden"); resultsState.classList.remove("hidden");
   } catch (error) {
+    setStopReviewUrl("");
+    if (error && error.stopped) {
+      window.location.assign("/portal");
+      return;
+    }
     loadingState.classList.add("hidden"); emptyState.classList.remove("hidden"); showFormError(error.message);
   } finally {
     submitButton.disabled = false; submitButton.querySelector("span").textContent = selectedWorkflow() === "external_assessment" ? "Submit thesis for external assessment" : "Run expert review";
@@ -886,15 +956,22 @@ async function resumeActiveReviewJob() {
     { reset: true }
   );
 
+  setStopReviewUrl(activeJob.jobId ? `/api/review/jobs/${encodeURIComponent(activeJob.jobId)}/stop` : "");
+
   try {
     const review = await waitForReview(activeJob.pollUrl, activeJob);
     renderReview(review);
     loadingState.classList.add("hidden");
     resultsState.classList.remove("hidden");
   } catch (error) {
+    setStopReviewUrl("");
     loadingState.classList.add("hidden");
     emptyState.classList.remove("hidden");
     localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+    if (error && error.stopped) {
+      window.location.assign("/portal");
+      return;
+    }
     showFormError(error.message);
   }
 }
