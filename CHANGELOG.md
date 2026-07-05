@@ -1,3 +1,17 @@
+## v1.9.4 — Unified supervisory and external-examination workflows
+
+- Retained the simplified v1.9.3 chapter-packet supervisory review.
+- Reorganised External Assessment into three independent domain examiners running in parallel followed by one final adjudicator.
+- Combined the correction schedule, oral questions, overall judgement, recommendation and confidential comments in one final structured response.
+- Removed the separate corrections and decision calls that could produce inconsistent conclusions.
+- Added role-specific external model settings for domain examination and final adjudication, with backwards-compatible aliases.
+- Preserved exact evidence-ID validation, whole-document presence checks, numerical verification, reference-risk safeguards and deterministic recommendation consistency.
+- Added a safe adjudication timeout message that instructs the user to resume while reusing all three completed examiner checkpoints.
+- Reduced the active External Assessment workflow from five model calls to four.
+- Bumped final and external pipeline identifiers while retaining compatible v1.9.3 supervisory chapter checkpoints.
+- Added combined workflow regression tests.
+- Passed 173 automated tests.
+
 # Changelog
 
 ## v1.9.2 - Stable section recovery
@@ -407,3 +421,17 @@
 - Added ownership checks for review jobs, results and downloads.
 - Added CSRF protection, signed sessions and login-attempt lockout.
 - Added durable review JSON and annotated-document storage when `REVIEW_STORAGE_DIR` is backed by a persistent disk.
+
+## v1.9.3 — Simplified chapter-level supervisory review
+
+- Reorganised the active supervisory-review workflow around complete chapter packets rather than many small section batches.
+- Reviews independent chapters concurrently, while long chapters split only at section boundaries.
+- Replaced grouped, single-section and focused recovery chains with one bounded chapter-packet retry.
+- Prevents the repeated 64% pause/resume loop caused by one omitted section response.
+- Preserves unresolved sections without inventing findings or describing present content as missing.
+- Increased the default factual-audit batch size from 24 to 48 findings to reduce API round trips.
+- Kept GPT-5.4 mini for routine chapter review and GPT-5.4 for research-intensive review and final factual audit.
+- Clarified that Light review may be concise but cannot omit critical or major issues.
+- Invalidated earlier supervisory-review checkpoints by introducing v1.9.3 pipeline identifiers.
+- Added chapter-packet execution and recovery configuration.
+- Passed 170 automated tests.

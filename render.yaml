@@ -19,12 +19,16 @@ services:
         value: /tmp/projectready-supervisor/reviews
       - key: AUTO_RESUME_JOBS
         value: true
-      - key: AI_FOCUSED_RECOVERY_PARALLEL_CALLS
+      - key: AI_CHAPTER_REVIEW_CONCURRENCY
+        value: 4
+      - key: AI_CHAPTER_PACKET_MAX_CHARS
+        value: 120000
+      - key: AI_CHAPTER_RECOVERY_CONCURRENCY
         value: 2
-      - key: AI_FOCUSED_RECOVERY_MAX_OUTPUT_TOKENS
-        value: 4200
-      - key: AI_FOCUSED_RECOVERY_TIMEOUT_SECONDS
-        value: 240
+      - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
+        value: 7000
+      - key: AI_VERIFICATION_BATCH_SIZE
+        value: 48
       - key: MAX_AUTO_RESUMES
         value: 3
       - key: JOB_HEARTBEAT_SECONDS
@@ -43,11 +47,13 @@ services:
         value: gpt-5.4
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
         value: high
-      - key: OPENAI_EXTERNAL_MODEL
+      - key: OPENAI_EXTERNAL_DOMAIN_MODEL
         value: gpt-5.4
-      - key: OPENAI_EXTERNAL_REASONING_EFFORT
+      - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT
         value: high
-      - key: OPENAI_EXTERNAL_DECISION_REASONING_EFFORT
+      - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT
         value: xhigh
       - key: AI_MAX_PARALLEL_CALLS
         value: 4
@@ -57,6 +63,8 @@ services:
         value: 360
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
         value: 0
+      - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
+        value: 11000
     disk:
       name: supervisor-review-checkpoints
       mountPath: /var/data

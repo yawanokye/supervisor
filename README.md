@@ -153,9 +153,10 @@ OPENAI_EXPERT_MODEL=gpt-5.4
 OPENAI_EXPERT_REASONING_EFFORT=high
 OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
-OPENAI_EXTERNAL_MODEL=gpt-5.4
-OPENAI_EXTERNAL_REASONING_EFFORT=high
-OPENAI_EXTERNAL_DECISION_REASONING_EFFORT=xhigh
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 DATABASE_URL=postgresql://...
 SESSION_SECRET=use-a-long-random-secret
 COOKIE_SECURE=true
@@ -275,3 +276,84 @@ The temporary fallback path permits the app to remain available but cannot prese
 ## v1.9.2 section recovery
 
 When a structured chapter response omits one or more sections, the app now runs a compact focused expert recovery only for those sections. Completed checkpoints are reused. Automatic resume attempts are bounded, preventing a job from cycling indefinitely at 64%.
+
+## v1.9.3 supervisory-review execution
+
+The active review workflow is deliberately compact:
+
+1. Extract and map the document once.
+2. Build stable chapter packets from the mapped sections and tables.
+3. Review independent chapters concurrently.
+4. Retry omitted content once at chapter-packet level.
+5. Run deterministic factual and placement checks.
+6. Audit approved findings in compact GPT-5.4 batches.
+7. Generate the report and native Word comments.
+
+This architecture removes the repeated section-recovery loop while retaining section-level evidence and comments.
+
+Recommended production settings:
+
+```env
+AI_CHAPTER_REVIEW_CONCURRENCY=4
+AI_CHAPTER_PACKET_MAX_CHARS=120000
+AI_CHAPTER_RECOVERY_CONCURRENCY=2
+AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
+AI_VERIFICATION_BATCH_SIZE=48
+```
+
+
+## v1.9.4 unified supervisory and external-examination execution
+
+The application now uses two compact, evidence-grounded workflows.
+
+### Supervisory review
+
+1. Extract and map the document once.
+2. Build complete chapter packets with their sections, tables and figures.
+3. Review independent chapters concurrently.
+4. Retry omitted material once at chapter-packet level.
+5. Apply deterministic factual and placement checks.
+6. Audit proposed findings in compact GPT-5.4 batches.
+7. Generate the report and native Word comments.
+
+### External examination
+
+1. Build and validate one whole-thesis evidence manifest.
+2. Run three independent domain examiners concurrently:
+   - intellectual foundation, literature and methodology;
+   - results, discussion, conclusions and cross-chapter alignment;
+   - integrity, writing, originality and publication potential.
+3. Run one final adjudicator that audits the three reports against source evidence and produces the corrections, oral questions, final recommendation and confidential comments together.
+4. Apply deterministic evidence, numerical, reference-risk and recommendation-consistency checks before export.
+
+This reduces the external examination from five model calls to four and removes the separate corrections and decision calls that could disagree.
+
+Recommended production settings:
+
+```env
+# Supervisory review
+AI_CHAPTER_REVIEW_CONCURRENCY=4
+AI_CHAPTER_PACKET_MAX_CHARS=120000
+AI_CHAPTER_RECOVERY_CONCURRENCY=2
+AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
+AI_VERIFICATION_BATCH_SIZE=48
+OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_REASONING_EFFORT=high
+OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_REASONING_EFFORT=high
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
+
+# External examination
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
+AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS=8000
+AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS=8000
+AI_EXTERNAL_ASSESSMENT_INTEGRITY_MAX_OUTPUT_TOKENS=6500
+AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS=11000
+AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS=900
+AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS=360
+AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES=0
+```
