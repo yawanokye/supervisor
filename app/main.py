@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.1",
+    version="1.9.2",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.9.1",
+        "version": "1.9.2",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -924,6 +924,7 @@ async def _resume_recoverable_jobs() -> None:
                 ReviewRecord.status.in_(["queued", "processing", "paused"]),
                 ReviewRecord.recoverable.is_(True),
                 ReviewRecord.payload_available.is_(True),
+                ReviewRecord.resume_count < MAX_AUTO_RESUMES,
             )
             .order_by(ReviewRecord.created_at.asc())
             .limit(100)
@@ -1031,7 +1032,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.1-tiered-openai-user-comments",
+            "pipeline": "review-pipeline-v1.9.2-stable-coverage-recovery",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1137,7 +1138,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.1-tiered-openai",
+                "pipeline": "academic-review-complete-v1.9.2-stable-coverage-recovery",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1965,6 +1966,10 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             "recoverable": bool(record.recoverable),
             "payload_available": bool(record.payload_available),
             "resume_count": int(record.resume_count or 0),
+            "auto_resume_allowed": bool(
+                AUTO_RESUME_JOBS
+                and int(record.resume_count or 0) < MAX_AUTO_RESUMES
+            ),
             "last_heartbeat_at": (
                 record.last_heartbeat_at.isoformat()
                 if record.last_heartbeat_at
@@ -1997,6 +2002,10 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
         "recoverable": bool(record.recoverable),
         "payload_available": bool(record.payload_available),
         "resume_count": int(record.resume_count or 0),
+        "auto_resume_allowed": bool(
+            AUTO_RESUME_JOBS
+            and int(record.resume_count or 0) < MAX_AUTO_RESUMES
+        ),
         "last_heartbeat_at": (
             record.last_heartbeat_at.isoformat()
             if record.last_heartbeat_at

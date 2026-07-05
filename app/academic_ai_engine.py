@@ -9,7 +9,12 @@ from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ai_config import AIConfigurationError, HybridAIConfig
-from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT, LIGHT_REVIEW_SYSTEM_PROMPT
+from .ai_prompts import (
+    ACADEMIC_REVIEW_SYSTEM_PROMPT,
+    ACADEMIC_VERIFY_SYSTEM_PROMPT,
+    FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
+    LIGHT_REVIEW_SYSTEM_PROMPT,
+)
 from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
 from .academic_review_guide import guide_for_heading
 from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
@@ -18,6 +23,7 @@ from .ai_schemas import (
     AIUsageRecord,
     AcademicIssue,
     AcademicReviewBatch,
+    AcademicSectionReviewItem,
     AcademicVerificationBatch,
 )
 from .document_parser import clean_text, normalised
@@ -709,6 +715,83 @@ def _batch_prompt(
         "sections": sections,
     }
     return json.dumps(packet, ensure_ascii=False)
+
+
+def _focused_section_recovery_prompt(
+    review: Dict[str, Any],
+    section: Dict[str, Any],
+    context_lock: Dict[str, Any],
+    depth: str,
+) -> str:
+    summary = review.get("summary") or {}
+    packet = {
+        "review_context": {
+            "declared_academic_level": summary.get("academic_level"),
+            "research_approach": summary.get("research_approach"),
+            "review_depth": depth,
+            "review_scope": summary.get("review_scope"),
+        },
+        "study_context_lock": {
+            key: value for key, value in context_lock.items()
+            if key != "source_text_normalised"
+        },
+        "document_manifest_for_factual_checks": (
+            summary.get("supervisory_document_manifest") or {}
+        ),
+        "section": {
+            "section_key": section["section_key"],
+            "heading": clean_text(section.get("heading", "Untitled section")),
+            "chapter_number": section.get("chapter_number"),
+            "section_path": list(section.get("section_path") or []),
+            "part": section.get("part", 1),
+            "paragraphs": [
+                _payload(paragraph)
+                for paragraph in section.get("paragraphs") or []
+            ],
+            "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": (
+                _guide_expectations(review, section.get("heading", ""))
+            ),
+        },
+        "instruction": (
+            "Return exactly one compact but substantive review for the supplied "
+            "section_key. The section exists. Assess its quality, identify only "
+            "supported strengths and issues, and preserve the section_key exactly."
+        ),
+    }
+    return json.dumps(packet, ensure_ascii=False)
+
+
+def _unresolved_section_fallback(
+    section: Dict[str, Any],
+    reason: str = "",
+) -> Dict[str, Any]:
+    heading = clean_text(section.get("heading", "Untitled section"))
+    warning = (
+        "A separate model response for this section remained unavailable after "
+        "focused recovery. The section is present and remains represented in the "
+        "document map and cross-chapter checks. No unsupported criticism has been "
+        "inserted. Manual confirmation of this section is recommended."
+    )
+    if reason:
+        warning += f" Recovery detail: {clean_text(reason)[:240]}"
+    return {
+        "section_key": section["section_key"],
+        "heading": heading,
+        "chapter_number": section.get("chapter_number"),
+        "section_path": list(section.get("section_path") or []),
+        "part": section.get("part", 1),
+        "paragraph_count": len(section.get("paragraphs") or []),
+        "section_score": 50.0,
+        "section_assessment": (
+            f"The section '{heading}' is present, but its separate expert review "
+            "could not be completed after focused recovery. It has therefore not "
+            "been treated as absent and no unverified finding has been added."
+        ),
+        "coverage_warning": warning,
+        "strengths": [],
+        "issues": [],
+        "source_section": section,
+    }
 
 
 def _verification_prompt(
@@ -1625,7 +1708,11 @@ async def enrich_review_with_academic_ai(
         )
 
     reviewed_keys = {row["section_key"] for row in section_reviews}
-    retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
+    retry_sections = [
+        section for section in sections
+        if section["section_key"] not in reviewed_keys
+    ]
+    recovery_errors: Dict[str, str] = {}
     if retry_sections:
         recovery_tokens = (
             config.light_max_output_tokens
@@ -1649,11 +1736,107 @@ async def enrich_review_with_academic_ai(
         for section, result in zip(retry_sections, retry_results):
             if not isinstance(result, Exception):
                 consume_batch([section], result)
+            else:
+                recovery_errors[section["section_key"]] = str(result)
         await _notify(
             progress_callback,
             64,
-            "Finalising coverage of every section and subsection",
+            "Recovering any section omitted from the first review pass",
         )
+
+    # A compact expert-only recovery pass prevents one repeatedly omitted or
+    # truncated section from forcing the entire job into a pause/resume loop.
+    reviewed_keys = {row["section_key"] for row in section_reviews}
+    focused_sections = [
+        section for section in sections
+        if section["section_key"] not in reviewed_keys
+    ]
+    if focused_sections:
+        focused_total = len(focused_sections)
+        focused_lock = asyncio.Lock()
+        focused_completed = 0
+
+        async def focused_recovery_call(
+            section: Dict[str, Any],
+        ) -> ProviderResult:
+            nonlocal focused_completed
+            prompt = _focused_section_recovery_prompt(
+                review, section, context_lock, depth
+            )
+            focused_hash = stable_hash({
+                "pipeline": "academic-focused-section-recovery-v1.9.2",
+                "section_key": section["section_key"],
+                "model": config.openai_expert_model,
+                "effort": config.openai_expert_reasoning_effort,
+                "tokens": config.focused_recovery_max_output_tokens,
+                "system_prompt": FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
+                "user_prompt": prompt,
+            })
+            stage_key = f"academic-focused-recovery-{focused_hash[:20]}"
+            result = (
+                checkpoint_manager.load_provider_result(
+                    stage_key, expected_input_hash=focused_hash
+                )
+                if checkpoint_manager is not None else None
+            )
+            if result is None:
+                if checkpoint_manager is not None:
+                    checkpoint_manager.mark_running(
+                        stage_key,
+                        input_hash=focused_hash,
+                        progress=64,
+                        message=(
+                            "Running focused recovery for "
+                            + clean_text(section.get("heading", "section"))
+                        ),
+                    )
+                result = await provider.complete_json(
+                    model=config.openai_expert_model,
+                    system_prompt=FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
+                    user_prompt=prompt,
+                    schema_model=AcademicSectionReviewItem,
+                    purpose="focused_section_coverage_recovery",
+                    reasoning_effort=config.openai_expert_reasoning_effort,
+                    max_output_tokens=config.focused_recovery_max_output_tokens,
+                    request_timeout_seconds=(
+                        config.focused_recovery_timeout_seconds
+                    ),
+                    request_max_retries=0,
+                )
+                if checkpoint_manager is not None:
+                    checkpoint_manager.save_provider_result(
+                        stage_key,
+                        result,
+                        input_hash=focused_hash,
+                        progress=67,
+                        message="Focused section recovery completed",
+                    )
+            async with focused_lock:
+                focused_completed += 1
+                progress = 64 + int(3 * focused_completed / max(1, focused_total))
+                await _notify(
+                    progress_callback,
+                    min(67, progress),
+                    f"Recovered omitted section {focused_completed} of {focused_total}",
+                )
+            return result
+
+        focused_results = await _run_limited(
+            [focused_recovery_call(section) for section in focused_sections],
+            min(
+                config.focused_recovery_parallel_calls,
+                max(1, len(focused_sections)),
+            ),
+        )
+        for section, result in zip(focused_sections, focused_results):
+            if isinstance(result, Exception):
+                recovery_errors[section["section_key"]] = str(result)
+                continue
+            wrapped = ProviderResult(
+                data={"reviews": [result.data]},
+                usage=result.usage,
+            )
+            consume_batch([section], wrapped)
 
     reviewed_keys = {row["section_key"] for row in section_reviews}
     still_missing = [
@@ -1701,13 +1884,22 @@ async def enrich_review_with_academic_ai(
         still_missing = []
 
     if still_missing:
-        names = ", ".join(
-            clean_text(section.get("heading", "Untitled section"))
-            for section in still_missing[:5]
-        )
-        raise AIProviderError(
-            "The expert review could not complete the following substantive "
-            f"section(s) after grouped recovery: {names}. Please retry the review."
+        verification_failed = True
+        unresolved_count = len(still_missing)
+        for section in still_missing:
+            section_reviews.append(
+                _unresolved_section_fallback(
+                    section,
+                    recovery_errors.get(section["section_key"], ""),
+                )
+            )
+        await _notify(
+            progress_callback,
+            67,
+            (
+                f"Preserved {unresolved_count} unresolved section"
+                f"{'s' if unresolved_count != 1 else ''} without unsupported comments"
+            ),
         )
 
     verification_failed = locals().get("verification_failed", False)
@@ -1752,7 +1944,7 @@ async def enrich_review_with_academic_ai(
         async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.1-gpt-5.4",
+                "pipeline": "academic-comment-audit-v1.9.2-gpt-5.4",
                 "batch": batch_index,
                 "depth": depth,
                 "academic_level": academic_level,

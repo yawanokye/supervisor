@@ -129,7 +129,7 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
         reviews = value.get("reviews") if isinstance(value.get("reviews"), list) else []
         value = {"reviews": reviews}
 
-    elif name == "AcademicSectionReview":
+    elif name in {"AcademicSectionReview", "AcademicSectionReviewItem"}:
         if isinstance(value.get("review"), dict):
             value = dict(value["review"])
         section_name = str(value.get("section_name") or value.get("section") or "Reviewed section").strip()
@@ -168,7 +168,7 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
                 "required_action": str(item.get("required_action") or item.get("action") or item.get("recommendation") or "").strip(),
                 "illustrative_guidance": str(item.get("illustrative_guidance") or item.get("example") or item.get("illustrative_example") or "").strip(),
             })
-        value = {
+        normalised_section = {
             "section_name": section_name,
             "section_score": score,
             "section_assessment": assessment,
@@ -176,6 +176,11 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
             "issues": issues,
             "coverage_warning": str(value.get("coverage_warning") or "").strip(),
         }
+        if name == "AcademicSectionReviewItem":
+            normalised_section["section_key"] = str(
+                value.get("section_key") or ""
+            ).strip()
+        value = normalised_section
         if not assessment and not strengths and not issues:
             raise AIProviderError("The model returned an empty academic section review.")
 

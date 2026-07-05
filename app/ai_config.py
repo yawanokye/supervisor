@@ -109,6 +109,10 @@ class HybridAIConfig:
     recovery_batch_size: int
     max_recovery_batches: int
     max_short_section_fallbacks: int
+    focused_recovery_parallel_calls: int
+    focused_recovery_max_output_tokens: int
+    focused_recovery_timeout_seconds: int
+    max_unresolved_section_fallbacks: int
     advanced_audit_max_findings: int
     advanced_audit_max_output_tokens: int
     strict_failure: bool
@@ -299,6 +303,18 @@ class HybridAIConfig:
             max_recovery_batches=_env_int("AI_MAX_RECOVERY_BATCHES", 2),
             max_short_section_fallbacks=_env_int(
                 "AI_MAX_SHORT_SECTION_FALLBACKS", 2, 0
+            ),
+            focused_recovery_parallel_calls=_env_int(
+                "AI_FOCUSED_RECOVERY_PARALLEL_CALLS", 2
+            ),
+            focused_recovery_max_output_tokens=_env_int(
+                "AI_FOCUSED_RECOVERY_MAX_OUTPUT_TOKENS", 4200
+            ),
+            focused_recovery_timeout_seconds=_env_int(
+                "AI_FOCUSED_RECOVERY_TIMEOUT_SECONDS", 240
+            ),
+            max_unresolved_section_fallbacks=_env_int(
+                "AI_MAX_UNRESOLVED_SECTION_FALLBACKS", 8, 0
             ),
             advanced_audit_max_findings=_env_int(
                 "AI_ADVANCED_AUDIT_MAX_FINDINGS", 24
