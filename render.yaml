@@ -25,10 +25,24 @@ services:
         value: 45
       - key: JOB_LEASE_SECONDS
         value: 240
-      - key: OPENAI_REVIEW_MODEL
-        value: o3-mini
-      - key: OPENAI_REVIEW_REASONING_EFFORT
+      - key: OPENAI_CHAPTER_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_CHAPTER_REASONING_EFFORT
         value: high
+      - key: OPENAI_EXPERT_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXPERT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_FINAL_AUDIT_MODEL
+        value: gpt-5.4
+      - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_EXTERNAL_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXTERNAL_REASONING_EFFORT
+        value: high
+      - key: OPENAI_EXTERNAL_DECISION_REASONING_EFFORT
+        value: xhigh
       - key: AI_MAX_PARALLEL_CALLS
         value: 4
       - key: AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS

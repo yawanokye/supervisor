@@ -1,8 +1,8 @@
-# ProjectReady AI Supervisor Assistant 1.9.0
+# ProjectReady AI Supervisor Assistant 1.9.1
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.9.0 adds a safe user-controlled Stop Review action while retaining the OpenAI o3-mini review workflow and all factual-placement, exact-evidence, native Word comment and recommendation safeguards.
+Version 1.9.1 introduces tiered OpenAI expert review. GPT-5.4 mini provides fast chapter-level assessment, while GPT-5.4 performs the universal factual audit, research-intensive review and External Assessment. Native Word comments now display the logged-in reviewer’s full name and initials instead of a generic “Supervisor Assistant” author.
 
 ## Review philosophy
 
@@ -64,11 +64,13 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 ## Model routing
 
-- Light, Standard and Advanced Review use OpenAI `o3-mini` through the Responses API.
-- `OPENAI_REVIEW_REASONING_EFFORT=high` is the default for the primary review, recovery passes, the universal accuracy audit and External Assessment.
-- Review depth controls breadth and detail. It does not relax factual verification or evidence requirements.
-- Structured JSON output is enforced for every model stage before findings are accepted.
-- Review requests run as background jobs and the browser polls for progress.
+- GPT-5.4 mini performs fast chapter-level review for Bachelor’s and taught Master’s work.
+- Research Master’s and MPhil reviews use GPT-5.4 for academically decisive sections such as the research problem, literature synthesis, methodology, results, discussion and conclusions.
+- Professional Doctorate and PhD reviews use GPT-5.4 for every substantive section.
+- Every academic level and review depth receives a separate GPT-5.4 factual, evidence and placement audit.
+- External Assessment uses GPT-5.4 throughout, with `xhigh` reasoning for the confidential final decision.
+- Review depth controls breadth and explanation. It never lowers factual verification or academic-level standards.
+- Strict structured JSON is required before findings are accepted. Background jobs, checkpoints and grouped parallel review preserve speed.
 
 ## Run locally
 
@@ -145,8 +147,15 @@ Lecturers can:
 
 ```env
 OPENAI_API_KEY=sk-...
-OPENAI_REVIEW_MODEL=o3-mini
-OPENAI_REVIEW_REASONING_EFFORT=high
+OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_REASONING_EFFORT=high
+OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_REASONING_EFFORT=high
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
+OPENAI_EXTERNAL_MODEL=gpt-5.4
+OPENAI_EXTERNAL_REASONING_EFFORT=high
+OPENAI_EXTERNAL_DECISION_REASONING_EFFORT=xhigh
 DATABASE_URL=postgresql://...
 SESSION_SECRET=use-a-long-random-secret
 COOKIE_SECURE=true
@@ -172,6 +181,10 @@ persistent disk at `/var/data` and set
 falls back safely to `/tmp/projectready-supervisor/reviews`.
 
 ## Review-model routing
+
+The logged-in account’s `full_name` is stored with the review and used as the native Microsoft Word comment author. Initials are derived automatically from that name. A saved review can therefore show, for example, “Anokye Mohammed Adam” with initials “AMA” in Word’s Review pane. The exporter falls back to “Reviewer” only when no account or examiner name is available.
+
+The old `OPENAI_REVIEW_MODEL` variable is ignored by the active workflow. Remove any stale `OPENAI_REVIEW_MODEL=o3-mini` entry from Render and use the role-specific variables shown above.
 
 Provider names remain hidden from supervisors and students.
 

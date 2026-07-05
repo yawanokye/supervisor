@@ -1,3 +1,18 @@
+## v1.9.1
+
+- Replaces the single o3-mini workflow with role-based OpenAI routing.
+- Uses GPT-5.4 mini for fast chapter-level review of Bachelor’s and taught Master’s work.
+- Uses GPT-5.4 for academically decisive Research Master’s/MPhil sections and every substantive Professional Doctorate or PhD section.
+- Uses GPT-5.4 for the universal factual, evidence and placement audit at Light, Standard and Advanced depth.
+- Uses GPT-5.4 for every External Assessment stage and `xhigh` reasoning for the confidential final decision.
+- Keeps grouped concurrent chapter review, durable checkpoints and focused evidence packets to preserve speed and control cost.
+- Applies model-specific token-cost tracking for GPT-5.4 mini and GPT-5.4.
+- Ignores stale `OPENAI_REVIEW_MODEL=o3-mini` settings so they cannot silently downgrade the active workflow.
+- Writes the logged-in user’s full name and derived initials as the native Microsoft Word comment author instead of “Supervisor Assistant”.
+- Stores the reviewer identity with the completed review and reuses it during annotated-document regeneration.
+- Versions review, audit, External Assessment and annotation outputs so earlier cached results are not restored.
+- Passed 159 automated tests.
+
 ## v1.9.0
 
 - Adds **Stop review** to active queued and processing jobs in Review History and the live review workspace.
