@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_portal_provides_resume_action_for_paused_jobs():
     html = Path("app/templates/portal.html").read_text(encoding="utf-8")
-    assert "item.status in ['paused', 'failed']" in html
+    assert "item.status in ['paused', 'stopped', 'failed']" in html
     assert "/api/review/jobs/{{ item.job_id }}/resume" in html
     assert "last saved checkpoint" in html
     assert "Recover" in html
