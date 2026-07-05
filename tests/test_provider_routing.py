@@ -16,6 +16,8 @@ def test_all_review_depths_use_tiered_openai_models(monkeypatch):
         "OPENAI_EXPERT_MODEL",
         "OPENAI_FINAL_AUDIT_MODEL",
         "OPENAI_EXTERNAL_MODEL",
+        "OPENAI_EXTERNAL_DOMAIN_MODEL",
+        "OPENAI_EXTERNAL_ADJUDICATOR_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
     config = HybridAIConfig.from_env()
@@ -27,6 +29,8 @@ def test_all_review_depths_use_tiered_openai_models(monkeypatch):
     assert config.openai_expert_model == "gpt-5.4"
     assert config.openai_final_audit_model == "gpt-5.4"
     assert config.openai_external_model == "gpt-5.4"
+    assert config.openai_external_domain_model == "gpt-5.4"
+    assert config.openai_external_adjudicator_model == "gpt-5.4"
     assert config.openai_chapter_reasoning_effort == "high"
     assert config.openai_final_audit_reasoning_effort == "high"
     status = config.public_status()

@@ -47,7 +47,7 @@ def stage_payload(stage: str) -> dict:
             "major_strengths": ["The topic is significant."],
             "publication_potential": "The work has publication potential after revision.",
         }
-    if stage == "corrections":
+    if stage == "adjudication":
         return {
             "corrections": [
                 {
@@ -71,9 +71,6 @@ def stage_payload(stage: str) -> dict:
             ],
             "priority_corrections_before_award": ["Clarify the research gap."],
             "corrections_verification_assessment": "Not applicable at initial examination.",
-        }
-    if stage == "decision":
-        return {
             "overall_academic_judgement": "The thesis has merit but requires major correction.",
             "final_recommendation": "pass_subject_to_major_corrections",
             "recommendation_rationale": "The identified deficiencies are remediable.",
@@ -91,7 +88,7 @@ def make_result(stage: str) -> ProviderResult:
         data=stage_payload(stage),
         usage=AIUsageRecord(
             provider="openai",
-            model="o3-mini",
+            model="gpt-5.4",
             purpose=f"external_thesis_assessment_{stage}",
             input_tokens=100,
             cached_input_tokens=10,
@@ -113,7 +110,7 @@ def realistic_runtime_paragraphs() -> list[dict]:
         {"paragraph": 6, "chapter_number": 7, "heading": "Conclusions and Recommendations", "text": "The conclusions, recommendations, contribution to knowledge, limitations, future research and ethical clearance are presented." + filler, "is_heading": False},
     ]
 
-def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None:
+def test_external_assessment_uses_three_examiners_and_one_adjudicator(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     config = HybridAIConfig.from_env()
     calls: list[str] = []
@@ -157,15 +154,15 @@ def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None
         )
     )
 
-    assert set(calls) == {"foundation", "evidence_core", "integrity", "corrections", "decision"}
-    assert len(calls) == 5
+    assert set(calls) == {"foundation", "evidence_core", "integrity", "adjudication"}
+    assert len(calls) == 4
     assert set(calls[:3]) == {"foundation", "evidence_core", "integrity"}
-    assert set(calls[3:]) == {"corrections", "decision"}
-    assert output["summary"]["external_assessment_generation_mode"] == "parallel_grounded"
-    assert output["summary"]["external_assessment_stage_count"] == 5
+    assert calls[3] == "adjudication"
+    assert output["summary"]["external_assessment_generation_mode"] == "three_examiners_one_adjudicator"
+    assert output["summary"]["external_assessment_stage_count"] == 4
     assert output["external_assessment"]["final_recommendation"] == "pass_subject_to_major_corrections"
-    assert output["external_assessment_usage"]["api_call_count"] == 5
-    assert len(output["ai_review"]["usage"]) == 5
+    assert output["external_assessment_usage"]["api_call_count"] == 4
+    assert len(output["ai_review"]["usage"]) == 4
 
 
 def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:

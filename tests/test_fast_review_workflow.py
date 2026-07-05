@@ -15,14 +15,16 @@ def test_fast_defaults(monkeypatch):
         "OPENAI_EXPERT_MODEL",
         "OPENAI_FINAL_AUDIT_MODEL",
         "OPENAI_EXTERNAL_MODEL",
+        "OPENAI_EXTERNAL_DOMAIN_MODEL",
+        "OPENAI_EXTERNAL_ADJUDICATOR_MODEL",
         "OPENAI_REVIEW_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 
     config = HybridAIConfig.from_env()
-    assert config.light_section_batch_size == 6
-    assert config.section_batch_size == 5
-    assert config.advanced_section_batch_size == 4
+    assert config.chapter_review_concurrency == 4
+    assert config.chapter_packet_max_chars == 120000
+    assert config.verification_batch_size == 48
     assert config.structured_output_retries == 0
     assert config.openai_chapter_model == "gpt-5.4-mini"
     assert config.openai_expert_model == "gpt-5.4"
@@ -30,7 +32,7 @@ def test_fast_defaults(monkeypatch):
     assert config.openai_chapter_reasoning_effort == "high"
 
 
-def test_typical_chapter_needs_four_advanced_primary_batches():
+def test_legacy_batch_helper_remains_available():
     sections = list(range(15))
     assert len(_batch(sections, 4)) == 4
 
@@ -43,7 +45,8 @@ def test_issue_limits_are_concise_but_level_calibrated():
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.9.2-gpt-5.4" in source
+    assert "academic-comment-audit-v1.9.3-compact-gpt-5.4" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
+    assert "_chapter_review_packets" in source
     assert "audit_model = config.openai_final_audit_model" in source

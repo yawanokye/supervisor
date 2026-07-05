@@ -63,8 +63,9 @@ def test_server_exposes_auto_resume_guard():
     assert "ReviewRecord.resume_count < MAX_AUTO_RESUMES" in source
 
 
-def test_focused_recovery_pipeline_is_present():
+def test_bounded_chapter_recovery_pipeline_is_present():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-focused-section-recovery-v1.9.2" in source
-    assert "FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT" in source
-    assert "focused_section_coverage_recovery" in source
+    assert "academic-review-v1.9.3-chapter-packet-review" in source
+    assert "chapter_packet_coverage_recovery" in source
+    assert "single_chapter_packet_retry" in source
+    assert "academic-focused-section-recovery-v1.9.2" not in source

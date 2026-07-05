@@ -27,14 +27,16 @@ def test_render_blueprint_uses_persistent_checkpoint_storage():
     assert "AUTO_RESUME_JOBS" in render
 
 
-def test_external_assessment_runs_independent_stages_in_parallel():
+def test_external_assessment_runs_three_examiners_then_one_adjudicator():
     source = Path("app/external_assessment.py").read_text(encoding="utf-8")
     assert '"foundation": _complete_assessment_stage' in source
     assert '"evidence_core": _complete_assessment_stage' in source
     assert '"integrity": _complete_assessment_stage' in source
-    assert '"corrections": _complete_assessment_stage' in source
-    assert '"decision": _complete_assessment_stage' in source
+    assert 'stage="adjudication"' in source
+    assert 'schema_model=ExternalAssessmentAdjudication' in source
     assert "return_when=asyncio.FIRST_COMPLETED" in source
+    assert '"corrections": _complete_assessment_stage' not in source
+    assert '"decision": _complete_assessment_stage' not in source
 
 
 def test_final_report_is_not_created_for_a_paused_job():
