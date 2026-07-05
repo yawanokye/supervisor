@@ -36,9 +36,10 @@ def _env_float(name: str, default: float, minimum: float = 0.0, maximum: Optiona
 class HybridAIConfig:
     """Academic-review routing configuration.
 
-    Light, Standard and Advanced Review use DeepSeek. Advanced Review uses the
-    advanced model with maximum reasoning and an independent second-pass audit.
-    OpenAI fields remain optional for backwards compatibility only.
+    Light, Standard and Advanced Review use OpenAI through the Responses API.
+    The default model is o3-mini with high reasoning effort. Review depth changes
+    breadth and output volume, while the factual-accuracy safeguards remain active.
+    DeepSeek fields remain only for backwards compatibility with dormant modules.
     """
 
     enabled: bool
@@ -98,34 +99,34 @@ class HybridAIConfig:
     deepseek_flash_input_price: float = 0.14
     deepseek_flash_cached_input_price: float = 0.0028
     deepseek_flash_output_price: float = 0.28
-    openai_mini_model: str = "gpt-5.4"
-    openai_advanced_model: str = "gpt-5.4"
+    openai_mini_model: str = "o3-mini"
+    openai_advanced_model: str = "o3-mini"
     openai_mini_reasoning_effort: str = "high"
     openai_advanced_reasoning_effort: str = "high"
     mini_max_output_tokens: int = 7500
     review_max_output_tokens: int = 9000
-    openai_mini_input_price: float = 2.50
-    openai_mini_cached_input_price: float = 0.25
-    openai_mini_output_price: float = 15.00
-    openai_advanced_input_price: float = 2.50
-    openai_advanced_cached_input_price: float = 0.25
-    openai_advanced_output_price: float = 15.00
-    external_assessment_foundation_max_output_tokens: int = 3400
-    external_assessment_evidence_max_output_tokens: int = 3400
-    external_assessment_integrity_max_output_tokens: int = 2800
-    external_assessment_corrections_max_output_tokens: int = 3400
-    external_assessment_decision_max_output_tokens: int = 2200
-    external_assessment_stage_timeout_seconds: int = 600
-    external_assessment_request_timeout_seconds: int = 240
+    openai_mini_input_price: float = 1.10
+    openai_mini_cached_input_price: float = 0.55
+    openai_mini_output_price: float = 4.40
+    openai_advanced_input_price: float = 1.10
+    openai_advanced_cached_input_price: float = 0.55
+    openai_advanced_output_price: float = 4.40
+    external_assessment_foundation_max_output_tokens: int = 8000
+    external_assessment_evidence_max_output_tokens: int = 8000
+    external_assessment_integrity_max_output_tokens: int = 6500
+    external_assessment_corrections_max_output_tokens: int = 8000
+    external_assessment_decision_max_output_tokens: int = 5000
+    external_assessment_stage_timeout_seconds: int = 900
+    external_assessment_request_timeout_seconds: int = 360
     external_assessment_request_max_retries: int = 0
 
     @classmethod
     def from_env(cls) -> "HybridAIConfig":
         review_model = os.getenv("DEEPSEEK_REVIEW_MODEL", "deepseek-v4-pro").strip()
         advanced_model = os.getenv("DEEPSEEK_ADVANCED_MODEL", review_model).strip()
-        openai_model = os.getenv("OPENAI_REVIEW_MODEL", "gpt-5.4").strip()
-        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 5200)
-        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 6800)
+        openai_model = os.getenv("OPENAI_REVIEW_MODEL", "o3-mini").strip()
+        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 9000)
+        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 12000)
         openai_effort = os.getenv("OPENAI_REVIEW_REASONING_EFFORT", "high").strip().lower()
 
         return cls(
@@ -149,11 +150,11 @@ class HybridAIConfig:
             confidence_threshold=_env_float("AI_CONFIDENCE_THRESHOLD", 0.78, 0.0, 1.0),
             max_context_chars_per_rule=_env_int("AI_MAX_CONTEXT_CHARS_PER_RULE", 9000),
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
-            max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 8000),
-            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 3800),
+            max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 12000),
+            light_max_output_tokens=_env_int("AI_LIGHT_MAX_OUTPUT_TOKENS", 7000),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
-            timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 180),
+            timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 300),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 4),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
@@ -164,7 +165,7 @@ class HybridAIConfig:
             max_recovery_batches=_env_int("AI_MAX_RECOVERY_BATCHES", 2),
             max_short_section_fallbacks=_env_int("AI_MAX_SHORT_SECTION_FALLBACKS", 2, 0),
             advanced_audit_max_findings=_env_int("AI_ADVANCED_AUDIT_MAX_FINDINGS", 24),
-            advanced_audit_max_output_tokens=_env_int("AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 4800),
+            advanced_audit_max_output_tokens=_env_int("AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 8000),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int("AI_STRUCTURED_OUTPUT_RETRIES", 0, 0),
             advanced_quality_control=_env_bool("AI_ADVANCED_SECOND_PASS", True),
@@ -172,9 +173,9 @@ class HybridAIConfig:
             deepseek_pro_input_price=_env_float("PRICE_DEEPSEEK_PRO_INPUT", 0.435),
             deepseek_pro_cached_input_price=_env_float("PRICE_DEEPSEEK_PRO_CACHED_INPUT", 0.003625),
             deepseek_pro_output_price=_env_float("PRICE_DEEPSEEK_PRO_OUTPUT", 0.87),
-            openai_review_input_price=_env_float("PRICE_OPENAI_REVIEW_INPUT", 2.50),
-            openai_review_cached_input_price=_env_float("PRICE_OPENAI_REVIEW_CACHED_INPUT", 0.25),
-            openai_review_output_price=_env_float("PRICE_OPENAI_REVIEW_OUTPUT", 15.00),
+            openai_review_input_price=_env_float("PRICE_OPENAI_REVIEW_INPUT", 1.10),
+            openai_review_cached_input_price=_env_float("PRICE_OPENAI_REVIEW_CACHED_INPUT", 0.55),
+            openai_review_output_price=_env_float("PRICE_OPENAI_REVIEW_OUTPUT", 4.40),
 
             deepseek_extract_model=review_model,
             openai_mini_model=openai_model,
@@ -185,31 +186,31 @@ class HybridAIConfig:
             review_max_output_tokens=advanced_tokens,
             external_assessment_foundation_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS",
-                3400,
+                8000,
             ),
             external_assessment_evidence_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS",
-                3400,
+                8000,
             ),
             external_assessment_integrity_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_INTEGRITY_MAX_OUTPUT_TOKENS",
-                2800,
+                6500,
             ),
             external_assessment_corrections_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_CORRECTIONS_MAX_OUTPUT_TOKENS",
-                3400,
+                8000,
             ),
             external_assessment_decision_max_output_tokens=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_DECISION_MAX_OUTPUT_TOKENS",
-                2200,
+                5000,
             ),
             external_assessment_stage_timeout_seconds=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS",
-                600,
+                900,
             ),
             external_assessment_request_timeout_seconds=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS",
-                240,
+                360,
             ),
             external_assessment_request_max_retries=_env_int(
                 "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES",
@@ -267,12 +268,12 @@ class HybridAIConfig:
         requested = {"auto": "standard", "openai_only": "advanced", "hybrid": "standard", "premium": "advanced"}.get(requested, requested)
         if requested not in {"light", "standard", "advanced"}:
             raise AIConfigurationError("Choose Light Review, Standard Review or Advanced Review.")
-        if not self.deepseek_configured:
+        if not self.openai_configured:
             raise AIConfigurationError(
-                "The academic review service is temporarily unavailable because the review provider is not configured."
+                "The academic review service is temporarily unavailable because the OpenAI API key is not configured."
             )
         return requested
 
     def public_status(self) -> Dict[str, Any]:
-        available = ["light", "standard", "advanced"] if self.deepseek_configured else []
+        available = ["light", "standard", "advanced"] if self.openai_configured else []
         return {"enabled": self.enabled, "configured": bool(available), "review_depths": available}

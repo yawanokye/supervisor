@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.8.7",
+    version="1.8.9",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.8.7",
+        "version": "1.8.9",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1053,7 +1053,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.8.6-factual-manifest",
+                "pipeline": "document-analysis-v1.8.9-openai-o3-mini",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1134,11 +1134,11 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.8.6-universal-factual-audit",
+                "pipeline": "academic-review-complete-v1.8.9-openai-o3-mini",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
-                "model": config.deepseek_advanced_model,
-                "review_model": config.deepseek_review_model,
+                "model": config.openai_review_model,
+                "review_model": config.openai_review_model,
                 "quality_control": config.advanced_quality_control,
             })
             current_stage = "academic-review-complete"
@@ -1183,7 +1183,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.8.4-fast-grounded-parallel",
+                    "pipeline": "external-assessment-complete-v1.8.9-openai-o3-mini-parallel",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"

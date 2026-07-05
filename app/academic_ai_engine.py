@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_prompts import ACADEMIC_REVIEW_SYSTEM_PROMPT, ACADEMIC_VERIFY_SYSTEM_PROMPT, LIGHT_REVIEW_SYSTEM_PROMPT
-from .ai_providers import AIProviderError, DeepSeekProvider, OpenAIProvider, ProviderResult
+from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
 from .academic_review_guide import guide_for_heading
 from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
 from .checkpointing import CheckpointManager, stable_hash
@@ -23,7 +23,10 @@ from .ai_schemas import (
 from .document_parser import clean_text, normalised
 from .supervisory_accuracy_guard import (
     apply_accuracy_gate,
+    build_factual_index,
     deterministic_expert_issues,
+    guard_section_assessment,
+    guard_strength,
     is_synthetic_section,
     source_section,
 )
@@ -280,8 +283,91 @@ def _normalise_heading(value: str) -> str:
     return low or "Untitled section"
 
 
+CHAPTER_MARKER_RE = re.compile(
+    r"^chapter\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)$",
+    flags=re.I,
+)
+
+CHAPTER_TITLE_CONTAINERS = {
+    "introduction",
+    "literature review",
+    "review of related literature",
+    "research methods",
+    "research methodology",
+    "materials and methods",
+    "results",
+    "results and discussion",
+    "findings and discussion",
+    "summary conclusion and recommendations",
+    "summary conclusions and recommendations",
+    "summary conclusion recommendations",
+    "questionnaire",
+    "interview guide",
+    "survey instrument",
+}
+
+
+def _section_group_metadata(group: Dict[str, Any]) -> Dict[str, Any]:
+    rows = list(group.get("paragraphs") or [])
+    first = rows[0] if rows else {}
+    chapter_number = next(
+        (row.get("chapter_number") for row in rows if isinstance(row.get("chapter_number"), int)),
+        None,
+    )
+    section_path = next(
+        ([clean_text(value) for value in row.get("section_path") or [] if clean_text(value)]
+         for row in rows if row.get("section_path")),
+        [],
+    )
+    substantive = [row for row in rows if not row.get("is_heading") and clean_text(row.get("text", ""))]
+    return {
+        "chapter_number": chapter_number,
+        "section_path": section_path,
+        "heading_only": not substantive,
+        "first_is_heading": bool(first.get("is_heading")),
+    }
+
+
+def _is_structural_container_group(
+    group: Dict[str, Any],
+    next_group: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return True for bare chapter markers and chapter-title containers.
+
+    The institutional chapter structure is a chapter-level guide. A bare
+    ``CHAPTER THREE`` or ``RESEARCH METHODS`` heading must never be reviewed as
+    though it should contain the complete methodology. The substantive
+    Introduction and later subsections are reviewed instead.
+    """
+    meta = _section_group_metadata(group)
+    if not meta["heading_only"] or not meta["first_is_heading"]:
+        return False
+    heading = clean_text(group.get("heading", ""))
+    low = normalised(heading)
+    if CHAPTER_MARKER_RE.fullmatch(heading):
+        return True
+    if next_group is None:
+        return False
+    next_meta = _section_group_metadata(next_group)
+    next_path = [normalised(value) for value in next_meta.get("section_path") or []]
+
+    # Any heading-only parent whose exact heading is retained in the next
+    # section path is an organisational container, not a missing-content
+    # section. This covers headings such as "Reliability and Validity" and
+    # objective labels above their substantive analysis subsections.
+    if low and low in next_path[:-1]:
+        return True
+    if low not in CHAPTER_TITLE_CONTAINERS:
+        return False
+
+    # Canonical chapter or instrument titles are structural when followed by
+    # another unit in the same chapter/back-matter block. This retains genuine
+    # Introduction subsections that contain prose.
+    return meta.get("chapter_number") == next_meta.get("chapter_number")
+
+
 def _section_groups(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    groups: List[Dict[str, Any]] = []
+    raw_groups: List[Dict[str, Any]] = []
     current: Optional[Dict[str, Any]] = None
     for paragraph in paragraphs:
         text = clean_text(paragraph.get("text", ""))
@@ -290,8 +376,16 @@ def _section_groups(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]
         if current is None or paragraph.get("is_heading"):
             heading = text if paragraph.get("is_heading") else (paragraph.get("heading") or "Opening material")
             current = {"heading": heading, "paragraphs": []}
-            groups.append(current)
+            raw_groups.append(current)
         current["paragraphs"].append(paragraph)
+
+    groups: List[Dict[str, Any]] = []
+    for index, group in enumerate(raw_groups):
+        next_group = raw_groups[index + 1] if index + 1 < len(raw_groups) else None
+        if _is_structural_container_group(group, next_group):
+            continue
+        group.update(_section_group_metadata(group))
+        groups.append(group)
     return groups
 
 
@@ -301,17 +395,21 @@ def _split_group(group: Dict[str, Any], max_chars: int) -> List[Dict[str, Any]]:
     current: List[Dict[str, Any]] = []
     total = 0
     part = 1
+    metadata = {
+        "chapter_number": group.get("chapter_number"),
+        "section_path": list(group.get("section_path") or []),
+    }
     for paragraph in paragraphs:
         size = len(clean_text(paragraph.get("text", ""))) + 120
         if current and total + size > max_chars:
-            chunks.append({"heading": group["heading"], "part": part, "paragraphs": current})
+            chunks.append({"heading": group["heading"], "part": part, "paragraphs": current, **metadata})
             part += 1
             current = current[-1:]
             total = sum(len(clean_text(p.get("text", ""))) + 120 for p in current)
         current.append(paragraph)
         total += size
     if current:
-        chunks.append({"heading": group["heading"], "part": part, "paragraphs": current})
+        chunks.append({"heading": group["heading"], "part": part, "paragraphs": current, **metadata})
     return chunks
 
 
@@ -378,6 +476,8 @@ def _batch_prompt(
         sections.append({
             "section_key": section["section_key"],
             "heading": clean_text(section.get("heading", "Untitled section")),
+            "chapter_number": section.get("chapter_number"),
+            "section_path": list(section.get("section_path") or []),
             "part": section.get("part", 1),
             "cross_chapter_audit": bool(section.get("alignment_audit")),
             "revision_audit": bool(section.get("revision_audit")),
@@ -506,6 +606,10 @@ def _batch_prompt(
             "absence_claims_must_be_checked_against_the_document_manifest": True,
             "synthetic_audit_labels_are_not_document_locations": True,
             "whole_thesis_instructions_require_whole_thesis_evidence": True,
+            "chapter_structure_is_a_whole_chapter_guide_not_a_heading_requirement": True,
+            "chapter_introduction_outlines_purpose_and_contents": True,
+            "bare_chapter_headings_and_titles_are_not_substantive_sections": True,
+            "analysis_claims_require_direct_statistical_or_table_evidence": True,
             "factual_accuracy_threshold_is_identical_for_all_depths": True,
         },
         "statistical_review_audit": review.get("statistical_review") or {},
@@ -522,6 +626,7 @@ def _batch_prompt(
             + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied. "
+            "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title."
         ),
         "sections": sections,
@@ -821,12 +926,20 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         for pid in issue.get("evidence_paragraph_ids", [])
         if pid in paragraph_index
     ]
+    target_section = normalised(issue.get("section", ""))
+    evidence.sort(
+        key=lambda item: (
+            0 if normalised(item.get("section_reference", "")) == target_section else 1,
+            0 if item.get("problematic_quote") else 1,
+            int(item.get("paragraph") or 0),
+        )
+    )
     assessment = clean_text(issue.get("assessment", ""))
     consequence = clean_text(issue.get("academic_consequence", ""))
     comment = assessment + (f" Academic implication: {consequence}" if consequence else "")
     section = clean_text(issue.get("section", "")) or "Chapter-wide review"
 
-    table_evidence = next(
+    table_evidence = None if issue.get("suppress_table_reference") else next(
         (item for item in evidence if item.get("table_number")),
         None,
     )
@@ -848,6 +961,11 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
             section_path = path
             break
 
+    chapter_number = next(
+        (item.get("chapter_number") for item in evidence if item.get("chapter_number") is not None),
+        None,
+    )
+
     reference_label = section
     if table_reference:
         reference_label = f"{section}, {table_reference}"
@@ -859,6 +977,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "section": section,
         "section_reference": section,
         "section_path": section_path,
+        "chapter_number": chapter_number,
         "table_reference": table_reference,
         "reference_label": reference_label,
         "item": clean_text(issue.get("issue_title", "Academic issue")),
@@ -1059,8 +1178,7 @@ async def enrich_review_with_academic_ai(
     config = config or HybridAIConfig.from_env()
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
     depth = config.resolve_mode(requested_mode, academic_level)
-    deepseek = DeepSeekProvider(config) if config.deepseek_configured else None
-    openai = OpenAIProvider(config) if config.openai_configured else None  # optional legacy fallback only
+    openai = OpenAIProvider(config) if config.openai_configured else None
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
@@ -1069,6 +1187,7 @@ async def enrich_review_with_academic_ai(
     all_paragraphs = current + context + original
     paragraph_index = {_pid(p): p for p in all_paragraphs}
     context_lock = build_context_lock(all_paragraphs, review.get("summary") or {})
+    factual_index = build_factual_index(current)
 
     groups = _section_groups(current)
     max_section_chars = (
@@ -1082,7 +1201,7 @@ async def enrich_review_with_academic_ai(
 
     whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
     if whole_audit:
-        sections.append({"heading": "Whole-chapter coherence and consistency audit", "part": 1, "paragraphs": whole_audit})
+        sections.append({"heading": "Whole-chapter coherence and consistency audit", "chapter_number": None, "section_path": [], "part": 1, "paragraphs": whole_audit})
 
     optional_chapters = list(
         (review.get("summary") or {}).get("optional_chapters_detected") or []
@@ -1110,6 +1229,8 @@ async def enrich_review_with_academic_ai(
         if combined_optional:
             sections.append({
                 "heading": "Optional chapter integration and cross-thesis alignment audit",
+                "chapter_number": None,
+                "section_path": [],
                 "part": 1,
                 "paragraphs": combined_optional,
                 "alignment_audit": True,
@@ -1127,12 +1248,12 @@ async def enrich_review_with_academic_ai(
     if context:
         combined = _selected_audit_paragraphs(context + current, max(config.max_map_input_chars, 30000))
         if combined:
-            sections.append({"heading": "Cross-chapter coherence and alignment", "part": 1, "paragraphs": combined, "alignment_audit": True})
+            sections.append({"heading": "Cross-chapter coherence and alignment", "chapter_number": None, "section_path": [], "part": 1, "paragraphs": combined, "alignment_audit": True})
     if supervisor_comments:
         revision_paragraphs = _selected_audit_paragraphs(original + current, max(config.max_map_input_chars, 30000))
         if revision_paragraphs:
             sections.append({
-                "heading": "Supervisor comment compliance audit", "part": 1, "paragraphs": revision_paragraphs,
+                "heading": "Supervisor comment compliance audit", "chapter_number": None, "section_path": [], "part": 1, "paragraphs": revision_paragraphs,
                 "revision_audit": True,
                 "extra_context": {"supervisor_comments": supervisor_comments},
             })
@@ -1141,23 +1262,23 @@ async def enrich_review_with_academic_ai(
         section["section_key"] = _section_key(section, index)
 
     if depth == "light":
-        provider = deepseek
-        primary_model = config.deepseek_review_model
-        primary_effort = config.deepseek_reasoning_effort
+        provider = openai
+        primary_model = config.openai_review_model
+        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.light_max_output_tokens
         primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
         batch_size = config.light_section_batch_size
     elif depth == "standard":
-        provider = deepseek
-        primary_model = config.deepseek_review_model
-        primary_effort = config.deepseek_reasoning_effort
+        provider = openai
+        primary_model = config.openai_review_model
+        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.standard_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
     else:
-        provider = deepseek
-        primary_model = config.deepseek_advanced_model
-        primary_effort = config.deepseek_advanced_primary_reasoning_effort
+        provider = openai
+        primary_model = config.openai_review_model
+        primary_effort = config.openai_review_reasoning_effort
         primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.advanced_section_batch_size
@@ -1189,7 +1310,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.8.6-universal-factual-audit",
+            "pipeline": "academic-review-v1.8.9-openai-o3-mini",
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1360,16 +1481,27 @@ async def enrich_review_with_academic_ai(
                     pid for pid in strength.get("evidence_paragraph_ids", [])
                     if pid in paragraph_index and pid in allowed_ids
                 ]
-                if ids:
-                    row = dict(strength)
-                    row["evidence_paragraph_ids"] = list(dict.fromkeys(ids))[:6]
-                    row["observation"], _ = sanitise_generated_text(row.get("observation", ""), context_lock)
-                    row["section"] = canonical_section
-                    valid_strengths.append(row)
+                if not ids:
+                    continue
+                row = dict(strength)
+                row["evidence_paragraph_ids"] = list(dict.fromkeys(ids))[:6]
+                row["observation"], _ = sanitise_generated_text(row.get("observation", ""), context_lock)
+                row["section"] = canonical_section
+                guarded_strength = guard_strength(
+                    row, paragraph_index, factual_index, canonical_section=canonical_section
+                )
+                if guarded_strength:
+                    valid_strengths.append(guarded_strength)
             section_assessment, _ = sanitise_generated_text(data.get("section_assessment", ""), context_lock)
+            section_assessment = guard_section_assessment(
+                section_assessment,
+                section.get("paragraphs") or [],
+            )
             coverage_warning, _ = sanitise_generated_text(data.get("coverage_warning", ""), context_lock)
             section_reviews.append({
                 "section_key": section["section_key"], "heading": clean_text(section.get("heading", "Untitled section")),
+                "chapter_number": section.get("chapter_number"),
+                "section_path": list(section.get("section_path") or []),
                 "part": section.get("part", 1), "paragraph_count": len(section.get("paragraphs") or []),
                 "section_score": float(data.get("section_score") or 0),
                 "section_assessment": section_assessment,
@@ -1392,16 +1524,16 @@ async def enrich_review_with_academic_ai(
     ]
     if retry_sections:
         if depth in {"light", "standard"}:
-            recovery_model = config.deepseek_review_model
-            recovery_effort = config.deepseek_reasoning_effort
+            recovery_model = config.openai_review_model
+            recovery_effort = config.openai_review_reasoning_effort
             recovery_tokens = (
                 config.light_max_output_tokens
                 if depth == "light"
                 else config.standard_max_output_tokens
             )
         else:
-            recovery_model = config.deepseek_advanced_model
-            recovery_effort = config.deepseek_advanced_primary_reasoning_effort
+            recovery_model = config.openai_review_model
+            recovery_effort = config.openai_review_reasoning_effort
             recovery_tokens = config.advanced_max_output_tokens
 
         recovery_batches = _batch(
@@ -1436,16 +1568,16 @@ async def enrich_review_with_academic_ai(
     retry_sections = [section for section in sections if section["section_key"] not in reviewed_keys]
     if retry_sections:
         if depth in {"light", "standard"}:
-            recovery_model = config.deepseek_review_model
-            recovery_effort = config.deepseek_reasoning_effort
+            recovery_model = config.openai_review_model
+            recovery_effort = config.openai_review_reasoning_effort
             recovery_tokens = (
                 config.light_max_output_tokens
                 if depth == "light"
                 else config.standard_max_output_tokens
             )
         else:
-            recovery_model = config.deepseek_advanced_model
-            recovery_effort = config.deepseek_advanced_reasoning_effort
+            recovery_model = config.openai_review_model
+            recovery_effort = config.openai_review_reasoning_effort
             recovery_tokens = config.advanced_max_output_tokens
         retry_results = await _run_limited(
             [primary_call([section], recovery_model, recovery_effort, "section_review_recovery", recovery_tokens) for section in retry_sections],
@@ -1486,6 +1618,8 @@ async def enrich_review_with_academic_ai(
                 "heading": clean_text(
                     section.get("heading", "Untitled section")
                 ),
+                "chapter_number": section.get("chapter_number"),
+                "section_path": list(section.get("section_path") or []),
                 "part": section.get("part", 1),
                 "paragraph_count": len(section.get("paragraphs") or []),
                 "section_score": 50.0,
@@ -1531,8 +1665,8 @@ async def enrich_review_with_academic_ai(
     # verification. Every proposed issue therefore receives an independent
     # evidence audit using the strongest configured review model.
     if all_primary:
-        audit_model = config.deepseek_advanced_model
-        audit_effort = config.deepseek_advanced_reasoning_effort
+        audit_model = config.openai_review_model
+        audit_effort = config.openai_review_reasoning_effort
         audit_tokens = max(
             config.advanced_audit_max_output_tokens,
             min(config.advanced_max_output_tokens, 6800),
@@ -1555,7 +1689,7 @@ async def enrich_review_with_academic_ai(
         async def verify_batch(batch_index: int, batch: Sequence[Dict[str, Any]]) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.8.6-universal",
+                "pipeline": "academic-comment-audit-v1.8.9-openai-o3-mini",
                 "batch": batch_index,
                 "depth": depth,
                 "academic_level": academic_level,
@@ -1580,7 +1714,7 @@ async def enrich_review_with_academic_ai(
                         progress=68,
                         message=f"Verifying review comments {batch_index + 1} of {len(verification_batches)}",
                     )
-                result = await deepseek.complete_json(
+                result = await openai.complete_json(
                     model=audit_model,
                     system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
                     user_prompt=prompt,
@@ -1795,7 +1929,7 @@ async def enrich_review_with_academic_ai(
         "usage": [record.model_dump() for record in usage_records],
         "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
-        "active_provider": "deepseek",
+        "active_provider": "openai",
         "comment_accuracy_second_pass": bool(all_primary),
         "comment_accuracy_audit_mode": "single_compact_evidence_audit" if all_primary else "not_required",
         "advanced_second_pass": bool(depth == "advanced" and all_primary),

@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .ai_config import HybridAIConfig
-from .ai_providers import AIProviderError, DeepSeekProvider
+from .ai_providers import AIProviderError, OpenAIProvider
 from .checkpointing import CheckpointManager, stable_hash
 from .assessment_schemas import (
     ExternalAssessmentCorrections,
@@ -1128,7 +1128,7 @@ def prepare_external_assessment(
     return value
 
 async def _complete_assessment_stage(
-    provider: DeepSeekProvider,
+    provider: OpenAIProvider,
     *,
     stage: str,
     schema_model: type,
@@ -1174,14 +1174,14 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.8.4-fast-grounded-parallel",
+            "pipeline": "external-assessment-v1.8.9-openai-o3-mini-parallel",
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
             "validation_feedback": _feedback_for_prompt(feedback),
             "additional_evidence_ids": additional_evidence_ids,
             "manifest_hash": manifest.get("manifest_hash"),
-            "model": config.deepseek_advanced_model,
+            "model": config.openai_review_model,
             "reasoning_effort": reasoning_effort,
             "max_output_tokens": max_output_tokens,
             "system_prompt": EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
@@ -1229,7 +1229,7 @@ async def _complete_assessment_stage(
             )
         try:
             result = await provider.complete_json(
-                model=config.deepseek_advanced_model,
+                model=config.openai_review_model,
                 system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 schema_model=schema_model,
@@ -1310,13 +1310,13 @@ def _costed_usage(result: Any, config: HybridAIConfig) -> tuple[Any, float]:
         result.usage.input_tokens - result.usage.cached_input_tokens,
     )
     estimated_cost = (
-        uncached / 1_000_000 * config.deepseek_pro_input_price
+        uncached / 1_000_000 * config.openai_review_input_price
         + result.usage.cached_input_tokens
         / 1_000_000
-        * config.deepseek_pro_cached_input_price
+        * config.openai_review_cached_input_price
         + result.usage.output_tokens
         / 1_000_000
-        * config.deepseek_pro_output_price
+        * config.openai_review_output_price
     )
     usage = result.usage.model_copy(
         update={"estimated_cost_usd": round(estimated_cost, 6)}
@@ -1333,9 +1333,9 @@ async def enrich_with_external_assessment(
     progress_callback: Optional[Any] = None,
     checkpoint_manager: Optional[CheckpointManager] = None,
 ) -> Dict[str, Any]:
-    if not config.deepseek_configured:
+    if not config.openai_configured:
         raise AIProviderError(
-            "DeepSeek is required to prepare the external examination report."
+            "OpenAI is required to prepare the external examination report."
         )
 
     async def progress(value: int, message: str) -> None:
@@ -1424,7 +1424,7 @@ async def enrich_with_external_assessment(
               "submit it again."
         )
 
-    provider = DeepSeekProvider(config)
+    provider = OpenAIProvider(config)
     outputs: Dict[str, Any] = {}
     results: List[Any] = []
 
@@ -1448,7 +1448,7 @@ async def enrich_with_external_assessment(
                     config.external_assessment_foundation_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.deepseek_advanced_primary_reasoning_effort
+                    config.openai_review_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1466,7 +1466,7 @@ async def enrich_with_external_assessment(
                     config.external_assessment_evidence_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.deepseek_advanced_primary_reasoning_effort
+                    config.openai_review_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1484,7 +1484,7 @@ async def enrich_with_external_assessment(
                     config.external_assessment_integrity_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.deepseek_advanced_primary_reasoning_effort
+                    config.openai_review_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1527,7 +1527,7 @@ async def enrich_with_external_assessment(
                     config.external_assessment_corrections_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.deepseek_advanced_primary_reasoning_effort
+                    config.openai_review_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),
@@ -1545,7 +1545,7 @@ async def enrich_with_external_assessment(
                     config.external_assessment_decision_max_output_tokens
                 ),
                 reasoning_effort=(
-                    config.deepseek_advanced_primary_reasoning_effort
+                    config.openai_review_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
             ),

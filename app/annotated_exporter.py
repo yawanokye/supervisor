@@ -16,7 +16,7 @@ from docx.table import Table
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.8.7-native-comments"
+ANNOTATION_EXPORT_VERSION = "1.8.8-native-comments-factual-placement"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -345,13 +345,36 @@ def _source_locator_map(document):
     return output, tables
 
 
-def _find_heading(document, headings: Iterable[str]) -> Optional[Paragraph]:
-    targets = [normalised(value) for value in headings if normalised(value)]
+def _strip_heading_number(value: str) -> str:
+    return re.sub(r"^\d+(?:\.\d+){0,4}\s+", "", normalised(value)).strip()
+
+
+def _find_heading(
+    document,
+    headings: Iterable[str],
+    chapter_number: Optional[int] = None,
+) -> Optional[Paragraph]:
+    """Find an exact heading only. Ambiguous or partial matches are rejected."""
+    targets = {normalised(value) for value in headings if normalised(value)}
+    stripped_targets = {_strip_heading_number(value) for value in headings if _strip_heading_number(value)}
+    candidates: List[Paragraph] = []
+    active_chapter: Optional[int] = None
+    chapter_words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
     for paragraph in document.paragraphs:
         raw = clean_text(paragraph.text)
         low = normalised(raw)
         if not low or "supervisor comment" in low:
             continue
+        chapter_match = re.fullmatch(
+            r"chapter\s+(one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)",
+            low,
+        )
+        if chapter_match:
+            token = chapter_match.group(1)
+            active_chapter = int(token) if token.isdigit() else chapter_words[token]
         style_name = ""
         try:
             style_name = (paragraph.style.name or "").lower()
@@ -365,9 +388,13 @@ def _find_heading(document, headings: Iterable[str]) -> Optional[Paragraph]:
         )
         if not looks_like_heading:
             continue
-        if any(target in low or low in target for target in targets):
-            return paragraph
-    return None
+        exact = low in targets or _strip_heading_number(raw) in stripped_targets
+        if not exact:
+            continue
+        if chapter_number is not None and active_chapter != chapter_number:
+            continue
+        candidates.append(paragraph)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _comment_on_paragraph(document, paragraph: Paragraph, comments: List[str]) -> bool:
@@ -428,6 +455,28 @@ def _attach_document_level_comments(document, comments: List[str]) -> None:
         if not _comment_on_paragraph(document, anchor, prefixed):
             raise RuntimeError("A native Word comment could not be anchored.")
 
+
+def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order evidence so the annotation lands on the exact claimed location."""
+    target_section = normalised(row.get("section_reference") or row.get("section") or "")
+    table_reference = clean_text(row.get("table_reference", ""))
+    table_match = re.search(r"\bTable\s+([A-Za-z]?\d+(?:\.\d+)*)\b", table_reference, flags=re.I)
+    target_table = normalised(table_match.group(1)) if table_match else ""
+    quote = clean_text(row.get("problematic_quote", ""))
+
+    def rank(item: Dict[str, Any]):
+        item_section = normalised(item.get("section_reference") or item.get("heading") or "")
+        item_table = normalised(item.get("table_number", ""))
+        text = clean_text(item.get("text", ""))
+        return (
+            0 if target_table and item_table == target_table else 1,
+            0 if quote and quote in text else 1,
+            0 if target_section and item_section == target_section else 1,
+            0 if item.get("is_heading") else 1,
+            int(item.get("paragraph") or 0),
+        )
+    return sorted(evidence, key=rank)
+
 def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     document = Document(io.BytesIO(source_bytes))
     source_map, table_map = _source_locator_map(document)
@@ -438,7 +487,7 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     by_table: Dict[int, List[str]] = defaultdict(list)
-    missing_by_heading: Dict[Tuple[str, ...], List[str]] = defaultdict(list)
+    missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
 
     review_rows = (
@@ -455,9 +504,9 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         comment = _comment_body(row)
         evidence = [
             item for item in (row.get("evidence") or [])
-            if not item.get("is_heading")
-            and item.get("document_role", "current") == "current"
+            if item.get("document_role", "current") == "current"
         ]
+        evidence = _preferred_evidence(row, evidence)
         if evidence:
             best = evidence[0]
             try:
@@ -486,7 +535,17 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
         headings = tuple(row.get("headings") or [row.get("section_reference") or row.get("section")])
         headings = tuple(value for value in headings if clean_text(value))
         if headings:
-            missing_by_heading[headings].append(comment)
+            chapter_number = row.get("chapter_number")
+            if chapter_number is None:
+                chapter_number = next(
+                    (item.get("chapter_number") for item in evidence if item.get("chapter_number") is not None),
+                    None,
+                )
+            try:
+                chapter_number = int(chapter_number) if chapter_number is not None else None
+            except (TypeError, ValueError):
+                chapter_number = None
+            missing_by_heading[(chapter_number, headings)].append(comment)
         else:
             fallback_comments.append(comment)
 
@@ -528,9 +587,9 @@ def build_annotated_docx(source_bytes: bytes, review: Dict[str, Any]) -> bytes:
 
     # Findings about absent or underdeveloped material are placed under the
     # exact supplied section or subsection heading.
-    for headings, comments in missing_by_heading.items():
+    for (chapter_number, headings), comments in missing_by_heading.items():
         unique_comments = list(dict.fromkeys(comments))
-        heading = _find_heading(document, headings)
+        heading = _find_heading(document, headings, chapter_number=chapter_number)
         if heading is not None:
             if not _comment_on_paragraph(document, heading, unique_comments):
                 fallback_comments.extend(unique_comments)

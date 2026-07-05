@@ -23,8 +23,9 @@ COMPLETENESS_PATTERNS = (
     r"\b(?:is|are|was|were)\s+(?:entirely\s+)?missing\b",
     r"\b(?:not|never)\s+(?:provided|presented|reported|included|developed|discussed|analysed|analyzed)\b",
     r"\bno\s+(?:results?|discussion|methodology|methods?|conclusion|recommendations?|analysis|evidence)\b",
-    r"\b(?:write|develop|provide|add|prepare)\s+(?:a\s+|the\s+)?(?:complete|full|entire)\b",
+    r"\b(?:write|develop|provide|add|prepare|populate|complete|fill(?:\s+in)?)\s+(?:a\s+|the\s+)?(?:complete|full|entire)?\s*(?:chapter|results?|analysis|discussion|methodology|methods?|section|methodological details)\b",
     r"\bcomplete\s+(?:chapter|results?|analysis|discussion|methodology|section)\b",
+    r"\bfull\s+methodological\s+details\b",
 )
 
 UNIVERSAL_SCOPE_PATTERNS = (
@@ -68,6 +69,33 @@ STOP_WORDS = {
 }
 
 
+CHAPTER_MARKER_RE = re.compile(
+    r"^chapter\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)$",
+    flags=re.I,
+)
+
+CHAPTER_TITLE_CONTAINERS = {
+    "introduction",
+    "literature review",
+    "review of related literature",
+    "research methods",
+    "research methodology",
+    "materials and methods",
+    "results",
+    "results and discussion",
+    "findings and discussion",
+    "summary conclusion and recommendations",
+    "summary conclusions and recommendations",
+    "summary conclusion recommendations",
+}
+
+ANALYSIS_TERMS = (
+    "anova", "analysis of variance", "regression", "correlation",
+    "structural equation", "sem", "pls sem", "chi square", "t test",
+    "mann whitney", "kruskal wallis", "thematic analysis",
+)
+
+
 def paragraph_id(paragraph: Dict[str, Any]) -> str:
     role = paragraph.get("document_role", "current")
     number = int(paragraph.get("paragraph") or 0)
@@ -105,9 +133,12 @@ def build_factual_index(paragraphs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     sections: Dict[str, Dict[str, Any]] = {}
     headings: List[str] = []
     chapter_counts: Counter[int] = Counter()
+    chapter_rows: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
     tables: Dict[int, Dict[str, Any]] = {}
 
-    for row in current:
+    for position, row in enumerate(current):
+        row = dict(row)
+        row.setdefault("_document_position", position)
         section = source_section(row)
         key = normalised(section)
         if key:
@@ -121,6 +152,7 @@ def build_factual_index(paragraphs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         chapter = row.get("chapter_number")
         if isinstance(chapter, int):
             chapter_counts[chapter] += 1
+            chapter_rows[chapter].append(row)
         table_index = row.get("table_index")
         if isinstance(table_index, int):
             table = tables.setdefault(table_index, {
@@ -143,6 +175,7 @@ def build_factual_index(paragraphs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "sections": sections,
         "headings": headings,
         "chapter_counts": chapter_counts,
+        "chapter_rows": chapter_rows,
         "tables": tables,
         "full_text": normalised("\n".join(clean_text(row.get("text", "")) for row in current)),
     }
@@ -252,21 +285,178 @@ def _normalise_table_references(issue: Dict[str, Any], paragraph_index: Dict[str
     identities = _table_identity_from_evidence(issue, paragraph_index)
     if mentioned and not identities:
         return False
-    if len(identities) > 1:
-        allowed = {normalised(number) for number, _ in identities}
-        if mentioned and any(normalised(value) not in allowed for value in mentioned):
-            return False
-        return True
     if not identities:
         return True
-    number, title = identities[0]
-    for field in ("issue_title", "assessment", "academic_consequence", "required_action", "illustrative_guidance"):
-        value = clean_text(issue.get(field, ""))
-        value = TABLE_REFERENCE_RE.sub(f"Table {number}", value)
-        issue[field] = value
-    issue["canonical_table_number"] = number
-    issue["canonical_table_title"] = title
-    return True
+
+    # When all evidence belongs to one table, the evidence metadata is the source
+    # of truth. Correct any model-generated table number rather than rejecting a
+    # useful comment.
+    if len(identities) == 1:
+        number, title = identities[0]
+        key = normalised(number)
+        filtered_ids = [
+            pid for pid in issue.get("evidence_paragraph_ids") or []
+            if pid in paragraph_index
+            and (
+                not clean_text(paragraph_index[pid].get("table_number", ""))
+                or normalised(clean_text(paragraph_index[pid].get("table_number", ""))) == key
+            )
+        ]
+        if not filtered_ids:
+            return False
+        issue["evidence_paragraph_ids"] = filtered_ids[:8]
+        for field in ("issue_title", "assessment", "academic_consequence", "required_action", "illustrative_guidance"):
+            value = clean_text(issue.get(field, ""))
+            value = TABLE_REFERENCE_RE.sub(f"Table {number}", value)
+            issue[field] = value
+        issue["canonical_table_number"] = number
+        issue["canonical_table_title"] = title
+        return True
+
+    identity_by_number = {normalised(number): (number, title) for number, title in identities}
+    mentioned_keys = list(dict.fromkeys(normalised(value) for value in mentioned if normalised(value)))
+    if mentioned_keys:
+        if any(key not in identity_by_number for key in mentioned_keys):
+            return False
+        if len(mentioned_keys) == 1:
+            key = mentioned_keys[0]
+            number, title = identity_by_number[key]
+            filtered_ids = []
+            for pid in issue.get("evidence_paragraph_ids") or []:
+                if pid not in paragraph_index:
+                    continue
+                row = paragraph_index[pid]
+                row_table = normalised(clean_text(row.get("table_number", "")))
+                if row_table == key:
+                    filtered_ids.append(pid)
+                elif issue.get("category") == "cross_section_coherence" and not row_table:
+                    # Preserve the non-table method/objective evidence needed to
+                    # substantiate a cross-section mismatch, while discarding
+                    # rows from unrelated tables. The exact named table remains
+                    # the preferred annotation anchor.
+                    filtered_ids.append(pid)
+            if not any(
+                normalised(clean_text(paragraph_index[pid].get("table_number", ""))) == key
+                for pid in filtered_ids
+            ):
+                return False
+            issue["evidence_paragraph_ids"] = filtered_ids[:8]
+            issue["canonical_table_number"] = number
+            issue["canonical_table_title"] = title
+            return True
+        return len(identity_by_number) == len(mentioned_keys) and len(mentioned_keys) <= 2
+
+    if issue.get("category") == "cross_section_coherence":
+        issue["suppress_table_reference"] = True
+        return True
+    # The model cited several tables without naming which one the comment
+    # concerns. Reject rather than placing the comment on the first table.
+    return False
+
+
+def _section_rows_for_issue(
+    issue: Dict[str, Any],
+    paragraph_index: Dict[str, Dict[str, Any]],
+    section: str,
+) -> List[Dict[str, Any]]:
+    target = normalised(section)
+    return [
+        paragraph_index[pid]
+        for pid in issue.get("evidence_paragraph_ids") or []
+        if pid in paragraph_index and normalised(source_section(paragraph_index[pid])) == target
+    ]
+
+
+def _chapter_has_substantive_content(facts: Dict[str, Any], chapter: Optional[int]) -> bool:
+    if not isinstance(chapter, int):
+        return False
+    return sum(
+        1 for row in facts.get("chapter_rows", {}).get(chapter, [])
+        if not row.get("is_heading") and clean_text(row.get("text", ""))
+    ) >= 3
+
+
+def _chapter_has_introduction(facts: Dict[str, Any], chapter: Optional[int]) -> bool:
+    if not isinstance(chapter, int):
+        return False
+    rows = facts.get("chapter_rows", {}).get(chapter, [])
+    intro_rows = [row for row in rows if normalised(source_section(row)) == "introduction"]
+    return sum(1 for row in intro_rows if not row.get("is_heading") and clean_text(row.get("text", ""))) >= 1
+
+
+def _is_structural_heading_row(row: Dict[str, Any]) -> bool:
+    if not row.get("is_heading"):
+        return False
+    text = clean_text(row.get("text", ""))
+    low = normalised(text)
+    return bool(CHAPTER_MARKER_RE.fullmatch(text) or low in CHAPTER_TITLE_CONTAINERS)
+
+
+
+def guard_section_assessment(
+    assessment: str,
+    evidence_rows: Sequence[Dict[str, Any]],
+) -> str:
+    """Remove unsupported factual claims from a section-level narrative.
+
+    Section assessments are free text rather than evidence-ID objects. They
+    therefore need a deterministic final check before they are used in the
+    summary report. In particular, a methodology introduction must not acquire
+    an ANOVA or table strength merely because that material occurs elsewhere in
+    the document.
+    """
+    text = clean_text(assessment)
+    if not text:
+        return ""
+    evidence_text = normalised(" ".join(clean_text(row.get("text", "")) for row in evidence_rows))
+    has_table = any(row.get("table_number") or row.get("source_kind") == "table_row" for row in evidence_rows)
+    kept: List[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        sentence = clean_text(sentence)
+        if not sentence:
+            continue
+        low = normalised(sentence)
+        unsupported = False
+        for term in ANALYSIS_TERMS:
+            if term in low and term not in evidence_text:
+                unsupported = True
+                break
+        if not unsupported and re.search(r"\btable(?:s)?\b", low) and not has_table:
+            unsupported = True
+        if not unsupported:
+            kept.append(sentence)
+    return " ".join(kept)
+
+def guard_strength(
+    strength: Dict[str, Any],
+    paragraph_index: Dict[str, Dict[str, Any]],
+    facts: Dict[str, Any],
+    canonical_section: str = "",
+) -> Optional[Dict[str, Any]]:
+    guarded = dict(strength)
+    ids = [pid for pid in guarded.get("evidence_paragraph_ids") or [] if pid in paragraph_index]
+    if not ids:
+        return None
+    guarded["evidence_paragraph_ids"] = list(dict.fromkeys(ids))[:6]
+    evidence_section = source_section(paragraph_index[ids[0]])
+    section = clean_text(canonical_section or guarded.get("section") or evidence_section)
+    if is_synthetic_section(section):
+        section = evidence_section
+    if not section:
+        return None
+    if not any(normalised(source_section(paragraph_index[pid])) == normalised(section) for pid in ids):
+        return None
+    guarded["section"] = section
+
+    observation = clean_text(guarded.get("observation", ""))
+    evidence_text = normalised(" ".join(clean_text(paragraph_index[pid].get("text", "")) for pid in ids))
+    observation_low = normalised(observation)
+    for term in ANALYSIS_TERMS:
+        if term in observation_low and term not in evidence_text:
+            return None
+    if "table" in observation_low and not any(paragraph_index[pid].get("table_number") for pid in ids):
+        return None
+    return guarded
 
 
 def guard_issue(
@@ -287,11 +477,32 @@ def guard_issue(
         guarded["section"] = dominant_section
     elif normalised(clean_text(guarded.get("section", ""))) not in facts["sections"]:
         guarded["section"] = dominant_section
+    # The named location must itself be represented in the evidence. Cross-section
+    # findings may include additional sections, but they cannot be placed under a
+    # section that supplied no evidence.
+    if not _section_rows_for_issue(guarded, paragraph_index, guarded["section"]):
+        return None
     _filter_evidence_to_section(guarded, paragraph_index, guarded["section"])
     if not guarded.get("evidence_paragraph_ids"):
         return None
 
+    evidence_rows = [paragraph_index[pid] for pid in guarded.get("evidence_paragraph_ids") or []]
     text = _issue_text(guarded)
+    if evidence_rows and all(_is_structural_heading_row(row) for row in evidence_rows):
+        chapter = next((row.get("chapter_number") for row in evidence_rows if isinstance(row.get("chapter_number"), int)), None)
+        low = normalised(text)
+        if _chapter_has_substantive_content(facts, chapter) and (
+            _completion_claim(text)
+            or any(term in low for term in ("add a short introductory paragraph", "introduce the chapter purpose and structure", "populate chapter"))
+        ):
+            return None
+        if _chapter_has_introduction(facts, chapter) and any(term in low for term in (
+            "introductory paragraph under the chapter heading",
+            "under the chapter title",
+            "introduce the chapter purpose and structure",
+        )):
+            return None
+
     if _completion_claim(text):
         for chapter in _chapter_claims(text):
             if facts["chapter_counts"].get(chapter, 0) >= 5:
@@ -320,7 +531,7 @@ def guard_issue(
                 # instruction when the cited section clearly exists.
                 for field in ("assessment", "required_action", "illustrative_guidance"):
                     value = clean_text(guarded.get(field, ""))
-                    value = re.sub(r"\b(?:write|develop|provide|add|prepare)\s+(?:a\s+|the\s+)?(?:complete|full|entire)\b", "strengthen the", value, flags=re.I)
+                    value = re.sub(r"\b(?:write|develop|provide|add|prepare|populate)\s+(?:a\s+|the\s+)?(?:complete|full|entire)\b", "strengthen the", value, flags=re.I)
                     value = re.sub(r"\b(?:is|are|was|were)\s+(?:entirely\s+)?missing\b", "is insufficiently developed", value, flags=re.I)
                     guarded[field] = value
 

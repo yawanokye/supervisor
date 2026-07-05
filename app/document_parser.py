@@ -737,6 +737,11 @@ def _heading_level(text: str, style_name: str = "") -> int:
     return 2
 
 
+BACK_MATTER_HEADINGS = {"references", "reference list", "bibliography", "appendix", "appendices"}
+REFERENCE_HEADINGS = {"references", "reference list", "bibliography"}
+APPENDIX_HEADINGS = {"appendix", "appendices"}
+
+
 def _section_path(stack: Dict[int, str]) -> List[str]:
     return [stack[level] for level in sorted(stack) if clean_text(stack[level])]
 
@@ -764,6 +769,9 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     heading_stack: Dict[int, str] = {}
     pending_table_caption: Optional[Dict[str, str]] = None
     pending_caption_distance = 0
+    in_references = False
+    in_keywords = False
+    in_appendix = False
 
     for block in _iter_docx_blocks(doc):
         if Table is not None and isinstance(block, Table):
@@ -822,26 +830,50 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             style_name = block.style.name or ""
         except Exception:
             style_name = ""
-        heading = is_heading(text, style_name)
+        raw_heading = is_heading(text, style_name)
         toc_entry = is_probable_toc_entry(text, style_name)
-        marker = explicit_chapter_marker(text) if heading and not toc_entry else None
+        low_text = normalised(text)
+        raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+        if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
+            in_references = True
+            in_keywords = False
+        elif raw_heading and not toc_entry and low_text in APPENDIX_HEADINGS:
+            in_references = False
+            in_keywords = False
+            in_appendix = True
+        elif raw_heading and not toc_entry and low_text == "keywords":
+            in_keywords = True
+        elif raw_marker is not None:
+            in_references = False
+            in_keywords = False
+            in_appendix = False
+
+        heading = raw_heading
+        if in_references and low_text not in REFERENCE_HEADINGS:
+            heading = False
+        if in_keywords and low_text != "keywords" and raw_marker is None:
+            heading = False
+        marker = raw_marker if heading and not toc_entry else None
         title_chapter = (
             canonical_chapter_title_number(
                 text,
                 style_name=style_name,
                 current_chapter=current_chapter,
             )
-            if heading and not toc_entry
+            if heading and not toc_entry and not in_appendix
             else None
         )
         section_number = (
-            section_number_from_heading(text) if heading and not toc_entry else None
+            section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
         )
         section_chapter = (
-            chapter_from_section_number(text) if heading and not toc_entry else None
+            chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
         )
         chapter = marker or title_chapter or section_chapter
-        if chapter is not None:
+        if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
+            current_chapter = None
+            heading_stack = {}
+        elif chapter is not None:
             current_chapter = chapter
         if heading:
             current_heading = text
@@ -874,6 +906,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "section_number_chapter": section_chapter,
             "chapter_detection_basis": (
                 "toc_entry" if toc_entry
+                else "back_matter" if heading and low_text in BACK_MATTER_HEADINGS
                 else "chapter_marker" if marker is not None
                 else "chapter_title" if title_chapter is not None
                 else "numbered_section" if section_chapter is not None
@@ -915,25 +948,49 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     continue
                 global_paragraph += 1
                 page_paragraph += 1
-                heading = is_heading(text)
+                raw_heading = is_heading(text)
                 toc_entry = is_probable_toc_entry(text)
-                marker = explicit_chapter_marker(text) if heading and not toc_entry else None
+                low_text = normalised(text)
+                raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+                if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
+                    in_references = True
+                    in_keywords = False
+                elif raw_heading and not toc_entry and low_text in APPENDIX_HEADINGS:
+                    in_references = False
+                    in_keywords = False
+                    in_appendix = True
+                elif raw_heading and not toc_entry and low_text == "keywords":
+                    in_keywords = True
+                elif raw_marker is not None:
+                    in_references = False
+                    in_keywords = False
+                    in_appendix = False
+
+                heading = raw_heading
+                if in_references and low_text not in REFERENCE_HEADINGS:
+                    heading = False
+                if in_keywords and low_text != "keywords" and raw_marker is None:
+                    heading = False
+                marker = raw_marker if heading and not toc_entry else None
                 title_chapter = (
                     canonical_chapter_title_number(
                         text,
                         current_chapter=current_chapter,
                     )
-                    if heading and not toc_entry
+                    if heading and not toc_entry and not in_appendix
                     else None
                 )
                 section_number = (
-                    section_number_from_heading(text) if heading and not toc_entry else None
+                    section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
                 )
                 section_chapter = (
-                    chapter_from_section_number(text) if heading and not toc_entry else None
+                    chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
                 )
                 chapter = marker or title_chapter or section_chapter
-                if chapter is not None:
+                if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
+                    current_chapter = None
+                    heading_stack = {}
+                elif chapter is not None:
                     current_chapter = chapter
                 if heading:
                     current_heading = text
@@ -956,6 +1013,7 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     "section_number_chapter": section_chapter,
                     "chapter_detection_basis": (
                         "toc_entry" if toc_entry
+                        else "back_matter" if heading and low_text in BACK_MATTER_HEADINGS
                         else "chapter_marker" if marker is not None
                         else "chapter_title" if title_chapter is not None
                         else "numbered_section" if section_chapter is not None

@@ -109,6 +109,7 @@ SECTOR_TERMS = (
     "finance", "procurement", "agriculture", "tourism", "manufacturing",
     "public sector", "private sector", "telecommunication", "energy",
     "community development", "corporate social responsibility", "csr",
+    "mobile phone retail", "mobile phone", "retail", "supply chain",
 )
 
 CITATION_PATTERNS = [
@@ -133,23 +134,93 @@ def _unique(values: Iterable[str]) -> List[str]:
     return output
 
 
-def _context_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit: int = 14) -> List[str]:
-    selected: List[str] = []
-    keywords = (
-        "title", "background", "problem", "purpose", "objective", "research question",
-        "study area", "setting", "population", "sample", "ghana", "region", "district",
-        "sector", "project", "university", "institution",
-    )
-    for index, paragraph in enumerate(paragraphs):
+FRONT_MATTER_LABELS = {
+    "university of cape coast", "college of humanities and legal studies",
+    "department of marketing and supply chain management", "school of business",
+    "by", "declaration", "certification", "dedication", "acknowledgement",
+    "abstract", "list of tables", "list of figures", "keywords",
+}
+
+STUDY_CONTEXT_HEADINGS = {
+    "abstract", "background to the study", "problem statement", "statement of the problem",
+    "purpose of the study", "research objectives", "research questions", "delimitation",
+    "scope of the study", "study area", "study setting", "study population", "population",
+    "sampling procedures and sample size", "sampling procedure and sample size",
+}
+
+
+def _title_or_opening_focus(paragraphs: Sequence[Dict[str, Any]]) -> str:
+    candidates: List[Tuple[int, int, str]] = []
+    for index, paragraph in enumerate(paragraphs[:45]):
         text = clean_text(paragraph.get("text", ""))
-        heading = clean_text(paragraph.get("heading", ""))
-        combined = normalised(heading + " " + text)
-        if index < 3 or paragraph.get("is_heading") or any(term in combined for term in keywords):
+        low = normalised(text)
+        if not text or low in FRONT_MATTER_LABELS or low.startswith("chapter "):
+            continue
+        if re.fullmatch(r"(?:19|20)\d{2}", text) or re.fullmatch(r"[A-Z .'-]+\([^)]*\)", text):
+            continue
+        words = text.split()
+        if len(words) < 5 or len(words) > 35:
+            continue
+        score = 0
+        if paragraph.get("is_heading"):
+            score += 4
+        if ":" in text:
+            score += 2
+        if any(term in low for term in ("effect", "impact", "relationship", "adoption", "evidence", "study")):
+            score += 3
+        if any(term in low for term in ("submitted", "fulfilment", "requirement", "award of")):
+            score -= 8
+        candidates.append((score, -index, text))
+    if candidates:
+        return max(candidates)[2]
+    for paragraph in paragraphs:
+        text = clean_text(paragraph.get("text", ""))
+        if text:
+            return text
+    return ""
+
+
+def _study_context_rows(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected: List[Dict[str, Any]] = []
+    title = _title_or_opening_focus(paragraphs)
+    title_key = normalised(title)
+    for paragraph in paragraphs:
+        text = clean_text(paragraph.get("text", ""))
+        heading = normalised(clean_text(paragraph.get("heading", "")))
+        if not text or paragraph.get("is_toc_entry"):
+            continue
+        if normalised(text) == title_key:
+            selected.append(paragraph)
+            continue
+        if heading in STUDY_CONTEXT_HEADINGS:
+            selected.append(paragraph)
+    return selected
+
+
+def _context_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit: int = 18) -> List[str]:
+    selected: List[str] = []
+    for paragraph in _study_context_rows(paragraphs):
+        text = clean_text(paragraph.get("text", ""))
+        if text and normalised(text) not in {"top of form", "bottom of form"}:
             selected.append(text[:900])
         if len(selected) >= limit:
             break
     return _unique(selected)
 
+
+
+def _detected_sectors(context_low: str) -> List[str]:
+    found = [term for term in SECTOR_TERMS if _contains_phrase(context_low, term)]
+    # Prefer the most specific study field. Broad public/private-sector mentions
+    # often describe prior policy literature rather than the sampled industry.
+    if "mobile phone retail" in found:
+        preferred = ["mobile phone retail"]
+        if "procurement" in found:
+            preferred.append("procurement")
+        if "supply chain" in found:
+            preferred.append("supply chain")
+        return preferred
+    return _unique(found)
 
 def build_context_lock(
     paragraphs: Sequence[Dict[str, Any]],
@@ -158,31 +229,28 @@ def build_context_lock(
     summary = summary or {}
     source_text = "\n".join(clean_text(item.get("text", "")) for item in paragraphs if clean_text(item.get("text", "")))
     source_low = normalised(source_text)
+    context_rows = _study_context_rows(paragraphs)
+    context_text = "\n".join(clean_text(item.get("text", "")) for item in context_rows if clean_text(item.get("text", "")))
+    context_low = normalised(context_text)
 
     countries = []
     for alias, canonical in COUNTRY_ALIASES.items():
-        if _contains_phrase(source_low, alias):
+        if _contains_phrase(context_low, alias):
             countries.append(canonical)
 
     location_phrases = re.findall(
         r"\b(?:[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){0,3})\s+"
         r"(?:Region|District|Municipality|Metropolis|Province|State|County|City|Town)\b",
-        source_text,
+        context_text,
     )
     organisation_phrases = re.findall(
         r"\b(?:[A-Z][A-Za-z'’&.-]+(?:\s+[A-Z][A-Za-z'’&.-]+){0,5})\s+"
         r"(?:University|Institute|College|Hospital|Ministry|Agency|Authority|Company|Corporation|Bank)\b",
-        source_text,
+        context_text,
     )
-    sectors = [term for term in SECTOR_TERMS if _contains_phrase(source_low, term)]
+    sectors = _detected_sectors(context_low)
 
-    title = ""
-    for paragraph in paragraphs[:8]:
-        text = clean_text(paragraph.get("text", ""))
-        if text and (paragraph.get("is_heading") or not title):
-            title = text
-            if paragraph.get("is_heading"):
-                break
+    title = _title_or_opening_focus(paragraphs)
 
     return {
         "title_or_opening_focus": title[:500],

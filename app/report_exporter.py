@@ -189,15 +189,22 @@ def _is_synthetic_review_section(name: str) -> bool:
 
 
 def _ordered_section_reviews(review: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Combine split section parts while preserving document order."""
-    groups: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+    """Combine split section parts without merging same-named sections across chapters."""
+    groups: "OrderedDict[Tuple[int | None, str], Dict[str, Any]]" = OrderedDict()
     for row in review.get("academic_section_reviews") or []:
         heading = _clean(row.get("heading") or row.get("section_name") or "Untitled section")
-        key = _normalised(heading)
-        if not key:
+        chapter_number = row.get("chapter_number")
+        try:
+            chapter_number = int(chapter_number) if chapter_number is not None else None
+        except (TypeError, ValueError):
+            chapter_number = None
+        key = (chapter_number, _normalised(heading))
+        if not key[1]:
             continue
         group = groups.setdefault(key, {
             "heading": heading,
+            "chapter_number": chapter_number,
+            "section_path": list(row.get("section_path") or []),
             "assessments": [],
             "scores": [],
             "coverage_warnings": [],
@@ -223,13 +230,36 @@ def _ordered_section_reviews(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     return output
 
 
-def _rows_for_section(section_name: str, rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _row_chapter_number(row: Dict[str, Any]) -> int | None:
+    value = row.get("chapter_number")
+    try:
+        if value is not None:
+            return int(value)
+    except (TypeError, ValueError):
+        pass
+    for evidence in row.get("evidence") or []:
+        try:
+            if evidence.get("chapter_number") is not None:
+                return int(evidence.get("chapter_number"))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _rows_for_section(
+    section_name: str,
+    rows: Sequence[Dict[str, Any]],
+    chapter_number: int | None = None,
+) -> List[Dict[str, Any]]:
     target = _normalised(section_name)
     matched = []
     for row in rows:
-        source = _normalised(row.get("section", ""))
-        if source == target or (source and target and (source in target or target in source)):
-            matched.append(row)
+        source = _normalised(row.get("section_reference") or row.get("section", ""))
+        if source != target:
+            continue
+        if chapter_number is not None and _row_chapter_number(row) not in {None, chapter_number}:
+            continue
+        matched.append(row)
     return matched
 
 
@@ -441,44 +471,17 @@ def _section_strengths(
     section_name: str,
     strengths: Sequence[Dict[str, Any]],
     assessments: Sequence[str],
+    chapter_number: int | None = None,
 ) -> List[str]:
     target = _normalised(section_name)
     matched = []
     for strength in strengths:
         source = _normalised(strength.get("section", ""))
-        if source == target or (source and target and (source in target or target in source)):
+        strength_chapter = _row_chapter_number(strength)
+        if source == target and (chapter_number is None or strength_chapter in {None, chapter_number}):
             observation = _compact_sentence(strength.get("observation", ""), 210)
             if observation:
                 matched.append(observation)
-
-    if not matched:
-        for assessment in assessments:
-            text = _clean(assessment)
-            positive_parts = [
-                part.strip()
-                for part in re.split(r"(?<=[.!?])\s+", text)
-                if any(
-                    phrase in part.lower()
-                    for phrase in (
-                        "clearly", "appropriate", "relevant", "coherent",
-                        "well", "adequate", "strong", "addresses",
-                        "provides", "establishes", "aligns",
-                    )
-                )
-                and not any(
-                    phrase in part.lower()
-                    for phrase in (
-                        "not clearly", "does not", "lacks", "weak",
-                        "inadequate", "requires", "needs",
-                    )
-                )
-            ]
-            for part in positive_parts:
-                matched.append(_compact_sentence(part, 210))
-                if len(matched) >= 2:
-                    break
-            if matched:
-                break
 
     return _unique(matched, 2)
 
@@ -487,8 +490,9 @@ def _section_corrections(
     section_name: str,
     findings: Sequence[Dict[str, Any]],
     limit: int | None = None,
+    chapter_number: int | None = None,
 ) -> List[str]:
-    rows = _rows_for_section(section_name, findings)
+    rows = _rows_for_section(section_name, findings, chapter_number)
     rows = [
         row for row in rows
         if row.get("status") not in {"meets_requirement", "not_applicable"}
@@ -525,7 +529,7 @@ def _chapter_number_from_rows(
     findings: Sequence[Dict[str, Any]],
     default_chapter: int | None,
 ) -> int | None:
-    for row in _rows_for_section(section_name, findings):
+    for row in _rows_for_section(section_name, findings, default_chapter):
         for evidence in row.get("evidence") or []:
             value = evidence.get("chapter_number")
             try:
@@ -574,9 +578,11 @@ def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     raw_units: List[Dict[str, Any]] = []
     for section in section_rows:
         heading = section["heading"]
-        chapter_number = _chapter_number_from_rows(
-            heading, findings, default_chapter
-        )
+        chapter_number = section.get("chapter_number")
+        if chapter_number is None:
+            chapter_number = _chapter_number_from_rows(
+                heading, findings, default_chapter
+            )
         raw_units.append({
             "label": heading,
             "chapter_number": chapter_number,
@@ -584,8 +590,9 @@ def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
                 heading,
                 strengths,
                 section.get("assessments") or [],
+                chapter_number,
             ),
-            "corrections": _section_corrections(heading, findings, None),
+            "corrections": _section_corrections(heading, findings, None, chapter_number),
             "warnings": _unique(section.get("coverage_warnings") or [], 1),
             "assessments": section.get("assessments") or [],
         })

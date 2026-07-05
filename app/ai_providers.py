@@ -225,6 +225,18 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
 
 
 def _openai_output_text(payload: Dict[str, Any]) -> str:
+    status = str(payload.get("status") or "").strip().lower()
+    incomplete = payload.get("incomplete_details") or {}
+    reason = incomplete.get("reason") if isinstance(incomplete, dict) else ""
+    if status == "incomplete":
+        if reason == "max_output_tokens":
+            raise AIProviderError(
+                "OpenAI output was truncated because the output-token limit was reached."
+            )
+        raise AIProviderError(
+            f"OpenAI returned an incomplete response{f' ({reason})' if reason else ''}."
+        )
+
     chunks = []
     for item in payload.get("output", []) or []:
         if item.get("type") != "message":
@@ -238,8 +250,6 @@ def _openai_output_text(payload: Dict[str, Any]) -> str:
         return "".join(chunks)
     if isinstance(payload.get("output_text"), str):
         return payload["output_text"]
-    incomplete = payload.get("incomplete_details") or {}
-    reason = incomplete.get("reason") if isinstance(incomplete, dict) else ""
     raise AIProviderError(f"OpenAI returned no structured text output{f' ({reason})' if reason else ''}.")
 
 
@@ -476,14 +486,25 @@ class OpenAIProvider:
         purpose: str,
         reasoning_effort: Optional[str] = None,
         max_output_tokens: Optional[int] = None,
+        request_timeout_seconds: Optional[int] = None,
+        request_max_retries: Optional[int] = None,
     ) -> ProviderResult:
         schema = _make_openai_strict_schema(schema_model.model_json_schema())
-        body: Dict[str, Any] = {
+        effort = (
+            reasoning_effort
+            or self.config.openai_reasoning_effort
+            or "high"
+        ).strip().lower()
+        if effort not in {"low", "medium", "high"}:
+            effort = "high"
+
+        base_input = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        base_body: Dict[str, Any] = {
             "model": model,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "input": base_input,
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -494,36 +515,74 @@ class OpenAIProvider:
             },
             "max_output_tokens": max_output_tokens or self.config.max_output_tokens,
             "store": False,
+            "reasoning": {"effort": effort},
         }
-        effort = reasoning_effort or self.config.openai_reasoning_effort
-        if effort and effort != "none":
-            body["reasoning"] = {"effort": effort}
 
-        payload, request_id = await _post_json_with_retry(
-            url=f"{self.config.openai_base_url}/responses",
-            headers={
-                "Authorization": f"Bearer {self.config.openai_api_key}",
-                "Content-Type": "application/json",
-            },
-            payload=body,
-            timeout_seconds=self.config.timeout_seconds,
-            max_retries=self.config.max_retries,
-        )
-        raw = _extract_json_text(_openai_output_text(payload))
-        raw = _normalise_model_payload(raw, schema_model)
-        try:
-            validated = schema_model.model_validate(raw)
-        except ValidationError as exc:
-            raise AIProviderError(f"OpenAI output failed schema validation: {exc}") from exc
+        last_error: Optional[Exception] = None
+        attempts = max(1, self.config.structured_output_retries + 1)
+        for attempt in range(attempts):
+            body = dict(base_body)
+            if attempt:
+                body["input"] = [
+                    base_input[0],
+                    {
+                        "role": "user",
+                        "content": (
+                            user_prompt
+                            + "\n\nThe previous response was empty, incomplete, or did not "
+                              "match the required schema. Return one complete JSON object "
+                              "that follows the supplied schema exactly."
+                        ),
+                    },
+                ]
+            try:
+                payload, request_id = await _post_json_with_retry(
+                    url=f"{self.config.openai_base_url}/responses",
+                    headers={
+                        "Authorization": f"Bearer {self.config.openai_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    payload=body,
+                    timeout_seconds=(
+                        request_timeout_seconds
+                        if request_timeout_seconds is not None
+                        else self.config.timeout_seconds
+                    ),
+                    max_retries=(
+                        request_max_retries
+                        if request_max_retries is not None
+                        else self.config.max_retries
+                    ),
+                )
+                raw = _extract_json_text(_openai_output_text(payload))
+                raw = _normalise_model_payload(raw, schema_model)
+                validated = schema_model.model_validate(raw)
 
-        usage_source = payload.get("usage") or {}
-        input_tokens = _usage_value(usage_source, "input_tokens")
-        output_tokens = _usage_value(usage_source, "output_tokens")
-        cached_tokens = _usage_value(usage_source, "input_tokens_details.cached_tokens")
-        usage = AIUsageRecord(
-            provider="openai", model=model, purpose=purpose,
-            input_tokens=input_tokens, cached_input_tokens=cached_tokens,
-            output_tokens=output_tokens,
-            request_id=request_id or payload.get("id", ""),
-        )
-        return ProviderResult(data=validated.model_dump(), usage=usage)
+                usage_source = payload.get("usage") or {}
+                input_tokens = _usage_value(usage_source, "input_tokens")
+                output_tokens = _usage_value(usage_source, "output_tokens")
+                cached_tokens = _usage_value(
+                    usage_source,
+                    "input_tokens_details.cached_tokens",
+                )
+                usage = AIUsageRecord(
+                    provider="openai",
+                    model=model,
+                    purpose=purpose,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_tokens,
+                    output_tokens=output_tokens,
+                    request_id=request_id or payload.get("id", ""),
+                )
+                return ProviderResult(data=validated.model_dump(), usage=usage)
+            except (ValidationError, AIProviderError) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    break
+
+        if isinstance(last_error, ValidationError):
+            raise AIProviderError(
+                f"OpenAI output failed schema validation: {last_error}"
+            ) from last_error
+        raise AIProviderError(str(last_error or "OpenAI request failed."))
+
