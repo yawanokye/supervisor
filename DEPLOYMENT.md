@@ -100,7 +100,7 @@ PRICE_OPENAI_EXPERT_INPUT=2.50
 PRICE_OPENAI_EXPERT_CACHED_INPUT=0.25
 PRICE_OPENAI_EXPERT_OUTPUT=15.00
 AI_ADVANCED_SECOND_PASS=true
-AI_VERIFICATION_BATCH_SIZE=24
+AI_VERIFICATION_BATCH_SIZE=12
 ```
 
 The application uses the Responses API with strict structured outputs. Provider and model names remain hidden from supervisors and students. Remove any stale `OPENAI_REVIEW_MODEL=o3-mini` variable because the active workflow uses the role-specific settings above. Legacy DeepSeek variables may remain unset.
@@ -255,7 +255,7 @@ AI_CHAPTER_REVIEW_CONCURRENCY=4
 AI_CHAPTER_PACKET_MAX_CHARS=120000
 AI_CHAPTER_RECOVERY_CONCURRENCY=2
 AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
-AI_VERIFICATION_BATCH_SIZE=48
+AI_VERIFICATION_BATCH_SIZE=12
 ```
 
 The old focused-section recovery variables may remain, but they are no longer used by the active supervisory-review path. Existing v1.9.2 academic checkpoints are intentionally not reused. Document extraction and durable source files remain available.
@@ -284,7 +284,7 @@ AI_CHAPTER_REVIEW_CONCURRENCY=4
 AI_CHAPTER_PACKET_MAX_CHARS=120000
 AI_CHAPTER_RECOVERY_CONCURRENCY=2
 AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
-AI_VERIFICATION_BATCH_SIZE=48
+AI_VERIFICATION_BATCH_SIZE=12
 
 # External examination
 OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4

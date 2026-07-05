@@ -1,3 +1,14 @@
+## v1.9.5 — Validated report and native-comment output recovery
+
+- Splits comment verification into smaller batches and retries failed batches as focused evidence packets.
+- Preserves evidence-grounded major and moderate findings when an independent audit request remains unavailable, while marking those comments for manual confirmation.
+- Prevents completion when low section scores would otherwise produce an empty report and an unannotated DOCX.
+- Validates that an exported annotated DOCX contains at least one native Word comment before making it downloadable.
+- Hides the annotated-document download when no grounded actionable finding exists.
+- Adds **Rebuild review** for completed reviews labelled **Review completed with a limitation**, reusing the saved extraction and upload.
+- Reduces the default verification batch size from 48 findings to 12.
+- Bumps supervisory-review, final-pipeline and native-comment export versions so defective cached output is not restored.
+
 ## v1.9.4 — Unified supervisory and external-examination workflows
 
 - Retained the simplified v1.9.3 chapter-packet supervisory review.
