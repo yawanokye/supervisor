@@ -13,14 +13,15 @@ from app.ai_providers import OpenAIProvider
 from app.ai_schemas import DocumentMap
 
 
-async def main() -> None:
-    config = HybridAIConfig.from_env()
-    if not config.openai_configured:
-        raise SystemExit("Set OPENAI_API_KEY before running this smoke test.")
-
-    provider = OpenAIProvider(config)
+async def _check_model(
+    provider: OpenAIProvider,
+    *,
+    model: str,
+    effort: str,
+    purpose: str,
+) -> None:
     result = await provider.complete_json(
-        model=config.openai_review_model,
+        model=model,
         system_prompt=(
             "You are testing the structured-output connection. Return only a "
             "valid document map for the supplied text."
@@ -30,15 +31,32 @@ async def main() -> None:
             "the relationship between e-ordering and procurement efficiency."
         ),
         schema_model=DocumentMap,
-        purpose="openai_o3_mini_smoke_test",
-        reasoning_effort=config.openai_review_reasoning_effort,
+        purpose=purpose,
+        reasoning_effort=effort,
         max_output_tokens=1200,
     )
-    print(
-        "OpenAI smoke test passed:",
-        config.openai_review_model,
-        result.usage.request_id,
+    print("OpenAI smoke test passed:", model, result.usage.request_id)
+
+
+async def main() -> None:
+    config = HybridAIConfig.from_env()
+    if not config.openai_configured:
+        raise SystemExit("Set OPENAI_API_KEY before running this smoke test.")
+
+    provider = OpenAIProvider(config)
+    await _check_model(
+        provider,
+        model=config.openai_chapter_model,
+        effort=config.openai_chapter_reasoning_effort,
+        purpose="openai_chapter_model_smoke_test",
     )
+    if config.openai_expert_model != config.openai_chapter_model:
+        await _check_model(
+            provider,
+            model=config.openai_expert_model,
+            effort=config.openai_expert_reasoning_effort,
+            purpose="openai_expert_model_smoke_test",
+        )
 
 
 if __name__ == "__main__":
