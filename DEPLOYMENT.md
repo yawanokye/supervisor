@@ -309,3 +309,36 @@ JOB_LEASE_SECONDS=240
 ```
 
 Remove stale `OPENAI_REVIEW_MODEL=o3-mini` and old external role variables from a new Render deployment. Legacy external variables remain accepted only as fallbacks.
+
+## Supervisor token allocation
+
+Version 1.9.7 adds an administrator token-allocation module. The dashboard can
+allocate raw AI tokens or convert a requested number of standard supervisory or
+external-examination pages into tokens. A review reserves an estimated amount
+at submission and reconciles the reservation to the provider's reported input
+and output tokens when the review completes.
+
+Recommended staged rollout:
+
+```env
+TOKEN_ACCOUNTING_ENABLED=true
+TOKEN_QUOTA_ENFORCEMENT=false
+SUPERVISOR_DEFAULT_TOKEN_ALLOCATION=0
+TOKEN_ESTIMATE_WORDS_PER_PAGE=450
+TOKEN_RESERVE_MULTIPLIER=1.15
+TOKENS_PER_PAGE_SUPERVISORY_LIGHT=2500
+TOKENS_PER_PAGE_SUPERVISORY_STANDARD=3500
+TOKENS_PER_PAGE_SUPERVISORY_ADVANCED=5000
+TOKENS_PER_PAGE_EXTERNAL_ASSESSMENT=6500
+```
+
+With `TOKEN_QUOTA_ENFORCEMENT=false`, supervisors who have never received an
+allocation remain unmetered. As soon as an allocation is assigned, that account
+is metered. After all accounts have been allocated, set
+`TOKEN_QUOTA_ENFORCEMENT=true` so every supervisor must have enough available
+tokens before submitting a review.
+
+PDF page counts are exact. DOCX page capacity is estimated from word count
+because pagination varies with fonts, margins, spacing and the Word version.
+The administrator dashboard therefore labels page figures as planning
+estimates rather than guaranteed page limits.

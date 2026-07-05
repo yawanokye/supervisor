@@ -1,3 +1,28 @@
+# Changelog
+
+## 1.9.7 - Supervisor token allocation and page-capacity planning
+
+- Added individual and bulk token allocation to the administrator dashboard.
+- Added allocation by raw AI tokens, standard supervisory pages or external-examination pages.
+- Added exact PDF page counts and conservative DOCX page estimates.
+- Added token reservation before review execution and actual-usage reconciliation at completion.
+- Added supervisor balance, reserved usage, settled usage and page-capacity displays.
+- Added a persistent token ledger and safe database migrations.
+- Added staged quota enforcement so existing deployments can allocate balances before blocking submissions.
+
+## v1.9.6 — Fast grounded review with automatic recovery
+
+- Removes automatic Paused states for provider, timeout, evidence-validation and empty-comment failures.
+- Queues transient failures and retries only the interrupted stage from durable checkpoints.
+- Uses exponential retry delays and a configurable retry ceiling, then fails clearly with a manual Recover action rather than looping.
+- Adds a retry-generation key so a recovery request receives fresh model outputs instead of restoring the same defective provider checkpoint.
+- Adds one last-mile GPT-5.4 expert rescue when proposed comments are removed by the accuracy audit, while retaining exact evidence and placement gates.
+- Keeps chapter packets concurrent and verification batches small for speed.
+- Preserves live stage messages during high-progress retries so the portal no longer appears frozen at an old percentage.
+- Requires at least one verified native Microsoft Word comment before the annotated DOCX becomes downloadable.
+- Keeps the original document text and formatting unchanged and uses the logged-in reviewer’s name as comment author.
+- Passed 181 automated tests.
+
 ## v1.9.5 — Validated report and native-comment output recovery
 
 - Splits comment verification into smaller batches and retries failed batches as focused evidence packets.

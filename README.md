@@ -1,8 +1,8 @@
-# ProjectReady AI Supervisor Assistant 1.9.1
+# ProjectReady AI Supervisor Assistant 1.9.7
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.9.1 introduces tiered OpenAI expert review. GPT-5.4 mini provides fast chapter-level assessment, while GPT-5.4 performs the universal factual audit, research-intensive review and External Assessment. Native Word comments now display the logged-in reviewer’s full name and initials instead of a generic “Supervisor Assistant” author.
+Version 1.9.7 uses a fast chapter-packet workflow with automatic checkpoint recovery and adds institutional supervisor token allocation with expected page-capacity planning. GPT-5.4 mini performs concurrent chapter review, while GPT-5.4 handles research-intensive judgement, factual auditing and a last-mile grounded rescue when a valid comment set would otherwise be empty. Transient provider, timeout and validation failures are retried automatically without putting the job into a Paused state. Native Microsoft Word comments use the logged-in reviewer’s name and remain the only annotation method.
 
 ## Review philosophy
 
@@ -37,7 +37,7 @@ Every selected depth receives complete section coverage, source-grounded finding
 
 ## Coverage safeguard
 
-The app requires one substantive assessment for every detected substantive section and subsection. Short or apparently adequate sections cannot be silently omitted. Missing section reviews are retried individually. The job fails rather than exporting a report when any section remains unreviewed.
+The app requires one substantive assessment for every detected substantive section and subsection. Short or apparently adequate sections cannot be silently omitted. Missing section reviews are retried individually. The system retries an unresolved stage automatically from durable checkpoints. If all automatic attempts are exhausted, the job fails clearly rather than exporting unsupported findings or an empty annotated document.
 
 ## Annotated Word output
 
@@ -71,6 +71,24 @@ Examples are illustrative and must be adapted to the actual study and verified e
 - External Assessment uses GPT-5.4 throughout, with `xhigh` reasoning for the confidential final decision.
 - Review depth controls breadth and explanation. It never lowers factual verification or academic-level standards.
 - Strict structured JSON is required before findings are accepted. Background jobs, checkpoints and grouped parallel review preserve speed.
+
+## Automatic recovery and speed
+
+- Independent chapter packets run concurrently.
+- Transient provider, timeout and evidence-validation failures are queued and retried automatically.
+- Automatic retries generate fresh provider checkpoints instead of replaying a defective response.
+- The portal remains in Queued or Processing status during recovery. It does not enter an automatic Paused state.
+- A final GPT-5.4 grounded rescue runs only when the normal audit would otherwise leave no valid comments.
+- No report or annotated DOCX is released until factual evidence and native Word comments are confirmed.
+
+
+## Token allocation and expected page capacity
+
+The administrator dashboard converts each supervisor's allocation into estimated work capacity. PDF page counts are exact. DOCX pages are estimated from word count because Microsoft Word pagination varies with fonts, spacing, margins and application version.
+
+At submission, the app reserves a conservative token estimate based on workflow and review depth. At completion, it reconciles the reservation to the OpenAI input and output tokens reported for the review. Unused reserved tokens return to the supervisor's available balance.
+
+The default staged rollout leaves supervisors with no allocation unmetered until the institution is ready to enforce quotas. Once all accounts have balances, set `TOKEN_QUOTA_ENFORCEMENT=true`.
 
 ## Run locally
 
@@ -124,6 +142,9 @@ The administrator can:
 - suspend or reactivate accounts
 - reset lecturer login details
 - view institutional review activity
+- allocate review tokens individually or in bulk
+- allocate by raw tokens, standard supervisory pages or external-examination pages
+- monitor available, reserved and used tokens with a persistent audit trail
 
 The temporary password and recovery PIN are displayed once after account creation or reset. Lecturers must change the temporary password at first login.
 

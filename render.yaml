@@ -28,9 +28,23 @@ services:
       - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
         value: 7000
       - key: AI_VERIFICATION_BATCH_SIZE
-        value: 48
+        value: 12
       - key: MAX_AUTO_RESUMES
-        value: 3
+        value: 4
+      - key: AUTOMATIC_RETRY_DELAY_SECONDS
+        value: 12
+      - key: AUTOMATIC_RETRY_MAX_DELAY_SECONDS
+        value: 90
+      - key: AI_TIMEOUT_SECONDS
+        value: 300
+      - key: AI_MAX_RETRIES
+        value: 2
+      - key: AI_STRUCTURED_OUTPUT_RETRIES
+        value: 1
+      - key: AI_JOB_MAX_SECONDS
+        value: 5400
+      - key: AI_ADVANCED_SECOND_PASS
+        value: true
       - key: JOB_HEARTBEAT_SECONDS
         value: 45
       - key: JOB_LEASE_SECONDS
@@ -62,9 +76,27 @@ services:
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS
         value: 360
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
-        value: 0
+        value: 1
       - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
         value: 11000
+      - key: TOKEN_ACCOUNTING_ENABLED
+        value: true
+      - key: TOKEN_QUOTA_ENFORCEMENT
+        value: false
+      - key: SUPERVISOR_DEFAULT_TOKEN_ALLOCATION
+        value: 0
+      - key: TOKEN_ESTIMATE_WORDS_PER_PAGE
+        value: 450
+      - key: TOKEN_RESERVE_MULTIPLIER
+        value: 1.15
+      - key: TOKENS_PER_PAGE_SUPERVISORY_LIGHT
+        value: 2500
+      - key: TOKENS_PER_PAGE_SUPERVISORY_STANDARD
+        value: 3500
+      - key: TOKENS_PER_PAGE_SUPERVISORY_ADVANCED
+        value: 5000
+      - key: TOKENS_PER_PAGE_EXTERNAL_ASSESSMENT
+        value: 6500
     disk:
       name: supervisor-review-checkpoints
       mountPath: /var/data
