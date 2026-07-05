@@ -1188,6 +1188,7 @@ async def _complete_assessment_stage(
     max_output_tokens: int,
     reasoning_effort: str,
     checkpoint_manager: Optional[CheckpointManager] = None,
+    retry_generation: int = 0,
 ) -> Any:
     last_error: Optional[Exception] = None
     validation_feedback: List[str] = []
@@ -1221,7 +1222,8 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.9.4-three-examiners-one-adjudicator",
+            "pipeline": "external-assessment-v1.9.6-three-examiners-one-adjudicator",
+            "retry_generation": int(retry_generation or 0),
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
@@ -1378,6 +1380,7 @@ async def enrich_with_external_assessment(
     config: HybridAIConfig,
     progress_callback: Optional[Any] = None,
     checkpoint_manager: Optional[CheckpointManager] = None,
+    retry_generation: int = 0,
 ) -> Dict[str, Any]:
     if not config.openai_configured:
         raise AIProviderError(
@@ -1498,6 +1501,7 @@ async def enrich_with_external_assessment(
                     config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
+                retry_generation=retry_generation,
             ),
             "evidence_core": _complete_assessment_stage(
                 provider,
@@ -1517,6 +1521,7 @@ async def enrich_with_external_assessment(
                     config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
+                retry_generation=retry_generation,
             ),
             "integrity": _complete_assessment_stage(
                 provider,
@@ -1536,6 +1541,7 @@ async def enrich_with_external_assessment(
                     config.openai_external_domain_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
+                retry_generation=retry_generation,
             ),
         },
         start_progress=87,
@@ -1584,6 +1590,7 @@ async def enrich_with_external_assessment(
                     config.openai_external_adjudicator_reasoning_effort
                 ),
                 checkpoint_manager=checkpoint_manager,
+                retry_generation=retry_generation,
             ),
             timeout=config.external_assessment_stage_timeout_seconds,
         )

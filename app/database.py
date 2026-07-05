@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Generator, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, func, inspect, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -53,6 +53,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_balance: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_reserved_total: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_allocated_total: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_used_total: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
     reviews: Mapped[list["ReviewRecord"]] = relationship(back_populates="lecturer", cascade="all, delete-orphan")
 
@@ -92,8 +96,27 @@ class ReviewRecord(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    estimated_pages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    token_estimate: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_reserved: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    tokens_used: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_accounting_status: Mapped[str] = mapped_column(String(30), default="unmetered", nullable=False)
 
     lecturer: Mapped[User] = relationship(back_populates="reviews")
+
+
+class TokenLedger(Base):
+    __tablename__ = "token_ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lecturer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    review_record_id: Mapped[Optional[int]] = mapped_column(ForeignKey("review_records.id", ondelete="SET NULL"), index=True, nullable=True)
+    transaction_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class ReviewCheckpoint(Base):
@@ -115,6 +138,31 @@ class ReviewCheckpoint(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+def _ensure_user_token_columns() -> None:
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing = {column["name"] for column in inspector.get_columns("users")}
+    definitions = {
+        "token_balance": "BIGINT DEFAULT 0",
+        "token_reserved_total": "BIGINT DEFAULT 0",
+        "token_allocated_total": "BIGINT DEFAULT 0",
+        "token_used_total": "BIGINT DEFAULT 0",
+    }
+    statements = [
+        f"ALTER TABLE users ADD COLUMN {name} {definition}"
+        for name, definition in definitions.items()
+        if name not in existing
+    ]
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        for name in definitions:
+            connection.execute(text(f"UPDATE users SET {name}=0 WHERE {name} IS NULL"))
 
 
 def _ensure_review_record_columns() -> None:
@@ -143,6 +191,11 @@ def _ensure_review_record_columns() -> None:
         "lease_owner": "VARCHAR(160)",
         "lease_expires_at": "TIMESTAMP",
         "started_at": "TIMESTAMP",
+        "estimated_pages": "INTEGER DEFAULT 0",
+        "token_estimate": "BIGINT DEFAULT 0",
+        "token_reserved": "BIGINT DEFAULT 0",
+        "tokens_used": "BIGINT DEFAULT 0",
+        "token_accounting_status": "VARCHAR(30) DEFAULT 'unmetered'",
     }
     for column_name, definition in migration_columns.items():
         if column_name not in existing:
@@ -169,10 +222,16 @@ def _ensure_review_record_columns() -> None:
         connection.execute(
             text("UPDATE review_records SET payload_available=FALSE WHERE payload_available IS NULL")
         )
+        connection.execute(text("UPDATE review_records SET estimated_pages=0 WHERE estimated_pages IS NULL"))
+        connection.execute(text("UPDATE review_records SET token_estimate=0 WHERE token_estimate IS NULL"))
+        connection.execute(text("UPDATE review_records SET token_reserved=0 WHERE token_reserved IS NULL"))
+        connection.execute(text("UPDATE review_records SET tokens_used=0 WHERE tokens_used IS NULL"))
+        connection.execute(text("UPDATE review_records SET token_accounting_status='unmetered' WHERE token_accounting_status IS NULL OR token_accounting_status=''"))
 
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_user_token_columns()
     _ensure_review_record_columns()
 
 

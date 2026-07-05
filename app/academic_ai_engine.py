@@ -1390,6 +1390,7 @@ async def enrich_review_with_academic_ai(
     review: Dict[str, Any], runtime: Dict[str, Any], *, requested_mode: str = "standard",
     config: Optional[HybridAIConfig] = None, progress_callback: Any = None,
     checkpoint_manager: Optional[CheckpointManager] = None,
+    retry_generation: int = 0,
 ) -> Dict[str, Any]:
     config = config or HybridAIConfig.from_env()
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
@@ -1522,7 +1523,8 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.5-adaptive-audit-output",
+            "pipeline": "academic-review-v1.9.6-fast-grounded-auto-recovery",
+            "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
             "purpose": purpose,
@@ -1869,7 +1871,8 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.5-adaptive-batches",
+                "pipeline": "academic-comment-audit-v1.9.6-fast-grounded-auto-recovery",
+                "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
                 "depth": depth,
@@ -2049,10 +2052,61 @@ async def enrich_review_with_academic_ai(
             if float(section.get("section_score") or 0.0) < 75.0
         ]
         if low_scoring_sections:
+            # Last-mile expert rescue. This mirrors a direct expert ChatGPT review:
+            # one strong request receives the complete affected chapter packets and
+            # must return only evidence-anchored comments. It is used only when the
+            # independent audit removed every proposed issue. The deterministic
+            # accuracy gate still controls what reaches the report and native DOCX.
+            rescue_sources = [
+                section.get("source_section") or {}
+                for section in low_scoring_sections
+                if (section.get("source_section") or {}).get("paragraphs")
+            ]
+            rescue_sources = rescue_sources[:8]
+            if rescue_sources:
+                rescue_result = await primary_call(
+                    rescue_sources,
+                    config.openai_final_audit_model,
+                    config.openai_final_audit_reasoning_effort,
+                    "direct_grounded_comment_rescue",
+                    max(config.advanced_audit_max_output_tokens, 7000),
+                )
+                usage_records.append(_usage_cost(rescue_result.usage, config))
+                source_by_key = {
+                    str(section.get("section_key") or ""): section
+                    for section in rescue_sources
+                }
+                rescue_rows: List[Dict[str, Any]] = []
+                for item in rescue_result.data.get("reviews") or []:
+                    source = source_by_key.get(str(item.get("section_key") or ""))
+                    if not source:
+                        continue
+                    allowed_ids = {
+                        _pid(paragraph)
+                        for paragraph in source.get("paragraphs") or []
+                    }
+                    for issue in item.get("issues") or []:
+                        candidate = dict(issue)
+                        candidate["section"] = clean_text(source.get("heading") or candidate.get("section"))
+                        valid = _valid_issue(
+                            candidate, paragraph_index, context_lock, allowed_ids=allowed_ids
+                        )
+                        if valid:
+                            valid["verification_status"] = "direct_expert_rescue"
+                            valid["manual_confirmation_required"] = False
+                            rescue_rows.append(valid)
+                rescue_rows, _ = apply_accuracy_gate(
+                    rescue_rows, paragraph_index, current
+                )
+                all_issues = _consolidate_repetitive_issues(
+                    _deduplicate_issues(rescue_rows)
+                )
+
+        if low_scoring_sections and not all_issues:
             raise ReviewOutputValidationError(
-                "The academic reviewer identified weaknesses, but no grounded "
-                "findings survived the accuracy audit. The review has been "
-                "paused instead of exporting an empty report and an unannotated document."
+                "The expert review completed, but no factual, correctly placed "
+                "comments survived the evidence checks. A fresh automatic expert "
+                "pass is required before any report or annotated document is released."
             )
     strengths = []
     seen = set()

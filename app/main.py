@@ -33,7 +33,7 @@ from .auth import (
     validate_password,
     verify_secret,
 )
-from .database import ReviewCheckpoint, ReviewRecord, SessionLocal, User, get_db, init_db
+from .database import ReviewCheckpoint, ReviewRecord, SessionLocal, TokenLedger, User, get_db, init_db
 from .checkpointing import (
     CheckpointManager,
     load_job_payload,
@@ -55,6 +55,24 @@ from .external_assessment_exporter import (
 from .report_exporter import build_docx_report
 from .review_engine import analyse
 from .storage import ensure_storage, load_annotated, load_review_json, save_annotated, save_review_json, storage_status
+from .token_budget import (
+    DEFAULT_SUPERVISOR_TOKENS,
+    TOKEN_ACCOUNTING_ENABLED,
+    TOKEN_QUOTA_ENFORCEMENT,
+    TOKENS_PER_PAGE,
+    RESERVED_TOKENS_PER_PAGE,
+    adjust_allocation,
+    allocation_to_tokens,
+    estimate_document_pages,
+    estimate_review_tokens,
+    page_capacity,
+    reserve_existing_review_tokens,
+    reserve_review_tokens,
+    release_review_reservation,
+    settle_review_tokens,
+    supervisor_capacity,
+    usage_token_total,
+)
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -76,7 +94,9 @@ STAGE_STALE_AFTER_SECONDS = max(
     600,
     int(os.getenv("STAGE_STALE_AFTER_SECONDS", "1800")),
 )
-MAX_AUTO_RESUMES = max(0, int(os.getenv("MAX_AUTO_RESUMES", "3")))
+MAX_AUTO_RESUMES = max(1, int(os.getenv("MAX_AUTO_RESUMES", "4")))
+AUTOMATIC_RETRY_DELAY_SECONDS = max(5, int(os.getenv("AUTOMATIC_RETRY_DELAY_SECONDS", "12")))
+AUTOMATIC_RETRY_MAX_DELAY_SECONDS = max(30, int(os.getenv("AUTOMATIC_RETRY_MAX_DELAY_SECONDS", "90")))
 AUTO_RESUME_JOBS = os.getenv("AUTO_RESUME_JOBS", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
@@ -87,7 +107,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.2",
+    version="1.9.7",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -442,7 +462,14 @@ async def lecturer_portal(request: Request, db: Session = Depends(get_db)):
     revised = sum(1 for row in reviews if row.submission_stage == "revised")
     return templates.TemplateResponse(
         "portal.html",
-        _template_context(request, user=user, reviews=reviews, stats={"total": total, "completed": completed, "processing": processing, "revised": revised}),
+        _template_context(
+            request,
+            user=user,
+            reviews=reviews,
+            stats={"total": total, "completed": completed, "processing": processing, "revised": revised},
+            token_capacity=supervisor_capacity(user),
+            token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED,
+        ),
     )
 
 
@@ -453,7 +480,7 @@ async def review_workspace(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     if user.must_change_password:
         return RedirectResponse("/account/password", status_code=303)
-    return templates.TemplateResponse("index.html", _template_context(request, user=user))
+    return templates.TemplateResponse("index.html", _template_context(request, user=user, token_capacity=supervisor_capacity(user), token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED))
 
 
 @app.get("/reviews/{review_id}", response_class=HTMLResponse)
@@ -477,18 +504,37 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/account/password", status_code=303)
     lecturers = db.query(User).filter(User.role == "lecturer").order_by(User.created_at.desc()).all()
     review_counts = dict(db.query(ReviewRecord.lecturer_id, func.count(ReviewRecord.id)).group_by(ReviewRecord.lecturer_id).all())
+    token_capacities = {item.id: supervisor_capacity(item) for item in lecturers}
+    token_ledger = (
+        db.query(TokenLedger)
+        .order_by(TokenLedger.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    ledger_users = {
+        item.id: item.full_name
+        for item in db.query(User).filter(User.id.in_({row.lecturer_id for row in token_ledger} or {-1})).all()
+    }
     recent_reviews = db.query(ReviewRecord).options(joinedload(ReviewRecord.lecturer)).order_by(ReviewRecord.created_at.desc()).limit(20).all()
+    total_available_tokens = sum(int(item.token_balance or 0) for item in lecturers)
+    total_reserved_tokens = sum(int(item.token_reserved_total or 0) for item in lecturers)
+    total_used_tokens = sum(int(item.token_used_total or 0) for item in lecturers)
     stats = {
         "lecturers": len(lecturers),
         "active": sum(1 for item in lecturers if item.is_active),
         "reviews": int(db.query(func.count(ReviewRecord.id)).scalar() or 0),
         "processing": int(db.query(func.count(ReviewRecord.id)).filter(ReviewRecord.status.in_(["queued", "processing", "paused"])).scalar() or 0),
+        "available_tokens": total_available_tokens,
+        "reserved_tokens": total_reserved_tokens,
+        "used_tokens": total_used_tokens,
+        "standard_pages": page_capacity(total_available_tokens, "supervisory_standard"),
+        "external_pages": page_capacity(total_available_tokens, "external_assessment"),
     }
     credential_token = request.session.pop("credential_token", None)
     credentials = CREDENTIAL_FLASH.pop(credential_token, None) if credential_token else None
     return templates.TemplateResponse(
         "admin_dashboard.html",
-        _template_context(request, user=user, lecturers=lecturers, review_counts=review_counts, recent_reviews=recent_reviews, stats=stats, credentials=credentials),
+        _template_context(request, user=user, lecturers=lecturers, review_counts=review_counts, recent_reviews=recent_reviews, stats=stats, credentials=credentials, token_capacities=token_capacities, token_ledger=token_ledger, ledger_users=ledger_users, token_rates=TOKENS_PER_PAGE, token_capacity_rates=RESERVED_TOKENS_PER_PAGE, token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED, token_quota_enforcement=TOKEN_QUOTA_ENFORCEMENT),
     )
 
 
@@ -526,8 +572,20 @@ async def create_lecturer(
         department=department.strip() or None,
         is_active=True,
         must_change_password=True,
+        token_balance=0,
+        token_allocated_total=0,
     )
     db.add(lecturer)
+    db.flush()
+    if DEFAULT_SUPERVISOR_TOKENS > 0:
+        adjust_allocation(
+            db,
+            user=lecturer,
+            token_amount=DEFAULT_SUPERVISOR_TOKENS,
+            mode="add",
+            note="Default allocation for new supervisor account",
+            created_by_user_id=admin.id,
+        )
     db.commit()
     token = secrets.token_urlsafe(24)
     CREDENTIAL_FLASH[token] = {
@@ -539,6 +597,157 @@ async def create_lecturer(
     request.session["credential_token"] = token
     _set_flash(request, f"Account created for {lecturer.full_name}.", "success")
     return RedirectResponse("/admin", status_code=303)
+
+
+@app.post("/admin/lecturers/{lecturer_id}/tokens")
+async def allocate_lecturer_tokens(
+    lecturer_id: int,
+    request: Request,
+    amount: int = Form(...),
+    unit: str = Form("tokens"),
+    mode: str = Form("add"),
+    note: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _verify_csrf(request, csrf_token)
+    admin = _current_user(request, db)
+    if not admin or admin.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    lecturer = (
+        db.query(User)
+        .filter(User.id == lecturer_id, User.role == "lecturer")
+        .with_for_update()
+        .first()
+    )
+    if not lecturer:
+        raise HTTPException(status_code=404, detail="Supervisor account not found.")
+    try:
+        token_amount = allocation_to_tokens(amount, unit)
+        delta = adjust_allocation(
+            db,
+            user=lecturer,
+            token_amount=token_amount,
+            mode=mode,
+            note=clean_text(note) or f"Administrator {mode} allocation",
+            created_by_user_id=admin.id,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        _set_flash(request, str(exc), "error")
+        return RedirectResponse("/admin#token-allocation", status_code=303)
+    capacity = supervisor_capacity(lecturer)
+    _set_flash(
+        request,
+        f"{lecturer.full_name}'s available balance changed by {delta:+,} tokens. "
+        f"The current allocation supports about {capacity['standard_pages']:,} standard supervisory pages "
+        f"or {capacity['external_pages']:,} external-examination pages.",
+        "success",
+    )
+    return RedirectResponse("/admin#token-allocation", status_code=303)
+
+
+@app.post("/admin/tokens/bulk")
+async def bulk_allocate_tokens(
+    request: Request,
+    amount: int = Form(...),
+    unit: str = Form("tokens"),
+    mode: str = Form("add"),
+    target: str = Form("active"),
+    department: str = Form(""),
+    note: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _verify_csrf(request, csrf_token)
+    admin = _current_user(request, db)
+    if not admin or admin.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    query = db.query(User).filter(User.role == "lecturer")
+    if target == "active":
+        query = query.filter(User.is_active.is_(True))
+    elif target == "department":
+        department_value = clean_text(department)
+        if not department_value:
+            _set_flash(request, "Enter the department or school for the bulk allocation.", "error")
+            return RedirectResponse("/admin#token-allocation", status_code=303)
+        query = query.filter(func.lower(User.department) == department_value.lower())
+    elif target != "all":
+        _set_flash(request, "Choose active supervisors, all supervisors or one department.", "error")
+        return RedirectResponse("/admin#token-allocation", status_code=303)
+    lecturers = query.with_for_update().all()
+    if not lecturers:
+        _set_flash(request, "No supervisors matched the bulk-allocation target.", "error")
+        return RedirectResponse("/admin#token-allocation", status_code=303)
+    try:
+        token_amount = allocation_to_tokens(amount, unit)
+        for lecturer in lecturers:
+            adjust_allocation(
+                db,
+                user=lecturer,
+                token_amount=token_amount,
+                mode=mode,
+                note=clean_text(note) or f"Bulk {mode} allocation",
+                created_by_user_id=admin.id,
+            )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        _set_flash(request, str(exc), "error")
+        return RedirectResponse("/admin#token-allocation", status_code=303)
+    _set_flash(
+        request,
+        f"Token allocation updated for {len(lecturers)} supervisor account(s).",
+        "success",
+    )
+    return RedirectResponse("/admin#token-allocation", status_code=303)
+
+
+@app.post("/admin/reviews/{record_id}/release-token-reservation")
+async def release_abandoned_review_tokens(
+    record_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _verify_csrf(request, csrf_token)
+    admin = _current_user(request, db)
+    if not admin or admin.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    record = (
+        db.query(ReviewRecord)
+        .filter(ReviewRecord.id == record_id)
+        .with_for_update()
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Review record not found.")
+    if record.status not in {"failed", "stopped"}:
+        _set_flash(
+            request,
+            "Reserved tokens can be released only for a failed or stopped review.",
+            "error",
+        )
+        return RedirectResponse("/admin#recent-reviews", status_code=303)
+    lecturer = db.get(User, record.lecturer_id)
+    if not lecturer or record.token_accounting_status != "reserved":
+        _set_flash(request, "This review has no active token reservation.", "info")
+        return RedirectResponse("/admin#recent-reviews", status_code=303)
+    amount = int(record.token_reserved or 0)
+    release_review_reservation(
+        db,
+        record=record,
+        user=lecturer,
+        note=f"Administrator released abandoned reservation for {record.filename}",
+    )
+    db.commit()
+    _set_flash(
+        request,
+        f"Released {amount:,} tokens to {lecturer.full_name}'s available balance.",
+        "success",
+    )
+    return RedirectResponse("/admin#recent-reviews", status_code=303)
 
 
 @app.post("/admin/lecturers/{lecturer_id}/toggle")
@@ -956,7 +1165,24 @@ async def _resume_recoverable_jobs() -> None:
 
 
 async def _delayed_auto_resume(job_id: str) -> None:
-    await asyncio.sleep(15)
+    """Retry a recoverable job without exposing an automatic Paused state.
+
+    Transient provider, timeout and validation failures are queued and retried
+    from durable checkpoints. Only an explicit user stop creates a Stopped job.
+    Exhausted automatic retries become Failed with a manual Recover action.
+    """
+    with SessionLocal() as db:
+        record = (
+            db.query(ReviewRecord)
+            .filter(ReviewRecord.job_id == job_id)
+            .first()
+        )
+        attempt = int(record.resume_count or 0) if record else 0
+    delay = min(
+        AUTOMATIC_RETRY_MAX_DELAY_SECONDS,
+        AUTOMATIC_RETRY_DELAY_SECONDS * (2 ** min(attempt, 3)),
+    )
+    await asyncio.sleep(delay)
     with SessionLocal() as db:
         record = (
             db.query(ReviewRecord)
@@ -965,12 +1191,77 @@ async def _delayed_auto_resume(job_id: str) -> None:
         )
         if (
             not record
-            or record.status != "paused"
+            or record.status != "queued"
             or not record.recoverable
             or int(record.resume_count or 0) >= MAX_AUTO_RESUMES
         ):
             return
     _schedule_review_job(job_id, resumed=True)
+
+
+def _queue_automatic_retry(
+    job_id: str,
+    *,
+    message: str,
+    error: str,
+    current_stage: str,
+    checkpoint_count: int,
+) -> bool:
+    """Queue a transient failure for automatic checkpoint recovery.
+
+    Returns True when an automatic retry was scheduled. If the retry budget is
+    exhausted, the job is marked Failed rather than Paused so the user is never
+    trapped in an automatic pause/resume loop.
+    """
+    with SessionLocal() as db:
+        record = (
+            db.query(ReviewRecord)
+            .filter(ReviewRecord.job_id == job_id)
+            .first()
+        )
+        attempts = int(record.resume_count or 0) if record else 0
+    saved_payload_available = payload_available(job_id)
+    can_retry = (
+        AUTO_RESUME_JOBS
+        and saved_payload_available
+        and attempts < MAX_AUTO_RESUMES
+    )
+    if can_retry:
+        _job_update(
+            job_id,
+            status="queued",
+            message=message,
+            error=error,
+            current_stage=current_stage,
+            checkpoint_count=checkpoint_count,
+            retryable=True,
+            recoverable=True,
+            payload_available=True,
+            resume_url=f"/api/review/jobs/{job_id}/resume",
+        )
+        asyncio.create_task(_delayed_auto_resume(job_id))
+        return True
+
+    _job_update(
+        job_id,
+        status="failed",
+        message="Automatic recovery could not complete the review",
+        error=(
+            error
+            + " The upload and completed checkpoints remain available. "
+              "Select Recover once after checking the API key, quota and model access."
+        ),
+        current_stage=current_stage,
+        checkpoint_count=checkpoint_count,
+        retryable=saved_payload_available,
+        recoverable=saved_payload_available,
+        payload_available=saved_payload_available,
+        resume_url=(
+            f"/api/review/jobs/{job_id}/resume"
+            if saved_payload_available else None
+        ),
+    )
+    return False
 
 
 def _assessment_review_depth(academic_level: str) -> str:
@@ -1016,10 +1307,14 @@ async def _run_review_job(
     current_stage = "pipeline-start"
 
     try:
+        usage_snapshot: Dict[str, Any] = {}
         _job_update(
             job_id,
             status="processing",
-            progress=8,
+            progress=(
+                max(8, int(JOB_CACHE.get(job_id, {}).get("progress") or 0))
+                if resumed else 8
+            ),
             message=(
                 "Resuming the review from its last saved checkpoint"
                 if resumed
@@ -1032,7 +1327,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.5-adaptive-audit-and-output-validation",
+            "pipeline": "review-pipeline-v1.9.7-token-allocation-pages",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1047,6 +1342,7 @@ async def _run_review_job(
 
         if final_checkpoint:
             review = dict(final_checkpoint["review"])
+            usage_snapshot = dict(final_checkpoint.get("usage_snapshot") or {})
             runtime_context: Dict[str, Any] = {}
             _job_update(
                 job_id,
@@ -1129,16 +1425,23 @@ async def _run_review_job(
 
             async def progress_callback(value: int, message: str) -> None:
                 _assert_job_lease(job_id)
+                # On an automatic retry, retain the highest displayed progress
+                # while still showing the live stage message. This prevents the
+                # portal from appearing frozen at the previous percentage.
+                display_value = max(
+                    int(value),
+                    int(JOB_CACHE.get(job_id, {}).get("progress") or 0),
+                )
                 _job_update(
                     job_id,
-                    progress=value,
+                    progress=display_value,
                     message=message,
                     current_stage=current_stage,
                     checkpoint_count=checkpoints.completed_count(),
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.5-adaptive-audit-output",
+                "pipeline": "academic-review-complete-v1.9.7-token-allocation-pages",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1178,6 +1481,7 @@ async def _run_review_job(
                         config=config,
                         progress_callback=progress_callback,
                         checkpoint_manager=checkpoints,
+                        retry_generation=int(JOB_CACHE.get(job_id, {}).get("resume_count") or 0),
                     ),
                     timeout=AI_JOB_MAX_SECONDS,
                 )
@@ -1191,7 +1495,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.9.4-three-examiners-one-adjudicator",
+                    "pipeline": "external-assessment-complete-v1.9.6-three-examiners-one-adjudicator",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"
@@ -1229,6 +1533,7 @@ async def _run_review_job(
                             config=config,
                             progress_callback=progress_callback,
                             checkpoint_manager=checkpoints,
+                            retry_generation=int(JOB_CACHE.get(job_id, {}).get("resume_count") or 0),
                         ),
                         timeout=AI_JOB_MAX_SECONDS,
                     )
@@ -1246,10 +1551,9 @@ async def _run_review_job(
                     "external_assessment_available": False,
                 })
 
-            if review.get("ai_review"):
-                AI_USAGE_CACHE[review["review_id"]] = dict(
-                    review["ai_review"]
-                )
+            usage_snapshot = dict(review.get("ai_review") or {})
+            if usage_snapshot:
+                AI_USAGE_CACHE[review["review_id"]] = usage_snapshot
             review = _strip_internal_ai_metadata(review)
             if reviewer_name:
                 review.setdefault("summary", {})["reviewer_name"] = reviewer_name
@@ -1284,7 +1588,7 @@ async def _run_review_job(
             })
             checkpoints.save(
                 "pipeline-final",
-                {"review": review},
+                {"review": review, "usage_snapshot": usage_snapshot},
                 input_hash=final_hash,
                 progress=97,
                 message="Final review data assembled",
@@ -1384,6 +1688,15 @@ async def _run_review_job(
                 record.completed_at = datetime.now(timezone.utc)
                 record.lease_owner = None
                 record.lease_expires_at = None
+                accounting_user = db.get(User, record.lecturer_id)
+                if accounting_user:
+                    effective_usage = usage_snapshot or AI_USAGE_CACHE.get(review["review_id"]) or {}
+                    settle_review_tokens(
+                        db,
+                        record=record,
+                        user=accounting_user,
+                        actual_tokens=usage_token_total(effective_usage),
+                    )
                 db.commit()
 
         _job_update(
@@ -1415,8 +1728,8 @@ async def _run_review_job(
                 .first()
             )
             if record and record.status != "stopped":
-                record.status = "paused"
-                record.message = "Review interrupted safely at the last completed checkpoint"
+                record.status = "queued"
+                record.message = "Review interrupted safely and queued for automatic recovery"
                 record.recoverable = bool(payload_available(job_id))
                 record.lease_owner = None
                 record.lease_expires_at = None
@@ -1425,61 +1738,28 @@ async def _run_review_job(
     except ExternalAssessmentValidationError as exc:
         detail = clean_text(str(exc))
         checkpoints.mark_failed(current_stage, detail)
-        saved_payload_available = payload_available(job_id)
-        _job_update(
+        _queue_automatic_retry(
             job_id,
-            status="paused" if saved_payload_available else "failed",
-            message=(
-                "External assessment paused at the evidence-validation check"
-                if saved_payload_available
-                else "External assessment stopped by evidence validation"
-            ),
+            message="Rechecking external-assessment evidence automatically",
             error=(
                 detail
-                + (
-                    " The original upload and completed checkpoints are saved. "
-                    "Select Recover to retry the failed stage with the current "
-                    "validation rules."
-                    if saved_payload_available
-                    else ""
-                )
+                + " The current examiner stage will be regenerated from the saved evidence packet."
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=saved_payload_available,
-            recoverable=saved_payload_available,
-            payload_available=saved_payload_available,
-            resume_url=(
-                f"/api/review/jobs/{job_id}/resume"
-                if saved_payload_available
-                else None
-            ),
         )
     except ReviewOutputValidationError as exc:
-        checkpoints.mark_failed(current_stage, str(exc))
-        saved_payload_available = payload_available(job_id)
-        _job_update(
+        detail = clean_text(str(exc))
+        checkpoints.mark_failed(current_stage, detail)
+        _queue_automatic_retry(
             job_id,
-            status="paused" if saved_payload_available else "failed",
-            message=(
-                "Review paused because usable comments could not be validated"
-                if saved_payload_available
-                else "Review stopped because usable comments could not be validated"
-            ),
+            message="Rebuilding grounded review comments automatically",
             error=(
-                clean_text(str(exc))
-                + (
-                    " The upload and completed extraction are saved. Select Resume once "
-                    "to retry only the academic review and comment audit."
-                    if saved_payload_available else ""
-                )
+                detail
+                + " A fresh expert pass will run using the saved document map and exact evidence anchors."
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=saved_payload_available,
-            recoverable=saved_payload_available,
-            payload_available=saved_payload_available,
-            resume_url=(f"/api/review/jobs/{job_id}/resume" if saved_payload_available else None),
         )
     except (ValueError, AIConfigurationError) as exc:
         checkpoints.mark_failed(current_stage, str(exc))
@@ -1496,23 +1776,16 @@ async def _run_review_job(
     except asyncio.TimeoutError as exc:
         logger.exception("Background review exceeded the maximum processing time")
         checkpoints.mark_failed(current_stage, str(exc))
-        _job_update(
+        _queue_automatic_retry(
             job_id,
-            status="paused",
-            message="Review paused safely at the last completed checkpoint",
+            message="The slow stage timed out and is retrying automatically",
             error=(
-                "The current stage exceeded the processing window. Completed "
-                "stages have been saved and the review can resume without "
-                "starting again."
+                "The current stage exceeded its processing window. Completed stages "
+                "remain saved and only the interrupted stage will be regenerated."
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=True,
-            recoverable=True,
-            resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        if AUTO_RESUME_JOBS and not str(current_stage).startswith("external-"):
-            asyncio.create_task(_delayed_auto_resume(job_id))
     except AIProviderError as exc:
         logger.exception("Expert review provider failure")
         detail = clean_text(str(exc))
@@ -1522,41 +1795,30 @@ async def _run_review_job(
             else "The expert review provider interrupted the current stage."
         )
         checkpoints.mark_failed(current_stage, safe_detail)
-        _job_update(
+        _queue_automatic_retry(
             job_id,
-            status="paused",
-            message="Review paused safely and is ready to resume",
+            message="The expert review request is retrying automatically",
             error=(
                 safe_detail
-                + " Completed stages and section groups have been retained."
+                + " Completed chapter and evidence checkpoints have been retained."
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=True,
-            recoverable=True,
-            resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        if AUTO_RESUME_JOBS and not str(current_stage).startswith("external-"):
-            asyncio.create_task(_delayed_auto_resume(job_id))
     except Exception as exc:
         logger.exception("Unexpected background review failure")
-        checkpoints.mark_failed(current_stage, str(exc))
-        _job_update(
+        detail = clean_text(str(exc)) or "The current review stage was interrupted."
+        checkpoints.mark_failed(current_stage, detail)
+        _queue_automatic_retry(
             job_id,
-            status="paused",
-            message="Review interrupted and saved at the last checkpoint",
+            message="The interrupted stage is recovering automatically",
             error=(
-                "The current stage was interrupted. Completed stages remain "
-                "saved and the job can resume from the last checkpoint."
+                "The current stage was interrupted. Completed stages remain saved "
+                "and only the interrupted stage will run again."
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
-            retryable=True,
-            recoverable=True,
-            resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        if AUTO_RESUME_JOBS:
-            asyncio.create_task(_delayed_auto_resume(job_id))
     finally:
         RUNNING_JOB_IDS.discard(job_id)
         heartbeat_task.cancel()
@@ -1710,6 +1972,30 @@ async def create_review(
         }
 
     job_id = uuid.uuid4().hex
+    estimated_pages = estimate_document_pages(data, filename)
+    token_plan = estimate_review_tokens(
+        estimated_pages,
+        workflow_type,
+        review_depth,
+    )
+    token_reserved = False
+    try:
+        token_reserved = reserve_review_tokens(
+            db,
+            user=user,
+            token_amount=token_plan.reserved_tokens,
+            pages=estimated_pages,
+            workflow_label=(
+                "external assessment"
+                if workflow_type == "external_assessment"
+                else "supervisory review"
+            ),
+            job_id=job_id,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
     payload = {
         "filename": filename,
         "data": data,
@@ -1739,11 +2025,15 @@ async def create_review(
         "supervisor_comments_text": supervisor_comments_text,
         "original_document": original_document,
         "user_id": user.id,
+        "estimated_pages": estimated_pages,
+        "token_estimate": token_plan.reserved_tokens,
+        "token_reserved": token_reserved,
     }
     try:
         manifest = save_job_payload(job_id, payload)
     except Exception as exc:
         logger.exception("Could not persist the review submission")
+        db.rollback()
         raise HTTPException(
             status_code=500,
             detail=(
@@ -1783,6 +2073,10 @@ async def create_review(
         checkpoint_count=0,
         recoverable=True,
         payload_available=True,
+        estimated_pages=estimated_pages,
+        token_estimate=token_plan.reserved_tokens,
+        token_reserved=(token_plan.reserved_tokens if token_reserved else 0),
+        token_accounting_status=("reserved" if token_reserved else "unmetered"),
     )
     db.add(record)
     db.commit()
@@ -1809,6 +2103,8 @@ async def create_review(
         "poll_url": f"/api/review/jobs/{job_id}",
         "resume_url": f"/api/review/jobs/{job_id}/resume",
         "stop_url": f"/api/review/jobs/{job_id}/stop",
+        "estimated_pages": estimated_pages,
+        "reserved_tokens": token_plan.reserved_tokens if token_reserved else 0,
     }
 
 
@@ -1959,6 +2255,16 @@ async def resume_review_job(
                     else None
                 ),
             }
+        accounting_user = db.get(User, record.lecturer_id)
+        if accounting_user:
+            try:
+                reserve_existing_review_tokens(db, record, accounting_user)
+            except ValueError as exc:
+                db.rollback()
+                if "text/html" in request.headers.get("accept", ""):
+                    _set_flash(request, str(exc), "error")
+                    return RedirectResponse("/portal", status_code=303)
+                raise HTTPException(status_code=402, detail=str(exc)) from exc
         record.status = "queued"
         record.message = "Rebuild requested for the limited review output"
         record.error = None
@@ -2002,6 +2308,16 @@ async def resume_review_job(
             ),
         )
 
+    accounting_user = db.get(User, record.lecturer_id)
+    if accounting_user:
+        try:
+            reserve_existing_review_tokens(db, record, accounting_user)
+        except ValueError as exc:
+            db.rollback()
+            if "text/html" in request.headers.get("accept", ""):
+                _set_flash(request, str(exc), "error")
+                return RedirectResponse("/portal", status_code=303)
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
     record.status = "queued"
     record.message = "Resume requested from the last completed checkpoint"
     record.error = None

@@ -16,7 +16,7 @@ from docx.table import Table
 from .document_parser import clean_text, normalised
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.5-native-comments-validated-output"
+ANNOTATION_EXPORT_VERSION = "1.9.6-native-comments-fast-grounded"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
