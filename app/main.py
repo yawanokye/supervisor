@@ -87,7 +87,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.8.9",
+    version="1.9.0",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -258,7 +258,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.8.9",
+        "version": "1.9.0",
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1365,6 +1365,23 @@ async def _run_review_job(
             result_url=f'/api/review/{review["review_id"]}',
         )
 
+    except asyncio.CancelledError:
+        # A user-triggered stop writes the durable ``stopped`` status before
+        # cancelling this task. Service shutdowns leave the job recoverable.
+        with SessionLocal() as db:
+            record = (
+                db.query(ReviewRecord)
+                .filter(ReviewRecord.job_id == job_id)
+                .first()
+            )
+            if record and record.status != "stopped":
+                record.status = "paused"
+                record.message = "Review interrupted safely at the last completed checkpoint"
+                record.recoverable = bool(payload_available(job_id))
+                record.lease_owner = None
+                record.lease_expires_at = None
+                db.commit()
+        raise
     except ExternalAssessmentValidationError as exc:
         detail = clean_text(str(exc))
         checkpoints.mark_failed(current_stage, detail)
@@ -1725,7 +1742,109 @@ async def create_review(
         "message": "Review queued and safely saved",
         "poll_url": f"/api/review/jobs/{job_id}",
         "resume_url": f"/api/review/jobs/{job_id}/resume",
+        "stop_url": f"/api/review/jobs/{job_id}/stop",
     }
+
+
+@app.post("/api/review/jobs/{job_id}/stop", status_code=202)
+async def stop_review_job(
+    job_id: str,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Stop an active review while retaining its upload and checkpoints.
+
+    A user-stopped job is deliberately excluded from automatic recovery. It may
+    be resumed manually later from the portal.
+    """
+    _verify_csrf(request, csrf_token)
+    user = _current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+
+    record = (
+        db.query(ReviewRecord)
+        .filter(ReviewRecord.job_id == job_id)
+        .first()
+    )
+    if not record or (
+        user.role != "admin" and record.lecturer_id != user.id
+    ):
+        raise HTTPException(status_code=404, detail="Review job not found.")
+    if record.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="This review is already complete and cannot be stopped.",
+        )
+    if record.status == "stopped":
+        response = {
+            "job_id": job_id,
+            "status": "stopped",
+            "progress": int(record.progress or 0),
+            "message": record.message or "Review stopped by the user",
+            "resume_url": f"/api/review/jobs/{job_id}/resume",
+        }
+        if "text/html" in request.headers.get("accept", ""):
+            _set_flash(
+                request,
+                "The review is already stopped. Completed checkpoints remain available.",
+                "info",
+            )
+            return RedirectResponse("/portal", status_code=303)
+        return response
+
+    saved_payload_available = payload_available(job_id)
+    record.status = "stopped"
+    record.message = "Review stopped by the user. Completed checkpoints were retained."
+    record.error = None
+    record.recoverable = bool(saved_payload_available)
+    record.payload_available = bool(saved_payload_available)
+    record.lease_owner = None
+    record.lease_expires_at = None
+    db.commit()
+
+    # Remove the job from automatic execution before cancelling its task.
+    SCHEDULED_JOB_IDS.discard(job_id)
+    RUNNING_JOB_IDS.discard(job_id)
+    task = JOB_TASKS.get(job_id)
+    if task and not task.done():
+        task.cancel()
+
+    _job_update(
+        job_id,
+        status="stopped",
+        progress=int(record.progress or 0),
+        message="Review stopped by the user. Completed checkpoints were retained.",
+        current_stage=record.current_stage,
+        checkpoint_count=int(record.checkpoint_count or 0),
+        recoverable=bool(saved_payload_available),
+        payload_available=bool(saved_payload_available),
+        lease_owner=None,
+        lease_expires_at=None,
+    )
+
+    response = {
+        "job_id": job_id,
+        "status": "stopped",
+        "progress": int(record.progress or 0),
+        "message": "Review stopped. You may resume later from the saved checkpoints.",
+        "checkpoint_count": int(record.checkpoint_count or 0),
+        "recoverable": bool(saved_payload_available),
+        "resume_url": (
+            f"/api/review/jobs/{job_id}/resume"
+            if saved_payload_available
+            else None
+        ),
+    }
+    if "text/html" in request.headers.get("accept", ""):
+        _set_flash(
+            request,
+            "Review stopped. Completed checkpoints were retained and can be resumed later.",
+            "success",
+        )
+        return RedirectResponse("/portal", status_code=303)
+    return response
 
 
 @app.post("/api/review/jobs/{job_id}/resume", status_code=202)
@@ -1845,10 +1964,12 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
                 f'/api/review/{response["review_id"]}',
             )
         elif (
-            (record.recoverable and record.status in {"paused", "queued"})
+            (record.recoverable and record.status in {"paused", "queued", "stopped"})
             or (record.status == "failed" and bool(record.payload_available))
         ):
             response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
+        if record.status in {"queued", "processing"}:
+            response["stop_url"] = f"/api/review/jobs/{job_id}/stop"
         return response
     response = {
         "job_id": record.job_id,
@@ -1878,10 +1999,12 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     if record.status == "completed" and record.review_id:
         response["result_url"] = f"/api/review/{record.review_id}"
     elif (
-        (record.recoverable and record.status in {"paused", "queued"})
+        (record.recoverable and record.status in {"paused", "queued", "stopped"})
         or (record.status == "failed" and bool(record.payload_available))
     ):
         response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
+    if record.status in {"queued", "processing"}:
+        response["stop_url"] = f"/api/review/jobs/{job_id}/stop"
     return response
 
 
