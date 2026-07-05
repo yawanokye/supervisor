@@ -20,6 +20,12 @@
         {% else %}
           <a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/export.docx">Download supervisor report</a>
           {% if record.annotated_available %}<a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated.docx">Download annotated document</a>{% endif %}
+          {% if record.payload_available and record.readiness_label == 'Review completed with a limitation' %}
+          <form method="post" action="/api/review/jobs/{{ record.job_id }}/resume" class="inline-action-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ghost-button">Rebuild review and comments</button>
+          </form>
+          {% endif %}
         {% endif %}
       </div>
     </section>

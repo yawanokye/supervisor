@@ -51,6 +51,13 @@
                 {% else %}
                   <a href="/api/review/{{ item.review_id }}/export.docx">Report</a>
                   {% if item.annotated_available %}<a href="/api/review/{{ item.review_id }}/annotated.docx">Annotated</a>{% endif %}
+                  {% if item.payload_available and item.readiness_label == 'Review completed with a limitation' %}
+                    <form method="post" action="/api/review/jobs/{{ item.job_id }}/resume" class="inline-action-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button type="submit" class="table-action-button">Rebuild review</button>
+                    </form>
+                    <small class="muted-text">Reuses the saved extraction and regenerates the report and native Word comments.</small>
+                  {% endif %}
                 {% endif %}
               {% elif item.status in ['queued', 'processing'] %}
                 <form method="post" action="/api/review/jobs/{{ item.job_id }}/stop" class="inline-action-form" onsubmit="return confirm('Stop this review? Completed checkpoints will be kept and you can resume later.');">
