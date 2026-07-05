@@ -66,8 +66,8 @@ def test_provider_checkpoint_is_reused_without_another_model_call(
     result = ProviderResult(
         data={"reviews": [{"section_key": "chapter-one"}]},
         usage=AIUsageRecord(
-            provider="deepseek",
-            model="deepseek-v4-pro",
+            provider="openai",
+            model="o3-mini",
             purpose="test",
             input_tokens=100,
             output_tokens=25,

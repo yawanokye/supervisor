@@ -57,3 +57,18 @@ def test_issue_is_flagged_for_source_verification():
     assert issue["source_verification_required"] is True
     assert issue["guidance_type"] == "source_verification"
     assert "South Africa" not in issue["illustrative_guidance"]
+
+
+def test_study_context_ignores_countries_mentioned_only_in_literature():
+    paragraphs = [
+        {"text": "E-PROCUREMENT ADOPTION ON PROCUREMENT EFFICIENCY: EVIDENCE FROM MOBILE PHONE DEALERS IN CAPE COAST METROPOLIS", "is_heading": True, "heading": "E-PROCUREMENT ADOPTION ON PROCUREMENT EFFICIENCY: EVIDENCE FROM MOBILE PHONE DEALERS IN CAPE COAST METROPOLIS"},
+        {"text": "ABSTRACT", "is_heading": True, "heading": "ABSTRACT"},
+        {"text": "This study examines mobile phone dealers in the Cape Coast Metropolis, Ghana.", "is_heading": False, "heading": "ABSTRACT"},
+        {"text": "Empirical Review", "is_heading": True, "heading": "Empirical Review", "chapter_number": 2},
+        {"text": "Prior studies were conducted in South Africa, Kenya, Tanzania, Rwanda and Germany.", "is_heading": False, "heading": "Empirical Review", "chapter_number": 2},
+    ]
+    context = build_context_lock(paragraphs, {})
+    assert context["title_or_opening_focus"].startswith("E-PROCUREMENT ADOPTION")
+    assert context["confirmed_countries"] == ["Ghana"]
+    assert "South Africa" not in context["confirmed_countries"]
+    assert "Kenya" not in context["confirmed_countries"]

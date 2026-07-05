@@ -90,8 +90,8 @@ def make_result(stage: str) -> ProviderResult:
     return ProviderResult(
         data=stage_payload(stage),
         usage=AIUsageRecord(
-            provider="deepseek",
-            model="deepseek-v4-pro",
+            provider="openai",
+            model="o3-mini",
             purpose=f"external_thesis_assessment_{stage}",
             input_tokens=100,
             cached_input_tokens=10,
@@ -114,7 +114,7 @@ def realistic_runtime_paragraphs() -> list[dict]:
     ]
 
 def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     config = HybridAIConfig.from_env()
     calls: list[str] = []
 
@@ -124,7 +124,7 @@ def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None
         return make_result(stage)
 
     monkeypatch.setattr(
-        "app.external_assessment.DeepSeekProvider.complete_json",
+        "app.external_assessment.OpenAIProvider.complete_json",
         fake_complete,
     )
 
@@ -169,7 +169,7 @@ def test_external_assessment_uses_five_fast_grounded_stages(monkeypatch) -> None
 
 
 def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     config = HybridAIConfig.from_env()
     attempts = {"foundation": 0}
 
@@ -179,12 +179,12 @@ def test_truncated_stage_gets_one_recovery_attempt(monkeypatch) -> None:
             attempts["foundation"] += 1
             if attempts["foundation"] == 1:
                 raise AIProviderError(
-                    "DeepSeek output was truncated because the output-token limit was reached."
+                    "OpenAI output was truncated because the output-token limit was reached."
                 )
         return make_result(stage)
 
     monkeypatch.setattr(
-        "app.external_assessment.DeepSeekProvider.complete_json",
+        "app.external_assessment.OpenAIProvider.complete_json",
         fake_complete,
     )
 
