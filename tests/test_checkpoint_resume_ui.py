@@ -39,8 +39,9 @@ def test_external_assessment_runs_three_examiners_then_one_adjudicator():
     assert '"decision": _complete_assessment_stage' not in source
 
 
-def test_final_report_is_not_created_for_a_paused_job():
+def test_final_report_is_created_only_after_successful_processing():
     source = Path("app/main.py").read_text(encoding="utf-8")
-    assert 'status="paused"' in source
+    assert '_queue_automatic_retry(' in source
+    assert 'status="queued"' in source
     assert '"partial_report_generated": False' in source
     assert 'checkpoints.save(\n                "pipeline-final"' in source
