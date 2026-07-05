@@ -22,6 +22,61 @@
     <section class="portal-welcome"><div><p class="eyebrow">Administration</p><h1>Institutional supervision dashboard</h1><p>Create supervisor accounts, control access and review institutional activity.</p></div></section>
     <section class="portal-stats"><article><span>Supervisor accounts</span><strong>{{ stats.lecturers }}</strong></article><article><span>Active supervisors</span><strong>{{ stats.active }}</strong></article><article><span>Total reviews</span><strong>{{ stats.reviews }}</strong></article><article><span>In progress</span><strong>{{ stats.processing }}</strong></article></section>
 
+    <section class="token-summary-grid" id="token-allocation">
+      <article><span>Available review tokens</span><strong>{{ "{:,}".format(stats.available_tokens) }}</strong><small>{{ "Enforced for all supervisors" if token_quota_enforcement else "Unallocated accounts remain unmetered" }}</small></article>
+      <article><span>Reserved by active jobs</span><strong>{{ "{:,}".format(stats.reserved_tokens) }}</strong><small>Reconciled to actual provider usage at completion</small></article>
+      <article><span>Tokens used</span><strong>{{ "{:,}".format(stats.used_tokens) }}</strong><small>Recorded after successful reviews</small></article>
+      <article><span>Expected standard pages</span><strong>{{ "{:,}".format(stats.standard_pages) }}</strong><small>At about {{ "{:,}".format(token_capacity_rates.supervisory_standard) }} reserved tokens per page</small></article>
+      <article><span>Expected examination pages</span><strong>{{ "{:,}".format(stats.external_pages) }}</strong><small>At about {{ "{:,}".format(token_capacity_rates.external_assessment) }} reserved tokens per page</small></article>
+    </section>
+
+    <section class="portal-card token-allocation-card">
+      <div class="portal-card-heading">
+        <div><p class="eyebrow">Resource management</p><h2>Supervisor token allocation</h2><p class="card-intro">Allocate AI review tokens directly, or enter the number of pages you expect a supervisor to review. Page figures are planning estimates. Actual input and output tokens are reconciled when a review completes.</p></div>
+        <span class="quota-state {{ 'enabled' if token_quota_enforcement else 'planning' }}">{{ 'Quota enforcement on' if token_quota_enforcement else 'Planning mode' }}</span>
+      </div>
+
+      <form method="post" action="/admin/tokens/bulk" class="bulk-token-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label><span>Bulk amount</span><input type="number" name="amount" min="0" step="1" required placeholder="e.g. 5000000"></label>
+        <label><span>Unit</span><select name="unit"><option value="tokens">AI tokens</option><option value="standard_pages">Standard supervisory pages</option><option value="external_pages">External-examination pages</option></select></label>
+        <label><span>Action</span><select name="mode"><option value="add">Add to balance</option><option value="set">Set available balance</option></select></label>
+        <label><span>Target</span><select name="target"><option value="active">All active supervisors</option><option value="all">All supervisors</option><option value="department">One department or school</option></select></label>
+        <label><span>Department <small>when selected</small></span><input type="text" name="department" placeholder="Exact department or school"></label>
+        <label class="bulk-note"><span>Administrative note</span><input type="text" name="note" placeholder="Annual allocation, top-up, adjustment"></label>
+        <button type="submit" class="primary-button">Apply bulk allocation</button>
+      </form>
+
+      {% if lecturers %}
+      <div class="table-wrap token-table-wrap"><table class="portal-table token-table">
+        <thead><tr><th>Supervisor</th><th>Available</th><th>Reserved</th><th>Used</th><th>Expected work</th><th>Allocate</th></tr></thead>
+        <tbody>
+        {% for lecturer in lecturers %}
+          {% set capacity = token_capacities.get(lecturer.id) %}
+          <tr>
+            <td><strong>{{ lecturer.full_name }}</strong><small>@{{ lecturer.username }}{% if lecturer.department %} · {{ lecturer.department }}{% endif %}</small></td>
+            <td><strong>{{ "{:,}".format(capacity.available_tokens) }}</strong><small>tokens available</small></td>
+            <td><strong>{{ "{:,}".format(capacity.reserved_tokens) }}</strong><small>active-job reserve</small></td>
+            <td><strong>{{ "{:,}".format(capacity.used_tokens) }}</strong><small>settled usage</small></td>
+            <td><strong>{{ "{:,}".format(capacity.standard_pages) }} standard pages</strong><small>{{ "{:,}".format(capacity.advanced_pages) }} advanced · {{ "{:,}".format(capacity.external_pages) }} examination</small></td>
+            <td>
+              <form method="post" action="/admin/lecturers/{{ lecturer.id }}/tokens" class="inline-token-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="number" name="amount" min="0" step="1" required placeholder="Amount">
+                <select name="unit" aria-label="Allocation unit"><option value="tokens">Tokens</option><option value="standard_pages">Standard pages</option><option value="external_pages">Exam pages</option></select>
+                <select name="mode" aria-label="Allocation action"><option value="add">Add</option><option value="set">Set balance</option></select>
+                <input type="text" name="note" placeholder="Optional note">
+                <button type="submit" class="mini-button success-outline">Allocate</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+      <p class="token-method-note"><strong>Planning rates:</strong> Light supervisory review {{ "{:,}".format(token_rates.supervisory_light) }} tokens/page, standard {{ "{:,}".format(token_rates.supervisory_standard) }}, advanced {{ "{:,}".format(token_rates.supervisory_advanced) }}, and external examination {{ "{:,}".format(token_rates.external_assessment) }}. A {{ ((token_capacity_rates.supervisory_standard / token_rates.supervisory_standard - 1) * 100)|round|int }}% safety reserve is included in page capacity and is reconciled to actual usage. DOCX pages are estimated from word count because Word pagination varies by layout.</p>
+    </section>
+
     <section class="admin-grid">
       <article class="portal-card create-account-card">
         <div class="portal-card-heading"><div><p class="eyebrow">Account management</p><h2>Create supervisor account</h2></div></div>
@@ -43,7 +98,7 @@
           {% for lecturer in lecturers %}
           <div class="lecturer-row">
             <div class="lecturer-avatar">{{ lecturer.full_name[:1]|upper }}</div>
-            <div class="lecturer-info"><strong>{{ lecturer.full_name }}</strong><span>@{{ lecturer.username }}{% if lecturer.department %} · {{ lecturer.department }}{% endif %}</span><small>{{ review_counts.get(lecturer.id, 0) }} review(s) · {{ 'Active' if lecturer.is_active else 'Suspended' }}</small></div>
+            <div class="lecturer-info"><strong>{{ lecturer.full_name }}</strong><span>@{{ lecturer.username }}{% if lecturer.department %} · {{ lecturer.department }}{% endif %}</span><small>{{ review_counts.get(lecturer.id, 0) }} review(s) · {{ 'Active' if lecturer.is_active else 'Suspended' }}</small><small>{{ "{:,}".format(token_capacities.get(lecturer.id).available_tokens) }} review tokens · about {{ "{:,}".format(token_capacities.get(lecturer.id).standard_pages) }} standard pages</small></div>
             <div class="lecturer-actions">
               <form method="post" action="/admin/lecturers/{{ lecturer.id }}/reset"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="mini-button">Reset login</button></form>
               <form method="post" action="/admin/lecturers/{{ lecturer.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="mini-button {{ 'danger-outline' if lecturer.is_active else 'success-outline' }}">{{ 'Suspend' if lecturer.is_active else 'Activate' }}</button></form>
@@ -55,9 +110,16 @@
     </section>
 
     <section class="portal-card">
+      <div class="portal-card-heading"><div><p class="eyebrow">Audit trail</p><h2>Recent token activity</h2></div></div>
+      {% if token_ledger %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Supervisor</th><th>Activity</th><th>Change</th><th>Balance after</th><th>Note</th><th>Date</th></tr></thead><tbody>
+      {% for entry in token_ledger %}<tr><td>{{ ledger_users.get(entry.lecturer_id, 'Supervisor') }}</td><td>{{ entry.transaction_type|replace('_',' ')|title }}</td><td><strong class="{{ 'token-positive' if entry.amount >= 0 else 'token-negative' }}">{{ '+' if entry.amount >= 0 else '' }}{{ "{:,}".format(entry.amount) }}</strong></td><td>{{ "{:,}".format(entry.balance_after) }}</td><td>{{ entry.note or '—' }}</td><td>{{ entry.created_at.strftime('%d %b %Y %H:%M') if entry.created_at else '—' }}</td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<p class="muted-text">No token allocation or usage has been recorded.</p>{% endif %}
+    </section>
+
+    <section class="portal-card" id="recent-reviews">
       <div class="portal-card-heading"><div><p class="eyebrow">Institutional activity</p><h2>Recent reviews</h2></div></div>
-      {% if recent_reviews %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Supervisor</th><th>Document</th><th>Workflow</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
-      {% for item in recent_reviews %}<tr><td>{{ item.lecturer.full_name }}</td><td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }}</small></td><td>{{ "External Assessment" if item.workflow_type == "external_assessment" else "Supervisory Review" }}<small>{{ item.review_depth|title }}</small></td><td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span></td><td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td><td>{% if item.status == 'completed' and item.review_id %}<a href="/reviews/{{ item.review_id }}">View</a>{% else %}<span class="muted-text">—</span>{% endif %}</td></tr>{% endfor %}
+      {% if recent_reviews %}<div class="table-wrap"><table class="portal-table"><thead><tr><th>Supervisor</th><th>Document</th><th>Workflow</th><th>Token accounting</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
+      {% for item in recent_reviews %}<tr><td>{{ item.lecturer.full_name }}</td><td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }}{% if item.estimated_pages %} · about {{ item.estimated_pages }} pages{% endif %}</small></td><td>{{ "External Assessment" if item.workflow_type == "external_assessment" else "Supervisory Review" }}<small>{{ item.review_depth|title }}</small></td><td><strong>{{ "{:,}".format(item.tokens_used if item.token_accounting_status == 'settled' else item.token_reserved) }}</strong><small>{{ item.token_accounting_status|replace('_',' ')|title }}</small></td><td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span></td><td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td><td class="table-actions">{% if item.status == 'completed' and item.review_id %}<a href="/reviews/{{ item.review_id }}">View</a>{% elif item.status in ['failed','stopped'] and item.token_accounting_status == 'reserved' %}<form method="post" action="/admin/reviews/{{ item.id }}/release-token-reservation" class="inline-action-form" onsubmit="return confirm('Release this review token reservation? The review can still be recovered later, but a new reservation will be required.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="table-action-button">Release tokens</button></form>{% else %}<span class="muted-text">—</span>{% endif %}</td></tr>{% endfor %}
       </tbody></table></div>{% else %}<p class="muted-text">No review activity has been recorded.</p>{% endif %}
     </section>
   </main>

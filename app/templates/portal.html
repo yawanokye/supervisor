@@ -29,6 +29,13 @@
       <article><span>Revised submissions</span><strong>{{ stats.revised }}</strong></article>
     </section>
 
+    {% if token_accounting_enabled %}
+    <section class="supervisor-token-card">
+      <div><p class="eyebrow">Review allocation</p><h2>{{ "{:,}".format(token_capacity.available_tokens) }} tokens available</h2><p>Expected capacity: about <strong>{{ "{:,}".format(token_capacity.standard_pages) }} standard supervisory pages</strong>, {{ "{:,}".format(token_capacity.advanced_pages) }} advanced-review pages, or {{ "{:,}".format(token_capacity.external_pages) }} external-examination pages.</p></div>
+      <div class="token-card-metrics"><span><strong>{{ "{:,}".format(token_capacity.reserved_tokens) }}</strong><small>Reserved</small></span><span><strong>{{ "{:,}".format(token_capacity.used_tokens) }}</strong><small>Used</small></span></div>
+    </section>
+    {% endif %}
+
     <section class="portal-card">
       <div class="portal-card-heading"><div><p class="eyebrow">Review history</p><h2>Your submitted work</h2></div><a href="/review" class="ghost-link-button">New review</a></div>
       {% if reviews %}
@@ -37,7 +44,7 @@
         <tbody>
         {% for item in reviews %}
           <tr>
-            <td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }} · {{ (item.assessment_stage or item.submission_stage)|replace("_"," ")|title }}</small></td>
+            <td><strong>{{ item.filename }}</strong><small>{{ item.academic_level }} · {{ (item.assessment_stage or item.submission_stage)|replace("_"," ")|title }}{% if item.estimated_pages %} · about {{ item.estimated_pages }} pages{% endif %}</small>{% if item.token_accounting_status != 'unmetered' %}<small>{{ "{:,}".format(item.tokens_used if item.token_accounting_status == 'settled' else item.token_reserved) }} tokens · {{ item.token_accounting_status|replace('_',' ')|title }}</small>{% endif %}</td>
             <td><strong>{{ "External Assessment" if item.workflow_type == "external_assessment" else "Supervisory Review" }}</strong><small>{{ item.review_depth|title }} · {{ item.review_scope|replace('_',' ')|title }}{% if item.selected_chapter %} · Chapter {{ item.selected_chapter }}{% endif %}</small></td>
             <td><span class="record-status status-record-{{ item.status }}">{{ item.status|title }}</span>{% if item.status in ['queued','processing','paused','stopped'] %}<small>{{ item.progress }}%{% if item.checkpoint_count %} · {{ item.checkpoint_count }} checkpoints saved{% endif %}{% if item.current_stage %}<br>{{ item.current_stage|replace('-',' ')|title }}{% endif %}</small>{% endif %}</td>
             <td>{{ item.created_at.strftime('%d %b %Y') if item.created_at else '—' }}</td>

@@ -34,6 +34,13 @@
       </div>
     </section>
 
+    {% if token_accounting_enabled %}
+    <section class="workspace-token-banner">
+      <div><span>Available review allocation</span><strong>{{ "{:,}".format(token_capacity.available_tokens) }} tokens</strong></div>
+      <p>Approximately {{ "{:,}".format(token_capacity.standard_pages) }} standard supervisory pages or {{ "{:,}".format(token_capacity.external_pages) }} external-examination pages. The exact reservation is calculated from the uploaded document and reconciled to actual AI usage.</p>
+    </section>
+    {% endif %}
+
     <section class="workspace">
       <div class="panel setup-panel">
         <div class="panel-heading">
