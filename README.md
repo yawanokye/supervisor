@@ -1,8 +1,8 @@
-# ProjectReady AI Supervisor Assistant 1.8.9
+# ProjectReady AI Supervisor Assistant 1.9.0
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.8.9 moves all active supervisory review and external examination calls to OpenAI o3-mini through the Responses API. The factual-placement, exact-evidence, native Word comment and recommendation safeguards from v1.8.8 remain active.
+Version 1.9.0 adds a safe user-controlled Stop Review action while retaining the OpenAI o3-mini review workflow and all factual-placement, exact-evidence, native Word comment and recommendation safeguards.
 
 ## Review philosophy
 

@@ -195,3 +195,9 @@ AI_MAX_PARALLEL_CALLS=4
 AI_MAX_RETRIES=1
 AI_STRUCTURED_OUTPUT_RETRIES=0
 ```
+
+## v1.9.0 safe stop deployment
+
+Version 1.9.0 adds a **Stop review** action for queued or processing reviews. The action preserves completed checkpoints and the saved upload, marks the job as `stopped`, releases the worker lease and prevents automatic recovery. The user may later select **Resume**.
+
+To stop a job that was already running before this version was deployed, temporarily set `AUTO_RESUME_JOBS=false`, deploy v1.9.0, refresh Review History and select **Stop review**. After the job shows `Stopped`, `AUTO_RESUME_JOBS` may be restored to `true`.

@@ -1,3 +1,15 @@
+## v1.9.0
+
+- Adds **Stop review** to active queued and processing jobs in Review History and the live review workspace.
+- Stops scheduling further stages, cancels the active application task and releases the worker lease.
+- Preserves the uploaded document and every completed checkpoint so the review can be resumed manually later.
+- Introduces a durable `stopped` status that is excluded from automatic startup recovery and delayed auto-resume.
+- Adds confirmation prompts and clear portal guidance to prevent accidental stops.
+- Keeps stalled-stage recovery available alongside the Stop action.
+- Exposes `stop_url` in queued and active job responses for the browser client.
+- Adds cancellation handling that prevents a user-stopped job from being marked complete by an older worker.
+- Passed 156 automated tests.
+
 ## v1.8.9
 
 - Moves all active supervisory-review, universal accuracy-audit, recovery and External Assessment calls to OpenAI `o3-mini` through the Responses API.
