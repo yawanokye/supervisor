@@ -1,54 +1,43 @@
 from __future__ import annotations
 
-__test__ = False
-
 import asyncio
-import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.ai_config import HybridAIConfig
-from app.ai_providers import DeepSeekProvider
+from app.ai_providers import OpenAIProvider
 from app.ai_schemas import DocumentMap
 
 
-async def main():
+async def main() -> None:
     config = HybridAIConfig.from_env()
-    if not config.deepseek_configured:
-        print("Academic review service not configured.")
-        return
+    if not config.openai_configured:
+        raise SystemExit("Set OPENAI_API_KEY before running this smoke test.")
 
-    provider = DeepSeekProvider(config)
-    standard = await provider.complete_json(
-        model=config.deepseek_review_model,
-        system_prompt="Return JSON only.",
-        user_prompt="Return an empty thesis map.",
+    provider = OpenAIProvider(config)
+    result = await provider.complete_json(
+        model=config.openai_review_model,
+        system_prompt=(
+            "You are testing the structured-output connection. Return only a "
+            "valid document map for the supplied text."
+        ),
+        user_prompt=(
+            "Study title: Digital procurement and efficiency. Objective: assess "
+            "the relationship between e-ordering and procurement efficiency."
+        ),
         schema_model=DocumentMap,
-        purpose="deepseek_standard_smoke_test",
-        reasoning_effort=config.deepseek_reasoning_effort,
+        purpose="openai_o3_mini_smoke_test",
+        reasoning_effort=config.openai_review_reasoning_effort,
         max_output_tokens=1200,
     )
     print(
-        "Light/Standard service OK:",
-        config.deepseek_review_model,
-        json.dumps(standard.data)[:120],
-    )
-
-    advanced = await provider.complete_json(
-        model=config.deepseek_advanced_model,
-        system_prompt="Return JSON only.",
-        user_prompt="Return an empty thesis map.",
-        schema_model=DocumentMap,
-        purpose="deepseek_advanced_smoke_test",
-        reasoning_effort=config.deepseek_advanced_reasoning_effort,
-        max_output_tokens=1200,
-    )
-    print(
-        "Advanced service OK:",
-        config.deepseek_advanced_model,
-        json.dumps(advanced.data)[:120],
+        "OpenAI smoke test passed:",
+        config.openai_review_model,
+        result.usage.request_id,
     )
 
 
