@@ -754,7 +754,7 @@ async function waitForReview(pollUrl, options = {}) {
         loadingMessage.textContent = savedUnits
           ? `The review stopped safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Recovering the interrupted stage…`
           : "The review stopped safely. Recovering the interrupted stage…";
-        if (!resumeRequested) {
+        if (!resumeRequested && job.auto_resume_allowed !== false) {
           resumeRequested = true;
           try {
             await requestJobResume(job.resume_url);
@@ -779,13 +779,21 @@ async function waitForReview(pollUrl, options = {}) {
         loadingMessage.textContent = savedUnits
           ? `Review paused safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Resuming from the last saved point…`
           : "Review paused safely. Resuming from the last saved point…";
-        if (!resumeRequested && job.resume_url) {
+        if (
+          !resumeRequested
+          && job.resume_url
+          && job.auto_resume_allowed !== false
+        ) {
           resumeRequested = true;
           try {
             await requestJobResume(job.resume_url);
           } catch (_) {
             // The server-side automatic recovery may still resume the job.
           }
+        }
+        if (job.auto_resume_allowed === false) {
+          loadingMessage.textContent =
+            "Automatic recovery stopped after repeated attempts. The saved checkpoints are safe. Open Review History and select Resume once after deploying the recovery update.";
         }
         pollDelay = 5000;
         continue;
