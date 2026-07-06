@@ -44,7 +44,7 @@ def test_manual_confirmation_fallback_still_exports_native_comment():
     assert native_comment_count(output) == 1
     comments = list(Document(io.BytesIO(output)).comments)
     assert comments[0].author == "Anokye Mohammed Adam"
-    assert "Manual confirmation recommended" in comments[0].text
+    assert "Manual confirmation recommended" not in comments[0].text
 
 
 def test_smaller_verification_batches_are_default(monkeypatch):
@@ -60,7 +60,7 @@ def test_limited_completed_review_has_rebuild_controls():
     assert "Rebuild review" in portal
     assert "Rebuild review and comments" in detail
     assert "Rebuild requested for the limited review output" in main
-    assert "review-pipeline-v1.9.8.1-bounded-cost-routing" in main
+    assert "review-pipeline-v1.9.8.2-public-comment-quality-gate" in main
 
 
 def test_empty_annotated_output_is_rejected():

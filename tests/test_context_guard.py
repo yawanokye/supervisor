@@ -21,7 +21,7 @@ def test_external_country_and_setting_are_removed():
     assert "South Africa" not in text
     assert "Gauteng" not in text
     assert "UK" not in text
-    assert "[study country]" in text or "[study setting]" in text
+    assert "confirmed study setting" in text
 
 
 def test_source_country_is_preserved():
@@ -40,8 +40,8 @@ def test_unverified_citation_and_statistic_are_replaced():
     assert adjusted is True
     assert "Bourne (2016)" not in text
     assert "55%" not in text
-    assert "[verified scholarly source]" in text
-    assert "[verified statistic]" in text
+    assert "a verified scholarly source" in text
+    assert "a verified statistic" in text
 
 
 def test_issue_is_flagged_for_source_verification():
