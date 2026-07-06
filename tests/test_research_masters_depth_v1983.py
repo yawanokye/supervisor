@@ -172,5 +172,5 @@ def test_pipeline_uses_degree_calibrated_stage_and_checkpoint_version() -> None:
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     assert "ReviewStage.RESEARCH_INTENSIVE_REVIEW" in source
     assert "ReviewStage.RESEARCH_INTENSIVE_AUDIT" in source
-    assert "academic-review-v1.9.8.4-all-level-degree-depth" in source
-    assert "academic-comment-audit-v1.9.8.4-all-level-depth" in source
+    assert "academic-review-v1.9.8.5-all-level-developmental-depth" in source
+    assert "academic-comment-audit-v1.9.8.5-all-level-developmental-depth" in source
