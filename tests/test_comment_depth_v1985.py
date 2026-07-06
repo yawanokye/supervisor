@@ -60,7 +60,7 @@ def test_native_comments_export_developmental_detail(monkeypatch):
     comments = list(Document(io.BytesIO(output)).comments)
     assert len(comments) == 1
     text = comments[0].text
-    assert "Issue:" in text
-    assert "Why this matters:" in text
-    assert "Revise by:" in text
+    assert "Issue:" not in text
+    assert "Why this matters:" not in text
+    assert "Revise by:" not in text
     assert "Objective 4 introduces operational performance" in text
