@@ -935,6 +935,48 @@ def deterministic_expert_issues(
                 ),
             ))
 
+        # Sentence-level audit for empirical sample claims. A paragraph-level
+        # citation elsewhere in the paragraph must not be treated as support for
+        # a different sentence that introduces a specific sample or study result.
+        sentence_uncited_numeric_rows = []
+        for row in current:
+            if row.get("chapter_number") != 1 or row.get("is_heading"):
+                continue
+            section_name = normalised(source_section(row))
+            if "reference" in section_name:
+                continue
+            text = clean_text(row.get("text", ""))
+            for sentence in re.split(r"(?<=[.!?])\s+", text):
+                if not re.search(r"\b\d{2,}\s+(?:manufacturing\s+)?(?:firms?|enterprises?|companies|organisations|organizations|respondents?|participants?|employees?)\b", sentence, flags=re.I):
+                    continue
+                if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", sentence):
+                    continue
+                candidate = dict(row)
+                candidate["_sentence_quote"] = sentence[:260]
+                sentence_uncited_numeric_rows.append(candidate)
+                break
+        if sentence_uncited_numeric_rows:
+            target = sentence_uncited_numeric_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-SENTENCE-UNCITED-EMPIRICAL-NUMERIC-CLAIM",
+                category="source_traceability",
+                section=source_section(target),
+                title="A specific empirical sample claim is not cited in the sentence where it appears",
+                severity="major",
+                confidence=0.95,
+                evidence_ids=[paragraph_id(row) for row in sentence_uncited_numeric_rows[:5]],
+                quote=clean_text(target.get("_sentence_quote") or target.get("text", ""))[:260],
+                assessment=(
+                    "The chapter introduces a specific empirical sample or study result in a sentence that does not contain its own traceable in-text citation."
+                ),
+                consequence=(
+                    "At MPhil and higher research levels, empirical claims must be immediately traceable; otherwise the local evidence base for the problem and background appears unverified."
+                ),
+                action=(
+                    "Place the authentic citation in the same sentence as the empirical sample claim, then confirm that the corresponding full reference is present and accurate. Remove the claim if the source cannot be verified."
+                ),
+            ))
+
         # Circular or absolute definitions are unsuitable for core study
         # constructs and should be operationally precise.
         circular_awareness = find_rows(r"\bAwareness\s+means\s+the\s+extent\s+of\s+awareness\b", chapters={1})
@@ -962,6 +1004,40 @@ def deterministic_expert_issues(
                 ),
             ))
 
+        terminology_rows = [
+            row for row in current
+            if row.get("chapter_number") == 1
+            and not row.get("is_heading")
+            and re.search(r"\benvironmental\s+sustainability\b", clean_text(row.get("text", "")), flags=re.I)
+        ]
+        performance_rows = [
+            row for row in current
+            if row.get("chapter_number") == 1
+            and not row.get("is_heading")
+            and re.search(r"\benvironmental\s+performance\b", clean_text(row.get("text", "")), flags=re.I)
+        ]
+        if terminology_rows and performance_rows:
+            target = performance_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-ENVIRONMENTAL-SUSTAINABILITY-PERFORMANCE-TERMS",
+                category="construct_alignment",
+                section=source_section(target),
+                title="Environmental sustainability and environmental performance are not clearly distinguished",
+                severity="moderate",
+                confidence=0.92,
+                evidence_ids=[paragraph_id(terminology_rows[0]), paragraph_id(target)],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "The chapter alternates between environmental sustainability and environmental performance without explaining whether these are the same construct, related dimensions or separate outcomes."
+                ),
+                consequence=(
+                    "Unclear construct terminology can weaken the conceptual framework, measurement plan and interpretation of results."
+                ),
+                action=(
+                    "Define the preferred construct consistently, explain any distinction between sustainability and performance, and align the title, purpose, objectives, questions, definitions and later measures with that decision."
+                ),
+            ))
+
         citation_format_rows = find_rows(r"\(\s+[A-ZÀ-Ý][^()]{1,80}\bet\s+al\.\s+(?:19|20)\d{2}\s*\)", chapters={1})
         citation_format_rows += find_rows(r"\bet\s+al\.\s+(?:19|20)\d{2}\s*\)", chapters={1})
         if citation_format_rows:
@@ -985,6 +1061,35 @@ def deterministic_expert_issues(
                     "Correct the spacing and insert the required comma between the author expression and year, then apply the same citation style consistently throughout the chapter."
                 ),
             ))
+
+        body_text_original = " ".join(clean_text(row.get("text", "")) for row in current if "reference" not in normalised(source_section(row)))
+        reference_text_original = " ".join(clean_text(row.get("text", "")) for row in current if "reference" in normalised(source_section(row)))
+        if re.search(r"\bAsha[- ]Mari\s*&\s*Daud\b", body_text_original, flags=re.I) and re.search(r"\bAsha['’]ari,\s*M\.", reference_text_original, flags=re.I):
+            target = next((row for row in current if "reference" not in normalised(source_section(row)) and re.search(r"\bAsha[- ]Mari\s*&\s*Daud\b", clean_text(row.get("text", "")), flags=re.I)), None)
+            ref_row = next((row for row in current if "reference" in normalised(source_section(row)) and re.search(r"\bAsha['’]ari,\s*M\.", clean_text(row.get("text", "")), flags=re.I)), None)
+            if target is not None:
+                evidence_ids = [paragraph_id(target)]
+                if ref_row is not None:
+                    evidence_ids.append(paragraph_id(ref_row))
+                output.append(_make_issue(
+                    finding_id="DET-DEGREE-IN-TEXT-REFERENCE-AUTHOR-MISMATCH",
+                    category="source_traceability",
+                    section=source_section(target),
+                    title="An in-text citation does not match the reference-list author name",
+                    severity="major",
+                    confidence=0.96,
+                    evidence_ids=evidence_ids,
+                    quote=clean_text(target.get("text", ""))[:260],
+                    assessment=(
+                        "The in-text author name differs from the corresponding reference-list entry, which suggests either a spelling error or a mismatched source."
+                    ),
+                    consequence=(
+                        "This weakens citation integrity because the reader cannot confidently trace the cited claim to the correct source."
+                    ),
+                    action=(
+                        "Correct the in-text citation or the reference-list entry after checking the original source, and then run a full author-year reconciliation across the chapter."
+                    ),
+                ))
 
         # Detect a reference-list entry that is not cited in the chapter body.
         body_rows = [

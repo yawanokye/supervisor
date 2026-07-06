@@ -107,7 +107,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.8.5",
+    version="1.9.8.6",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -1327,7 +1327,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.8.5-developmental-degree-quality-gate",
+            "pipeline": "review-pipeline-v1.9.8.6-final-degree-quality-gate",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1441,7 +1441,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.8.5-developmental-degree-quality-gate",
+                "pipeline": "academic-review-complete-v1.9.8.6-final-degree-quality-gate",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,

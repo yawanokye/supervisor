@@ -1858,7 +1858,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8.5-all-level-developmental-depth",
+            "pipeline": "academic-review-v1.9.8.6-final-mphil-depth",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2256,7 +2256,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8.5-all-level-developmental-depth",
+                "pipeline": "academic-comment-audit-v1.9.8.6-final-mphil-depth",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -2619,6 +2619,54 @@ async def enrich_review_with_academic_ai(
     # placeholders, false future-date claims, duplicate advice or unfinished
     # generated wording.
     all_issues, public_quality_stats = prepare_public_issues(all_issues)
+
+    # v1.9.8.6 applies the depth floor after public deduplication too. Earlier
+    # versions could meet the MPhil floor before cleaning but fall below it after
+    # duplicate and placeholder-safe filtering. Refill only with already generated
+    # evidence-anchored findings that survive the same accuracy and public gates.
+    if floor and len(all_issues) < floor and len(current) >= 12:
+        severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
+        existing_signatures = {_issue_signature(issue) for issue in all_issues}
+        refill_pool: List[Dict[str, Any]] = []
+        for item in list(raw_issues) + list(all_primary):
+            severity = str(item.get("severity") or "minor").lower()
+            confidence = float(item.get("confidence") or 0.0)
+            if severity == "minor" and depth != "advanced":
+                continue
+            if confidence < (0.66 if depth == "light" else 0.58):
+                continue
+            valid = _valid_issue(dict(item), paragraph_index, context_lock)
+            if not valid:
+                continue
+            signature = _issue_signature(valid)
+            if signature in existing_signatures:
+                continue
+            valid["verification_status"] = "post_public_depth_refill"
+            valid["manual_confirmation_required"] = True
+            refill_pool.append(valid)
+            existing_signatures.add(signature)
+
+        refill_pool.sort(
+            key=lambda row: (
+                severity_rank.get(str(row.get("severity") or "minor"), 9),
+                -float(row.get("confidence") or 0.0),
+            )
+        )
+        refill_pool, _ = apply_accuracy_gate(
+            refill_pool[:max(16, floor * 3)], paragraph_index, current
+        )
+        working = list(all_issues)
+        for candidate in refill_pool:
+            trial, _trial_stats = prepare_public_issues(working + [candidate])
+            if len(trial) > len(working):
+                working = trial
+            if len(working) >= floor:
+                break
+        if len(working) > len(all_issues):
+            public_quality_stats["post_public_refill_added"] = len(working) - len(all_issues)
+            public_quality_stats["kept"] = len(working)
+            all_issues = working
+
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
     incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)

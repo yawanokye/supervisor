@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.5-natural-comments-placeholder-safe"
+ANNOTATION_EXPORT_VERSION = "1.9.8.6-final-depth-placeholder-safe"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -136,6 +136,33 @@ def _sanitise_guidance(value: str) -> str:
 
 
 
+def _normalise_action_start(text: str) -> str:
+    """Return a natural supervisor instruction without template residue."""
+    value = clean_text(text).rstrip(" .")
+    if not value:
+        return ""
+    # Common model phrasing such as "by use" or "by undertake" must not
+    # reach native Word comments. Convert it to direct supervision.
+    value = re.sub(r"^revise(?: the)?(?: marked)? passage by\s+", "", value, flags=re.I)
+    value = re.sub(r"^by\s+", "", value, flags=re.I)
+    gerund_map = {
+        "using": "use", "undertaking": "undertake", "applying": "apply",
+        "providing": "provide", "linking": "link", "situating": "situate",
+        "differentiating": "differentiate", "checking": "check", "clarifying": "clarify",
+        "replacing": "replace", "rewriting": "rewrite", "aligning": "align",
+        "expanding": "expand", "stating": "state", "defining": "define",
+        "supporting": "support", "removing": "remove", "correcting": "correct",
+        "ensuring": "ensure", "explaining": "explain", "adding": "add",
+        "verifying": "verify", "inserting": "insert", "avoiding": "avoid",
+        "developing": "develop", "formulating": "formulate", "showing": "show",
+        "demonstrating": "demonstrate", "indicating": "indicate",
+    }
+    parts = value.split(maxsplit=1)
+    if parts and parts[0].lower() in gerund_map:
+        value = gerund_map[parts[0].lower()] + ((" " + parts[1]) if len(parts) > 1 else "")
+    return value[0].upper() + value[1:] if value else value
+
+
 def _shorten_comment(value: str, limit: Optional[int] = None) -> str:
     effective_limit = limit if limit is not None else comment_max_chars()
     return sentence_safe_trim(value, effective_limit)
@@ -178,18 +205,17 @@ def _comment_body(row: Dict[str, Any]) -> str:
     if assessment:
         parts.append(assessment.rstrip(" .") + ".")
     if action:
-        action_text = action.rstrip(" .")
+        action_text = _normalise_action_start(action)
         if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate)\b", action_text, flags=re.I):
-            parts.append(action_text[0].upper() + action_text[1:] + ".")
-        elif re.match(r"^(?:using|undertaking|applying|providing|linking|situating|differentiating|checking)\b", action_text, flags=re.I):
-            parts.append("Revise the passage by " + action_text[0].lower() + action_text[1:] + ".")
+            parts.append(action_text + ".")
         else:
             parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
     elif assessment:
         parts.append("Revise the marked passage so the academic point is clear, properly supported and aligned with the section purpose.")
     if example:
-        example_text = example.rstrip(" .")
-        parts.append("A suitable way to handle this is to " + example_text[0].lower() + example_text[1:] + ".")
+        example_text = _normalise_action_start(example)
+        if example_text:
+            parts.append("For example, " + example_text[0].lower() + example_text[1:] + ".")
 
     body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
     # Manual-confirmation and provider-failure status belongs in the internal
@@ -628,12 +654,39 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
     return sorted(evidence, key=rank)
 
 
-def _placeholder_finding_rows(source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _existing_placeholder_comment(review_rows: Sequence[Dict[str, Any]], paragraph_number: int, placeholder: str) -> bool:
+    """Return True when the review already contains a usable placeholder comment.
+
+    This prevents the exporter fallback from creating a second native comment on
+    the same unresolved bracketed prompt.
+    """
+    placeholder_key = normalised(placeholder)
+    for row in review_rows:
+        if row.get("status") not in ACTIONABLE_STATUSES:
+            continue
+        text_blob = normalised(" ".join(
+            clean_text(str(row.get(field, "")))
+            for field in ("item", "comment", "required_action", "illustrative_guidance", "problematic_quote")
+        ))
+        if not ("placeholder" in text_blob or "bracketed" in text_blob or placeholder_key in text_blob):
+            continue
+        evidence_paragraphs = {
+            int(item.get("paragraph"))
+            for item in row.get("evidence") or []
+            if str(item.get("paragraph") or "").isdigit()
+        }
+        if paragraph_number in evidence_paragraphs or placeholder_key in text_blob:
+            return True
+    return False
+
+
+def _placeholder_finding_rows(source_map: Dict[int, Dict[str, Any]], existing_rows: Sequence[Dict[str, Any]] = ()) -> List[Dict[str, Any]]:
     """Create deterministic review rows for unresolved bracketed prompts.
 
     The main review engine also checks for placeholders, but export-time
     detection prevents a missed or filtered finding from leaving obvious
-    author placeholders uncommented in the final DOCX.
+    author placeholders uncommented in the final DOCX. Existing placeholder
+    comments are respected so the same issue is not exported twice.
     """
     rows: List[Dict[str, Any]] = []
     seen: set[Tuple[int, str]] = set()
@@ -649,6 +702,8 @@ def _placeholder_finding_rows(source_map: Dict[int, Dict[str, Any]]) -> List[Dic
             placeholder = clean_text(match.group(0))
             key = (paragraph_number, normalised(placeholder))
             if not placeholder or key in seen:
+                continue
+            if _existing_placeholder_comment(existing_rows, paragraph_number, placeholder):
                 continue
             seen.add(key)
             rows.append({
@@ -698,11 +753,13 @@ def build_annotated_docx(
     missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
 
-    review_rows = sanitise_finding_rows(
+    supplied_rows = (
         list(review.get("academic_findings", []))
         + list(review.get("alignment_results", []))
         + list(review.get("revision_results", []))
-        + _placeholder_finding_rows(source_map)
+    )
+    review_rows = sanitise_finding_rows(
+        supplied_rows + _placeholder_finding_rows(source_map, supplied_rows)
     )
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
