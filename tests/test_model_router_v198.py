@@ -97,7 +97,7 @@ def test_low_confidence_standard_review_escalates_once(monkeypatch):
     assert result.usage.input_tokens == 2000
 
 
-def test_provider_failure_falls_back_without_retrying_both(monkeypatch):
+def test_provider_failure_uses_low_cost_openai_fallback(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     config = HybridAIConfig.from_env()
@@ -106,7 +106,7 @@ def test_provider_failure_falls_back_without_retrying_both(monkeypatch):
 
     async def failed_deepseek(**kwargs):
         calls.append(kwargs["model"])
-        raise RuntimeError("provider unavailable")
+        raise RuntimeError("flash unavailable")
 
     async def fake_openai(**kwargs):
         calls.append(kwargs["model"])
@@ -124,5 +124,5 @@ def test_provider_failure_falls_back_without_retrying_both(monkeypatch):
         stage=ReviewStage.STANDARD_REVIEW,
         review_depth="standard",
     ))
-    assert calls == ["deepseek-v4-flash", "gpt-5.4-mini"]
+    assert calls == ["deepseek-v4-flash", "gpt-5.4-nano"]
     assert result.usage.provider == "openai"

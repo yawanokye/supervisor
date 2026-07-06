@@ -75,7 +75,7 @@ def test_fast_chapter_defaults(monkeypatch):
 
 def test_old_three_stage_section_recovery_removed():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v1.9.8-cost-aware-fast-grounded" in source
+    assert "academic-review-v1.9.8.1-bounded-fast-grounded" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source
