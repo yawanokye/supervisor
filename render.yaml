@@ -13,6 +13,38 @@ services:
         generateValue: true
       - key: COOKIE_SECURE
         value: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: VPROF_ROUTING_PROFILE
+        value: balanced
+      - key: VPROF_ENABLE_OPENAI
+        value: true
+      - key: VPROF_ENABLE_DEEPSEEK
+        value: true
+      - key: VPROF_ENABLE_SELECTIVE_ESCALATION
+        value: true
+      - key: VPROF_ESCALATE_CONFIDENCE_BELOW
+        value: 0.78
+      - key: VPROF_DEFAULT_CALL_BUDGET_USD
+        value: 0.75
+      - key: VPROF_EXTERNAL_CALL_BUDGET_USD
+        value: 2.00
+      - key: DEEPSEEK_FAST_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_QUALITY_MODEL
+        value: deepseek-v4-pro
+      - key: DEEPSEEK_THINKING_ENABLED
+        value: true
+      - key: DEEPSEEK_REASONING_EFFORT
+        value: high
+      - key: DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT
+        value: high
       - key: REVIEW_STORAGE_DIR
         value: /var/data/reviews
       - key: REVIEW_STORAGE_FALLBACK_DIR

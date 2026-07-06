@@ -342,3 +342,68 @@ PDF page counts are exact. DOCX page capacity is estimated from word count
 because pagination varies with fonts, margins, spacing and the Word version.
 The administrator dashboard therefore labels page figures as planning
 estimates rather than guaranteed page limits.
+
+## v1.9.8 cost-aware routing deployment
+
+Version 1.9.8 is a complete replacement repository built from v1.9.7. Do not
+copy only `app/model_router.py` over an older deployment. Deploy the full ZIP so
+the provider routing, checkpoint hashes, cost accounting and environment
+templates remain aligned.
+
+Add both secret keys to the Render Web Service and to any separately deployed
+Background Worker:
+
+```env
+OPENAI_API_KEY=...
+DEEPSEEK_API_KEY=...
+```
+
+Recommended production routing:
+
+```env
+VPROF_ROUTING_PROFILE=balanced
+VPROF_ENABLE_OPENAI=true
+VPROF_ENABLE_DEEPSEEK=true
+VPROF_ENABLE_SELECTIVE_ESCALATION=true
+VPROF_ESCALATE_CONFIDENCE_BELOW=0.78
+VPROF_DEFAULT_CALL_BUDGET_USD=0.75
+
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
+DEEPSEEK_THINKING_ENABLED=true
+DEEPSEEK_REASONING_EFFORT=high
+DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT=high
+
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_REASONING_EFFORT=high
+OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_REASONING_EFFORT=high
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
+```
+
+Keep the existing execution settings initially:
+
+```env
+AI_MAX_PARALLEL_CALLS=4
+AI_CHAPTER_REVIEW_CONCURRENCY=4
+AI_CHAPTER_PACKET_MAX_CHARS=120000
+AI_CHAPTER_RECOVERY_CONCURRENCY=2
+AI_VERIFICATION_BATCH_SIZE=12
+AI_TIMEOUT_SECONDS=300
+AI_MAX_RETRIES=1
+AI_STRUCTURED_OUTPUT_RETRIES=0
+TOKEN_ACCOUNTING_ENABLED=true
+TOKEN_QUOTA_ENFORCEMENT=false
+```
+
+Run known Bachelor’s, Master’s, doctoral and external-examination documents
+before enabling quota enforcement. Compare material-issue recall, false
+positives, native comment placement, total latency and actual cost against the
+v1.9.7 records.

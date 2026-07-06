@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.9.8 - Cost-aware multi-provider routing
+
+- Merged the v1.9.8 routing patch into the complete v1.9.7 application rather than deploying it as a standalone overlay.
+- Added Economy, Balanced and Quality routing profiles.
+- Uses DeepSeek V4 Flash for inexpensive Light and Standard first-pass review in the Balanced profile.
+- Uses GPT-5.4 mini for Advanced review, final accuracy auditing and selective escalation from uncertain standard reviews.
+- Reserves GPT-5.4 for difficult high-risk findings and OpenAI-led external-examination judgement.
+- Added bounded provider fallback between DeepSeek and OpenAI without creating a second SDK stack.
+- Preserved strict Pydantic structured outputs, evidence validation, native Word comments, checkpoints, automatic recovery and token accounting.
+- Added model-specific DeepSeek Flash and Pro cost accounting and aggregates the cost of selectively escalated calls.
+- Allows normal supervisory reviews to remain available when only one enabled provider is configured. External examination continues to require OpenAI.
+- Added routing-aware checkpoint hashes so v1.9.7 model results are not incorrectly restored under a different route.
+- Updated Render and environment templates with the required routing settings.
+- Passed 190 automated tests.
+
 ## 1.9.7 - Supervisor token allocation and page-capacity planning
 
 - Added individual and bulk token allocation to the administrator dashboard.
