@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.5-developmental-degree-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.8.5-natural-developmental-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -151,22 +151,31 @@ def _comment_body(row: Dict[str, Any]) -> str:
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
     example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
 
-    parts = []
     heading = reference or "Supervisor review"
+    parts: List[str] = []
+
     if issue:
-        parts.append(f"Issue: {issue}.")
+        parts.append(issue.rstrip(" .") + ".")
     if assessment:
-        parts.append(f"Why this matters: {assessment}")
+        parts.append(assessment.rstrip(" .") + ".")
     if action:
-        parts.append(f"Revise by: {action}")
+        action_text = action.rstrip(" .")
+        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify)\b", action_text, flags=re.I):
+            parts.append(action_text[0].upper() + action_text[1:] + ".")
+        else:
+            parts.append("Revise the passage by " + action_text[0].lower() + action_text[1:] + ".")
     elif assessment:
-        parts.append("Revise by: Correct the marked passage in line with the issue identified above.")
+        parts.append("Revise the marked passage so the academic point is clear, properly supported and aligned with the section purpose.")
     if example:
-        parts.append(f"Guidance: {example}")
+        example_text = example.rstrip(" .")
+        parts.append("A suitable way to handle this is to " + example_text[0].lower() + example_text[1:] + ".")
 
     body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
     # Manual-confirmation and provider-failure status belongs in the internal
-    # audit trail, never in a student's Word comment.
+    # audit trail, never in a student's Word comment. Student-facing comments
+    # remain developmental, but avoid repetitive visible labels such as
+    # "Issue", "Why this matters", "Revise by" or "Guidance".
+    body = re.sub(r"\b(?:Issue|Why this matters|Revise by|Guidance)\s*:\s*", "", body)
     return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
 
@@ -196,7 +205,7 @@ def _format_comment_group(comments: Iterable[str]) -> str:
         return ""
     if len(unique) == 1:
         return unique[0]
-    return "\n\nAdditional related note: ".join(unique)
+    return "\n\nAlso consider: ".join(unique)
 
 
 def _comment_similarity(left_key: str, right_key: str) -> float:
