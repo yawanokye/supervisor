@@ -32,4 +32,4 @@ def test_native_word_comments_remain_required():
     exporter = Path("app/annotated_exporter.py").read_text(encoding="utf-8")
     assert "native_comment_count(annotated_data) < 1" in source
     assert "document.add_comment" in exporter
-    assert "1.9.8.7-section-coverage-comments" in exporter
+    assert "1.9.8.8-supervisory-comment-quality" in exporter
