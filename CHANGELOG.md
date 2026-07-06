@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.9.8.2 - Public comment quality gate
+
+- Removed provider, audit, retry and manual-confirmation diagnostics from student-facing Word comments and reports.
+- Rejected unresolved bracket placeholders and replaced unusable actions with concise, source-safe instructions.
+- Omitted illustrative examples that contain invented details, unclosed quotations or visibly unfinished fragments.
+- Consolidated semantically duplicate findings across academic, alignment and revision outputs.
+- Trimmed comments only at complete sentence boundaries.
+- Prevented current-year references from being labelled future-dated solely because of their year.
+- Made hypothesis recommendations conditional on programme format and research design.
+- Added deterministic checks for source-document placeholders, malformed question punctuation, Chapter One tense conflicts and an obvious opening subject-verb error.
+- Added public-comment quality environment controls and invalidated old comment-export checkpoints.
+
+## 1.9.8.1 - Cost and latency hotfix
+
+- Corrected the DeepSeek thinking payload by sending `reasoning_effort` as a top-level API field.
+- Runs DeepSeek V4 Flash without thinking mode for Light and Standard first-pass reviews.
+- Prevents the entire first pass from being repeated through automatic OpenAI escalation.
+- Replaces the expensive Standard provider fallback with GPT-5.4 nano.
+- Limits Light and Standard review to one compact GPT-5.4 mini accuracy-audit request.
+- Disables paid audit retries for Light and Standard review and retains only evidence-grounded deterministic fallback findings if the audit is unavailable.
+- Adds 120-second fast-request timeouts, no fast-request retries, and lower bounded output limits.
+- Stops a failed fast review before launching a second complete paid pass.
+- Updates Render and environment defaults to match the bounded workflow.
+- Adds provider-payload, fallback, latency and audit-budget regression tests.
+
 ## 1.9.8 - Cost-aware multi-provider routing
 
 - Merged the v1.9.8 routing patch into the complete v1.9.7 application rather than deploying it as a standalone overlay.

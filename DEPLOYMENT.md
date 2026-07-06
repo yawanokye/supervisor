@@ -407,3 +407,76 @@ Run known Bachelor’s, Master’s, doctoral and external-examination documents
 before enabling quota enforcement. Compare material-issue recall, false
 positives, native comment placement, total latency and actual cost against the
 v1.9.7 records.
+
+## v1.9.8.1 cost and latency hotfix
+
+Deploy v1.9.8.1 as a complete replacement for v1.9.8. The hotfix invalidates
+only the supervisory-review checkpoints whose routing behaviour changed.
+Existing users, balances, review records and stored documents remain compatible.
+
+The hotfix fixes the DeepSeek OpenAI-compatible request shape. The `thinking`
+object contains only the mode, while `reasoning_effort` is sent as a top-level
+field. Flash first-pass reviews explicitly disable thinking mode.
+
+Use these settings on the Render Web Service and any separate worker:
+
+```env
+VPROF_ROUTING_PROFILE=balanced
+VPROF_ENABLE_OPENAI=true
+VPROF_ENABLE_DEEPSEEK=true
+VPROF_ENABLE_SELECTIVE_ESCALATION=true
+VPROF_DEFAULT_CALL_BUDGET_USD=0.25
+
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
+DEEPSEEK_THINKING_ENABLED=true
+
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_FAST_MODEL=gpt-5.4-nano
+OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+
+AI_FAST_REQUEST_TIMEOUT_SECONDS=120
+AI_FAST_REQUEST_MAX_RETRIES=0
+AI_MAX_RETRIES=0
+AI_STRUCTURED_OUTPUT_RETRIES=0
+AI_LIGHT_MAX_OUTPUT_TOKENS=4500
+AI_STANDARD_MAX_OUTPUT_TOKENS=6500
+AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS=2600
+AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS=3800
+AI_FAST_AUDIT_BATCH_ISSUE_LIMIT=100
+AI_FAST_AUDIT_MAX_BATCHES=1
+```
+
+For Light and Standard review, the normal request plan is now:
+
+1. one DeepSeek V4 Flash first pass with thinking disabled;
+2. GPT-5.4 nano only if Flash is unavailable;
+3. one compact GPT-5.4 mini accuracy audit;
+4. no automatic GPT-5.4 escalation and no paid audit retry.
+
+If both the primary and low-cost fallback fail, the job stops clearly before
+starting another complete paid pass. Advanced review and External Assessment
+retain their higher-quality model routes.
+
+Before redeploying, stop or cancel any currently running v1.9.8 review. After
+deployment, submit it as a new review so it uses the v1.9.8.1 checkpoint keys.
+## v1.9.8.2 public comment quality deployment
+
+Deploy v1.9.8.2 as a complete replacement for v1.9.8.1. Stop any active review before deployment and submit it as a new review after redeployment because the supervisory and annotation checkpoint identifiers changed.
+
+Add these variables to both the Render web service and worker when a separate worker is used:
+
+```env
+VPROF_REJECT_PLACEHOLDER_COMMENTS=true
+VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES=true
+VPROF_COMMENT_MAX_CHARS=680
+VPROF_COMMENT_SIMILARITY_THRESHOLD=0.62
+```
+
+Remove stale `OPENAI_*_MODEL=o3-mini` variables. The active role-specific settings are `OPENAI_FAST_MODEL`, `OPENAI_CHAPTER_MODEL`, `OPENAI_EXPERT_MODEL`, `OPENAI_FINAL_AUDIT_MODEL`, `OPENAI_EXTERNAL_DOMAIN_MODEL` and `OPENAI_EXTERNAL_ADJUDICATOR_MODEL`. Also set `VPROF_ENABLE_DEEPSEEK=true` explicitly.
+
+Rotate `SESSION_SECRET` whenever its value has been copied into a document, ticket or chat. Existing browser sessions will be signed out after rotation.
+

@@ -1,8 +1,10 @@
-# ProjectReady AI Supervisor Assistant 1.9.8
+# ProjectReady AI Supervisor Assistant 1.9.8.2
 
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.9.8 adds cost-aware multi-provider routing to the complete v1.9.7 application. In the recommended Balanced profile, DeepSeek V4 Flash performs high-volume Light and Standard first-pass review, GPT-5.4 mini handles Advanced review and selective verification, and GPT-5.4 is reserved for uncertain high-risk findings and external-examination judgement. Provider failure triggers a bounded fallback rather than restarting the whole review. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery and supervisor token accounting remain unchanged.
+Version 1.9.8.2 adds a student-facing comment quality gate to the v1.9.8.1 cost and latency hotfix. In the recommended Balanced profile, DeepSeek V4 Flash performs one non-thinking Light or Standard first pass. A single compact GPT-5.4 mini accuracy audit follows. GPT-5.4 nano is the inexpensive emergency fallback if Flash is unavailable, while GPT-5.4 remains reserved for Advanced high-risk work and external-examination judgement. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery and supervisor token accounting remain active.
+
+It removes internal audit diagnostics from Word comments and reports, rejects unresolved placeholder tokens, omits incomplete generated examples, consolidates duplicate findings, trims only at complete sentence boundaries, and adds deterministic checks for unresolved source-document placeholders, malformed research-question punctuation, proposal/completed-study tense conflicts and obvious opening grammar errors.
 
 ## Review philosophy
 
@@ -66,12 +68,12 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 The routing profile is controlled by `VPROF_ROUTING_PROFILE`.
 
-- **Balanced**, recommended: DeepSeek V4 Flash performs Light and Standard first passes. GPT-5.4 mini is called only when the first pass is uncertain, critical or unavailable. Advanced review starts with GPT-5.4 mini and escalates difficult cases to GPT-5.4.
-- **Economy**: DeepSeek V4 Flash handles Light and Standard review, while DeepSeek V4 Pro handles Advanced review. OpenAI remains the fallback and expert escalation path.
+- **Balanced**, recommended: DeepSeek V4 Flash performs one Light or Standard first pass without thinking mode. GPT-5.4 nano is used only if Flash is unavailable. One compact GPT-5.4 mini accuracy audit follows. Advanced review starts with GPT-5.4 mini and may escalate difficult cases to GPT-5.4.
+- **Economy**: DeepSeek V4 Flash handles Light and Standard review, with DeepSeek V4 Pro as the provider fallback. DeepSeek V4 Pro also handles Advanced review.
 - **Quality**: OpenAI leads normal review. DeepSeek provides provider-failure fallback, while GPT-5.4 remains available for expert escalation.
-- The final factual and placement audit normally starts with GPT-5.4 mini in Balanced mode and escalates only when the structured result indicates material uncertainty or critical risk.
+- Light and Standard final audits use one GPT-5.4 mini request with bounded output and no automatic expert escalation.
 - External Assessment remains OpenAI-led for the final degree recommendation. DeepSeek V4 Pro is used only if an OpenAI request fails.
-- High-confidence first-pass results are accepted without a second model call.
+- The first pass is not duplicated by automatic router escalation. The independent audit is the only normal second-model call.
 - Every accepted response still passes strict Pydantic validation, exact evidence-ID checks, deterministic factual gates and native-comment placement checks.
 - Routed calls aggregate both providers’ reported tokens and costs into the existing internal usage ledger. Model names are not displayed in student-facing reports.
 

@@ -32,9 +32,17 @@ services:
       - key: VPROF_ESCALATE_CONFIDENCE_BELOW
         value: 0.78
       - key: VPROF_DEFAULT_CALL_BUDGET_USD
-        value: 0.75
+        value: 0.25
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
         value: 2.00
+      - key: VPROF_REJECT_PLACEHOLDER_COMMENTS
+        value: true
+      - key: VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES
+        value: true
+      - key: VPROF_COMMENT_MAX_CHARS
+        value: 680
+      - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
+        value: 0.62
       - key: DEEPSEEK_FAST_MODEL
         value: deepseek-v4-flash
       - key: DEEPSEEK_QUALITY_MODEL
@@ -45,6 +53,10 @@ services:
         value: high
       - key: DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT
         value: high
+      - key: OPENAI_FAST_MODEL
+        value: gpt-5.4-nano
+      - key: DATABASE_URL
+        value: sqlite:////var/data/supervisor.db
       - key: REVIEW_STORAGE_DIR
         value: /var/data/reviews
       - key: REVIEW_STORAGE_FALLBACK_DIR
@@ -61,18 +73,34 @@ services:
         value: 7000
       - key: AI_VERIFICATION_BATCH_SIZE
         value: 12
+      - key: AI_FAST_AUDIT_BATCH_ISSUE_LIMIT
+        value: 100
+      - key: AI_FAST_AUDIT_MAX_BATCHES
+        value: 1
+      - key: AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS
+        value: 2600
+      - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
+        value: 3800
       - key: MAX_AUTO_RESUMES
-        value: 4
+        value: 3
       - key: AUTOMATIC_RETRY_DELAY_SECONDS
         value: 12
       - key: AUTOMATIC_RETRY_MAX_DELAY_SECONDS
         value: 90
       - key: AI_TIMEOUT_SECONDS
         value: 300
+      - key: AI_FAST_REQUEST_TIMEOUT_SECONDS
+        value: 120
+      - key: AI_FAST_REQUEST_MAX_RETRIES
+        value: 0
       - key: AI_MAX_RETRIES
-        value: 2
+        value: 0
       - key: AI_STRUCTURED_OUTPUT_RETRIES
-        value: 1
+        value: 0
+      - key: AI_LIGHT_MAX_OUTPUT_TOKENS
+        value: 4500
+      - key: AI_STANDARD_MAX_OUTPUT_TOKENS
+        value: 6500
       - key: AI_JOB_MAX_SECONDS
         value: 5400
       - key: AI_ADVANCED_SECOND_PASS
@@ -108,7 +136,7 @@ services:
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS
         value: 360
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
-        value: 1
+        value: 0
       - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
         value: 11000
       - key: TOKEN_ACCOUNTING_ENABLED
