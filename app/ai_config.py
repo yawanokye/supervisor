@@ -60,7 +60,7 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.8 routes inexpensive first-pass work through DeepSeek and
+    VProfessor v1.9.8.1 routes inexpensive first-pass work through DeepSeek and
     selectively escalates uncertain or high-risk findings to OpenAI. Existing
     strict schemas, checkpoints and token accounting remain active.
     """
@@ -109,6 +109,8 @@ class HybridAIConfig:
     advanced_max_output_tokens: int
     timeout_seconds: int
     max_retries: int
+    fast_request_timeout_seconds: int
+    fast_request_max_retries: int
     max_parallel_calls: int
     chapter_review_concurrency: int
     chapter_packet_max_chars: int
@@ -127,11 +129,15 @@ class HybridAIConfig:
     max_unresolved_section_fallbacks: int
     advanced_audit_max_findings: int
     advanced_audit_max_output_tokens: int
+    light_audit_max_output_tokens: int
+    standard_audit_max_output_tokens: int
+    fast_audit_batch_issue_limit: int
+    fast_audit_max_batches: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
 
-    # v1.9.8 cost-aware provider routing.
+    # v1.9.8.1 bounded cost-aware provider routing.
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool
@@ -141,6 +147,7 @@ class HybridAIConfig:
     external_call_budget_usd: float
     deepseek_fast_model: str
     deepseek_quality_model: str
+    openai_fast_model: str
 
     deepseek_pro_input_price: float
     deepseek_pro_cached_input_price: float
@@ -157,6 +164,9 @@ class HybridAIConfig:
     openai_expert_input_price: float
     openai_expert_cached_input_price: float
     openai_expert_output_price: float
+    openai_fast_input_price: float
+    openai_fast_cached_input_price: float
+    openai_fast_output_price: float
 
     # Compatibility fields for dormant legacy modules.
     deepseek_extract_model: str = "deepseek-v4-pro"
@@ -262,7 +272,7 @@ class HybridAIConfig:
             default="xhigh",
         )
 
-        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 9000)
+        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 6500)
         advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 12000)
 
         chapter_input_price = _env_float_alias(
@@ -336,12 +346,18 @@ class HybridAIConfig:
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
             max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 12000),
             light_max_output_tokens=_env_int(
-                "AI_LIGHT_MAX_OUTPUT_TOKENS", 7000
+                "AI_LIGHT_MAX_OUTPUT_TOKENS", 4500
             ),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
             timeout_seconds=_env_int("AI_TIMEOUT_SECONDS", 300),
             max_retries=_env_int("AI_MAX_RETRIES", 1, 0),
+            fast_request_timeout_seconds=_env_int(
+                "AI_FAST_REQUEST_TIMEOUT_SECONDS", 120
+            ),
+            fast_request_max_retries=_env_int(
+                "AI_FAST_REQUEST_MAX_RETRIES", 0, 0
+            ),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 4),
             chapter_review_concurrency=_env_int(
                 "AI_CHAPTER_REVIEW_CONCURRENCY", 4
@@ -388,6 +404,18 @@ class HybridAIConfig:
             advanced_audit_max_output_tokens=_env_int(
                 "AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 8000
             ),
+            light_audit_max_output_tokens=_env_int(
+                "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 2600
+            ),
+            standard_audit_max_output_tokens=_env_int(
+                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 3800
+            ),
+            fast_audit_batch_issue_limit=_env_int(
+                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100
+            ),
+            fast_audit_max_batches=_env_int(
+                "AI_FAST_AUDIT_MAX_BATCHES", 1
+            ),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int(
                 "AI_STRUCTURED_OUTPUT_RETRIES", 0, 0
@@ -418,6 +446,9 @@ class HybridAIConfig:
             ),
             deepseek_fast_model=deepseek_fast_model,
             deepseek_quality_model=deepseek_quality_model,
+            openai_fast_model=os.getenv(
+                "OPENAI_FAST_MODEL", "gpt-5.4-nano"
+            ).strip() or "gpt-5.4-nano",
 
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
@@ -446,6 +477,15 @@ class HybridAIConfig:
             openai_expert_input_price=expert_input_price,
             openai_expert_cached_input_price=expert_cached_price,
             openai_expert_output_price=expert_output_price,
+            openai_fast_input_price=_env_float(
+                "PRICE_OPENAI_FAST_INPUT", 0.20
+            ),
+            openai_fast_cached_input_price=_env_float(
+                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.02
+            ),
+            openai_fast_output_price=_env_float(
+                "PRICE_OPENAI_FAST_OUTPUT", 1.25
+            ),
 
             deepseek_extract_model=deepseek_fast_model,
             openai_mini_model=chapter_model,
@@ -536,6 +576,12 @@ class HybridAIConfig:
     def openai_prices_for_model(self, model: str) -> Tuple[float, float, float]:
         """Return input, cached-input and output prices for an OpenAI model."""
         value = (model or "").strip().lower()
+        if value == self.openai_fast_model.lower():
+            return (
+                self.openai_fast_input_price,
+                self.openai_fast_cached_input_price,
+                self.openai_fast_output_price,
+            )
         expert_models = {
             self.openai_expert_model.lower(),
             self.openai_final_audit_model.lower(),

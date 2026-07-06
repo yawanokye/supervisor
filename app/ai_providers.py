@@ -356,6 +356,7 @@ class DeepSeekProvider:
         max_output_tokens: Optional[int] = None,
         request_timeout_seconds: Optional[int] = None,
         request_max_retries: Optional[int] = None,
+        thinking_enabled: Optional[bool] = None,
     ) -> ProviderResult:
         contract = _json_contract(schema_model)
         reinforced_system = (
@@ -373,6 +374,12 @@ class DeepSeekProvider:
         if effort not in {"high", "max"}:
             effort = "high"
 
+        use_thinking = (
+            self.config.deepseek_thinking_enabled
+            if thinking_enabled is None
+            else bool(thinking_enabled)
+        )
+
         body: Dict[str, Any] = {
             "model": model,
             "messages": [
@@ -381,15 +388,13 @@ class DeepSeekProvider:
             ],
             "response_format": {"type": "json_object"},
             "max_tokens": max_output_tokens or self.config.max_output_tokens,
-            "thinking": {
-                "type": (
-                    "enabled"
-                    if self.config.deepseek_thinking_enabled
-                    else "disabled"
-                ),
-                "reasoning_effort": effort,
-            },
+            "thinking": {"type": "enabled" if use_thinking else "disabled"},
         }
+        # DeepSeek's OpenAI-compatible API expects reasoning_effort as a
+        # top-level field. The previous nested placement could be rejected by
+        # the provider and silently move the whole review to OpenAI.
+        if use_thinking:
+            body["reasoning_effort"] = effort
 
         last_error: Optional[Exception] = None
         attempts = max(1, self.config.structured_output_retries + 1)
@@ -494,6 +499,7 @@ class OpenAIProvider:
         max_output_tokens: Optional[int] = None,
         request_timeout_seconds: Optional[int] = None,
         request_max_retries: Optional[int] = None,
+        thinking_enabled: Optional[bool] = None,
     ) -> ProviderResult:
         schema = _make_openai_strict_schema(schema_model.model_json_schema())
         effort = (

@@ -58,6 +58,7 @@ class RouteTarget:
     provider: ProviderName
     model: str
     reasoning_effort: str
+    thinking_enabled: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -179,16 +180,23 @@ class CostAwareAIProvider:
             ProviderName.DEEPSEEK,
             config.deepseek_fast_model,
             config.deepseek_reasoning_effort or "high",
+            False,
         )
         ds_quality = RouteTarget(
             ProviderName.DEEPSEEK,
             config.deepseek_quality_model,
             config.deepseek_advanced_primary_reasoning_effort or "high",
+            True,
         )
         oa_chapter = RouteTarget(
             ProviderName.OPENAI,
             config.openai_chapter_model,
             config.openai_chapter_reasoning_effort,
+        )
+        oa_fast = RouteTarget(
+            ProviderName.OPENAI,
+            config.openai_fast_model,
+            "low",
         )
         oa_expert = RouteTarget(
             ProviderName.OPENAI,
@@ -224,9 +232,17 @@ class CostAwareAIProvider:
                 primary, fallback, escalation = self._normalise_targets(
                     oa_chapter, ds_fast, oa_expert
                 )
-            else:
+            elif profile is RoutingProfile.ECONOMY:
                 primary, fallback, escalation = self._normalise_targets(
-                    ds_fast, oa_chapter, oa_chapter
+                    ds_fast, ds_quality, None
+                )
+            else:
+                # Keep the ordinary review within DeepSeek when Flash has a
+                # transient/schema failure. If the provider is unavailable,
+                # use GPT-5.4 nano rather than silently moving the whole
+                # chapter to GPT-5.4 mini.
+                primary, fallback, escalation = self._normalise_targets(
+                    ds_fast, oa_fast, oa_chapter
                 )
             return RoutePlan(
                 stage_value,
@@ -330,6 +346,7 @@ class CostAwareAIProvider:
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
+                thinking_enabled=target.thinking_enabled,
             )
         except Exception:
             _CircuitState.failure(target.provider)

@@ -1524,7 +1524,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8-cost-aware-fast-grounded",
+            "pipeline": "academic-review-v1.9.8.1-bounded-fast-grounded",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -1564,8 +1564,22 @@ async def enrich_review_with_academic_ai(
                 purpose=purpose,
                 reasoning_effort=effort,
                 max_output_tokens=tokens,
+                request_timeout_seconds=(
+                    config.fast_request_timeout_seconds
+                    if depth in {"light", "standard"}
+                    else None
+                ),
+                request_max_retries=(
+                    config.fast_request_max_retries
+                    if depth in {"light", "standard"}
+                    else None
+                ),
                 stage=route_stage or stage_for_depth(depth),
                 review_depth=depth,
+                # Light and Standard already receive a dedicated independent
+                # accuracy audit. Escalating the entire first pass here caused
+                # duplicate OpenAI work and unpredictable cost.
+                allow_escalation=(depth == "advanced"),
             )
             if checkpoint_manager is not None:
                 checkpoint_manager.save_provider_result(
@@ -1749,6 +1763,18 @@ async def enrich_review_with_academic_ai(
     recovery_errors: Dict[str, str] = {}
     verification_failed = False
 
+    if (
+        missing_sections
+        and failed_batches
+        and not section_reviews
+        and depth in {"light", "standard"}
+    ):
+        raise AIProviderError(
+            "The fast review providers did not complete the first chapter pass. "
+            "The job was stopped before starting another full paid pass. Check "
+            "the DeepSeek key, model access and provider logs, then retry once."
+        )
+
     if missing_sections:
         recovery_packets = _chapter_review_packets(
             missing_sections,
@@ -1836,17 +1862,30 @@ async def enrich_review_with_academic_ai(
     # evidence-grounded fallback is used. This prevents an otherwise useful
     # review from being exported with an empty report and no Word comments.
     if all_primary:
-        audit_model = config.openai_final_audit_model
-        audit_effort = config.openai_final_audit_reasoning_effort
-        audit_tokens = max(
-            config.advanced_audit_max_output_tokens,
-            min(config.advanced_max_output_tokens, 6800),
-        )
+        if depth == "light":
+            audit_model = config.openai_chapter_model
+            audit_effort = "low"
+            audit_tokens = config.light_audit_max_output_tokens
+        elif depth == "standard":
+            audit_model = config.openai_chapter_model
+            audit_effort = "medium"
+            audit_tokens = config.standard_audit_max_output_tokens
+        else:
+            audit_model = config.openai_final_audit_model
+            audit_effort = config.openai_final_audit_reasoning_effort
+            audit_tokens = max(
+                config.advanced_audit_max_output_tokens,
+                min(config.advanced_max_output_tokens, 6800),
+            )
 
         verification_batches: List[List[Dict[str, Any]]] = []
         pending: List[Dict[str, Any]] = []
         pending_issues = 0
-        batch_limit = max(4, config.verification_batch_size)
+        batch_limit = (
+            max(4, config.fast_audit_batch_issue_limit)
+            if depth in {"light", "standard"}
+            else max(4, config.verification_batch_size)
+        )
         for section_review in section_reviews:
             count = max(1, len(section_review.get("issues") or []))
             if pending and pending_issues + count > batch_limit:
@@ -1857,6 +1896,16 @@ async def enrich_review_with_academic_ai(
             pending_issues += count
         if pending:
             verification_batches.append(pending)
+
+        # A normal chapter review should make at most one OpenAI audit request.
+        # If a very large chapter exceeds the limit, remaining findings still
+        # pass through the deterministic evidence/placement gate instead of
+        # triggering an unbounded series of paid requests.
+        deferred_audit_sections: List[Dict[str, Any]] = []
+        if depth in {"light", "standard"} and len(verification_batches) > config.fast_audit_max_batches:
+            deferred = verification_batches[config.fast_audit_max_batches:]
+            verification_batches = verification_batches[:config.fast_audit_max_batches]
+            deferred_audit_sections = [row for batch in deferred for row in batch]
 
         def split_failed_batch(
             batch: Sequence[Dict[str, Any]], max_issues: int = 4
@@ -1880,7 +1929,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8-cost-aware-grounded",
+                "pipeline": "academic-comment-audit-v1.9.8.1-single-bounded-grounded",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -1927,8 +1976,19 @@ async def enrich_review_with_academic_ai(
                     ),
                     reasoning_effort=audit_effort,
                     max_output_tokens=audit_tokens,
+                    request_timeout_seconds=(
+                        config.fast_request_timeout_seconds
+                        if depth in {"light", "standard"}
+                        else None
+                    ),
+                    request_max_retries=(
+                        config.fast_request_max_retries
+                        if depth in {"light", "standard"}
+                        else None
+                    ),
                     stage=ReviewStage.FINAL_AUDIT,
                     review_depth=depth,
+                    allow_escalation=(depth == "advanced"),
                 )
                 if checkpoint_manager is not None:
                     checkpoint_manager.save_provider_result(
@@ -1954,12 +2014,18 @@ async def enrich_review_with_academic_ai(
             zip(verification_batches, initial_results)
         ):
             if isinstance(result, Exception):
-                for retry_index, retry_batch in enumerate(split_failed_batch(batch)):
-                    retry_specs.append((f"{batch_index}-retry-{retry_index}", retry_batch))
+                if depth == "advanced":
+                    for retry_index, retry_batch in enumerate(split_failed_batch(batch)):
+                        retry_specs.append((f"{batch_index}-retry-{retry_index}", retry_batch))
+                else:
+                    # No second paid request for Light/Standard. The normal
+                    # fallback path below keeps only evidence-grounded,
+                    # sufficiently confident findings.
+                    audit_units.append((list(batch), result, False))
             else:
                 audit_units.append((list(batch), result, False))
 
-        if retry_specs:
+        if retry_specs and depth == "advanced":
             retry_results = await _run_limited(
                 [
                     verify_batch(label, retry_batch, retry=True)
@@ -1971,6 +2037,16 @@ async def enrich_review_with_academic_ai(
                 audit_units.append((retry_batch, result, True))
 
         verified_by_section: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+        # Preserve findings that were intentionally not sent to a second paid
+        # model. They have already passed exact paragraph, quote and placement
+        # checks and remain clearly identified in the internal audit trail.
+        for section_review in deferred_audit_sections:
+            for item in section_review.get("issues") or []:
+                row = dict(item)
+                row["verification_status"] = "deterministic_cost_guard"
+                row["manual_confirmation_required"] = False
+                verified_by_section[normalised(row.get("section", ""))].append(row)
         successful_audits = 0
         fallback_audits = 0
         for batch, result, was_retry in audit_units:
@@ -2064,11 +2140,41 @@ async def enrich_review_with_academic_ai(
         _deduplicate_issues(raw_issues)
     )
     if not all_issues:
+        if depth in {"light", "standard"}:
+            severity_rank = {
+                "critical": 0,
+                "major": 1,
+                "moderate": 2,
+                "minor": 3,
+            }
+            deterministic_rescue: List[Dict[str, Any]] = []
+            for item in all_primary:
+                severity = str(item.get("severity") or "minor").lower()
+                confidence = float(item.get("confidence") or 0.0)
+                if severity == "minor" or confidence < 0.68:
+                    continue
+                row = dict(item)
+                row["verification_status"] = "deterministic_fast_rescue"
+                row["manual_confirmation_required"] = True
+                deterministic_rescue.append(row)
+            deterministic_rescue.sort(
+                key=lambda row: (
+                    severity_rank.get(str(row.get("severity") or "minor"), 9),
+                    -float(row.get("confidence") or 0.0),
+                )
+            )
+            deterministic_rescue, _ = apply_accuracy_gate(
+                deterministic_rescue[:16], paragraph_index, current
+            )
+            all_issues = _consolidate_repetitive_issues(
+                _deduplicate_issues(deterministic_rescue)
+            )
+
         low_scoring_sections = [
             section for section in section_reviews
             if float(section.get("section_score") or 0.0) < 75.0
         ]
-        if low_scoring_sections:
+        if low_scoring_sections and depth == "advanced":
             # Last-mile expert rescue. This mirrors a direct expert ChatGPT review:
             # one strong request receives the complete affected chapter packets and
             # must return only evidence-anchored comments. It is used only when the
