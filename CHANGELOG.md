@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.9.8.5 - Developmental comment depth and ordered review floors
+
+- Added developmental native Word comments with issue, why it matters and revise-by guidance.
+- Raised the default public comment length from 680 to 980 characters.
+- Added degree/depth comment floors so Standard Research Master’s/MPhil retains more material research-intensive findings than Standard Non-Research Master’s when the same weak chapter is reviewed.
+- Added evidence-retention rescue from already generated first-pass findings without making extra paid calls.
+- Reduced repeated alignment comments through stronger similarity grouping.
+- Added tests for developmental comments and level-ordered finding floors.
+
+## 1.9.8.5 - All-level degree-calibrated depth
+
+- Gives Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD separate operational review contracts.
+- Adds distinct per-section material-issue ceilings and independent-audit capacities for every programme level.
+- Adds chapter-specific mandatory checks for Chapters One to Five at every level.
+- Separates Professional Doctorate contribution-to-practice review from PhD contribution-to-knowledge review.
+- Adds degree-specific primary-output and audit-output allowances while preserving bounded calls.
+- Applies deterministic alignment, citation, definition, proposal-stage and language checks to every programme level.
+- Updates the interface to explain the selected level’s actual scholarly benchmark.
+- Preserves the DeepSeek Flash route for Bachelor’s and applied Master’s, and the DeepSeek Pro plus GPT-5.4 expert route for research-intensive degrees.
+
+## 1.9.8.3 - Degree-calibrated Research Master’s/MPhil depth
+
+- Separated Non-Research Master’s applied review from Research Master’s/MPhil research-intensive review.
+- Routes Research Master’s/MPhil Standard first passes through DeepSeek V4 Pro instead of the ordinary Flash path.
+- Adds one bounded GPT-5.4 expert audit for Research Master’s/MPhil Standard review.
+- Raises the MPhil per-section material-issue capacity from four to six without creating an issue quota.
+- Adds a degree-specific review contract covering critical synthesis, theory, construct roles, problem-gap evidence, alignment, methodological defensibility, source traceability and contribution.
+- Adds Chapter One MPhil checks for background progression, contextual problem evidence, purpose-objective-question alignment, causal language, prospective significance, definition quality and citation-reference integrity.
+- Adds deterministic, evidence-anchored MPhil checks for purpose-objective coverage, premature results language, weak definitions, citation formatting, uncited references and mixed language conventions.
+- Updates the interface guidance so users can see how MPhil depth differs from Non-Research Master’s review.
+- Preserves the v1.9.8.2 placeholder, truncation, duplicate-comment and internal-notice safeguards.
+
 ## 1.9.8.2 - Public comment quality gate
 
 - Removed provider, audit, retry and manual-confirmation diagnostics from student-facing Word comments and reports.

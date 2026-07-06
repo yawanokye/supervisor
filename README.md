@@ -1,10 +1,11 @@
-# ProjectReady AI Supervisor Assistant 1.9.8.2
+# ProjectReady AI Supervisor Assistant 1.9.8.5
 
+Version 1.9.8.5 adds developmental comment depth. Native Word comments now explain the issue, why it matters and the specific revision action, while the review orchestrator preserves the expected ordering between Light, Standard Non-Research Master’s and Standard MPhil reviews for the same weak chapter.
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.9.8.2 adds a student-facing comment quality gate to the v1.9.8.1 cost and latency hotfix. In the recommended Balanced profile, DeepSeek V4 Flash performs one non-thinking Light or Standard first pass. A single compact GPT-5.4 mini accuracy audit follows. GPT-5.4 nano is the inexpensive emergency fallback if Flash is unavailable, while GPT-5.4 remains reserved for Advanced high-risk work and external-examination judgement. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery and supervisor token accounting remain active.
+Version 1.9.8.5 applies substantive degree-calibrated depth to **all five programme levels**. Bachelor’s review focuses on foundational research coherence and correct method application. Non-Research Master’s review tests advanced application and professional usefulness. Research Master’s/MPhil review requires critical synthesis, theory, methodological defensibility and a clear research contribution. Professional Doctorate review requires doctoral scholarship, reflexivity and an original contribution to practice or policy. PhD review requires authoritative positioning, robustness and an original contribution to knowledge.
 
-It removes internal audit diagnostics from Word comments and reports, rejects unresolved placeholder tokens, omits incomplete generated examples, consolidates duplicate findings, trims only at complete sentence boundaries, and adds deterministic checks for unresolved source-document placeholders, malformed research-question punctuation, proposal/completed-study tense conflicts and obvious opening grammar errors.
+Each level now has its own issue ceiling, audit capacity, output allowance, chapter-specific checks and contribution standard. Research Master’s/MPhil, Professional Doctorate and PhD use the research-intensive route. Bachelor’s and Non-Research Master’s retain the lower-cost route but no longer share the same academic contract. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery, public-comment quality controls and token accounting remain active.
 
 ## Review philosophy
 
@@ -68,10 +69,10 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 The routing profile is controlled by `VPROF_ROUTING_PROFILE`.
 
-- **Balanced**, recommended: DeepSeek V4 Flash performs one Light or Standard first pass without thinking mode. GPT-5.4 nano is used only if Flash is unavailable. One compact GPT-5.4 mini accuracy audit follows. Advanced review starts with GPT-5.4 mini and may escalate difficult cases to GPT-5.4.
+- **Balanced**, recommended: Bachelor’s and Non-Research Master’s Light/Standard review use DeepSeek V4 Flash with GPT-5.4 nano as the low-cost fallback and one GPT-5.4 mini audit. Research Master’s/MPhil review uses DeepSeek V4 Pro for the scholarly first pass and one bounded GPT-5.4 expert audit. Advanced review remains eligible for GPT-5.4 expert judgement.
 - **Economy**: DeepSeek V4 Flash handles Light and Standard review, with DeepSeek V4 Pro as the provider fallback. DeepSeek V4 Pro also handles Advanced review.
 - **Quality**: OpenAI leads normal review. DeepSeek provides provider-failure fallback, while GPT-5.4 remains available for expert escalation.
-- Light and Standard final audits use one GPT-5.4 mini request with bounded output and no automatic expert escalation.
+- Non-Research Master’s Light and Standard final audits use one GPT-5.4 mini request. Research Master’s/MPhil Standard review uses one bounded GPT-5.4 expert audit. Neither route duplicates the complete first pass.
 - External Assessment remains OpenAI-led for the final degree recommendation. DeepSeek V4 Pro is used only if an OpenAI request fails.
 - The first pass is not duplicated by automatic router escalation. The independent audit is the only normal second-model call.
 - Every accepted response still passes strict Pydantic validation, exact evidence-ID checks, deterministic factual gates and native-comment placement checks.

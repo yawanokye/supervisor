@@ -35,14 +35,30 @@ services:
         value: 0.25
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
         value: 2.00
+      - key: VPROF_ALL_LEVELS_DEGREE_CALIBRATED
+        value: true
+      - key: VPROF_RESEARCH_MASTERS_DEEP_REVIEW
+        value: true
       - key: VPROF_REJECT_PLACEHOLDER_COMMENTS
         value: true
       - key: VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES
         value: true
       - key: VPROF_COMMENT_MAX_CHARS
-        value: 680
+        value: 980
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
-        value: 0.62
+        value: 0.58
+      - key: VPROF_DEVELOPMENTAL_COMMENTS
+        value: true
+      - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
+        value: true
+      - key: VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS
+        value: 14
+      - key: VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS
+        value: 18
+      - key: VPROF_STANDARD_PROFESSIONAL_DOCTORATE_MIN_FINDINGS
+        value: 22
+      - key: VPROF_STANDARD_PHD_MIN_FINDINGS
+        value: 26
       - key: DEEPSEEK_FAST_MODEL
         value: deepseek-v4-flash
       - key: DEEPSEEK_QUALITY_MODEL
@@ -81,6 +97,14 @@ services:
         value: 2600
       - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
         value: 3800
+      - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
+        value: 4500
+      - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
+        value: 6500
+      - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
+        value: 7500
+      - key: AI_PHD_AUDIT_MAX_OUTPUT_TOKENS
+        value: 8000
       - key: MAX_AUTO_RESUMES
         value: 3
       - key: AUTOMATIC_RETRY_DELAY_SECONDS
@@ -101,6 +125,14 @@ services:
         value: 4500
       - key: AI_STANDARD_MAX_OUTPUT_TOKENS
         value: 6500
+      - key: AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
+        value: 7500
+      - key: AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
+        value: 9000
+      - key: AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS
+        value: 11000
+      - key: AI_PHD_MAX_OUTPUT_TOKENS
+        value: 12000
       - key: AI_JOB_MAX_SECONDS
         value: 5400
       - key: AI_ADVANCED_SECOND_PASS
@@ -121,6 +153,14 @@ services:
         value: gpt-5.4
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
         value: high
+      - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
+        value: medium
+      - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_PHD_AUDIT_REASONING_EFFORT
+        value: xhigh
       - key: OPENAI_EXTERNAL_DOMAIN_MODEL
         value: gpt-5.4
       - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT

@@ -480,3 +480,48 @@ Remove stale `OPENAI_*_MODEL=o3-mini` variables. The active role-specific settin
 
 Rotate `SESSION_SECRET` whenever its value has been copied into a document, ticket or chat. Existing browser sessions will be signed out after rotation.
 
+
+
+## v1.9.8.3 Research Master’s/MPhil depth deployment
+
+Deploy v1.9.8.3 as a complete replacement for v1.9.8.2. Existing users, balances, stored reviews and the database schema remain compatible. Submit any MPhil review as a new job because the primary-review and audit checkpoint identifiers changed.
+
+Add these settings to both the Render web service and worker:
+
+```env
+VPROF_RESEARCH_MASTERS_DEEP_REVIEW=true
+AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS=9000
+AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS=6500
+OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=high
+```
+
+In the Balanced profile, the expected Research Master’s/MPhil Standard path is one DeepSeek V4 Pro first pass followed by one GPT-5.4 expert audit. Non-Research Master’s Standard review retains the lower-cost Flash plus GPT-5.4 mini route. The MPhil path is intentionally deeper and may cost more than the applied Master’s route, but it remains bounded to one scholarly first pass and one expert audit.
+
+
+## v1.9.8.5 all-level degree-depth deployment
+
+Deploy v1.9.8.5 as a complete replacement for v1.9.8.3. Existing accounts, balances, stored reviews and the database schema remain compatible. Submit active reviews as new jobs because primary-review and audit checkpoint identifiers changed.
+
+Use `supervisor-v1.9.8.5-render.env.example` on both the Render web service and worker. The new settings are:
+
+```env
+VPROF_ALL_LEVELS_DEGREE_CALIBRATED=true
+AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS=7500
+AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS=11000
+AI_PHD_MAX_OUTPUT_TOKENS=12000
+AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS=4500
+AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS=7500
+AI_PHD_AUDIT_MAX_OUTPUT_TOKENS=8000
+OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=medium
+OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=high
+OPENAI_PHD_AUDIT_REASONING_EFFORT=xhigh
+```
+
+Bachelor’s and Non-Research Master’s remain on the cost-efficient ordinary route. Research Master’s/MPhil, Professional Doctorate and PhD use DeepSeek V4 Pro for the research-intensive first pass and one bounded GPT-5.4 expert audit in the Balanced profile.
+
+
+## v1.9.8.5 developmental-depth deployment
+
+Deploy v1.9.8.5 as a complete replacement for v1.9.8.4. Existing accounts, balances, stored reviews and the database schema remain compatible. Submit active review jobs as new jobs because comment-depth and finding-retention behaviour changed.
+
+Use `supervisor-v1.9.8.5-render.env.example` on both the Render web service and worker. The key new settings are `VPROF_DEVELOPMENTAL_COMMENTS=true`, `VPROF_COMMENT_DEPTH_FLOOR_ENABLED=true`, `VPROF_COMMENT_MAX_CHARS=980`, and the four `VPROF_STANDARD_*_MIN_FINDINGS` values.
