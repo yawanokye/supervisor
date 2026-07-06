@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.7-section-coverage-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.8.8-supervisory-comment-quality"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -271,38 +271,156 @@ def _is_synthetic_section_heading(value: str) -> bool:
     ))
 
 
-def _section_review_comment(row: Dict[str, Any]) -> str:
-    """Build a natural section-level comment from the stored section review.
+_GENERIC_SECTION_ASSESSMENT_RE = re.compile(
+    r"\b(?:reviewed against|selected academic level|no major issue|appears adequate|looks adequate|section was reviewed|this section has been reviewed|check that its purpose|generally acceptable|meets the expected standard)\b",
+    flags=re.I,
+)
 
-    Issue comments explain specific defects. This comment records that the
-    section itself was reviewed, which gives students and supervisors visible
-    coverage for every uploaded section, including sections with no exported
-    issue finding.
+
+def _section_comment_template(heading: str) -> str:
+    """Return a section-specific supervisory note rather than a generic coverage stamp."""
+    low = normalised(heading)
+    if "background" in low:
+        return (
+            "This part should move logically from the broad sustainability debate to the specific Ghanaian and sectoral context of the study. "
+            "It should introduce the main constructs, show how they relate and prepare the reader for the problem statement rather than merely listing prior studies. "
+            "Strengthen the progression, localise the evidence and ensure that every central construct in the objectives is introduced before the problem is stated."
+        )
+    if "statement" in low and "problem" in low:
+        return (
+            "This part should establish a defensible research problem, not only a general topic of interest. "
+            "It should separate the practical problem, empirical gap, contextual gap and methodological gap, then show why the Central Region manufacturing setting requires investigation. "
+            "Revise it so the gap directly leads to the purpose, objectives and questions."
+        )
+    if "purpose" in low:
+        return (
+            "The purpose statement should express the central intent of the whole study in one coherent frame. "
+            "For MPhil-level work, it must cover every principal construct and outcome that later appears in the objectives and questions. "
+            "Revise the statement so a reader can trace the design, analysis and conclusions back to this purpose."
+        )
+    if "objective" in low:
+        return (
+            "The objectives should be measurable, ordered and fully aligned with the title, purpose, research questions and proposed method. "
+            "Avoid mixing descriptive, relational and causal intentions without explaining the analytical logic. "
+            "Revise the objectives so each one can be answered by a clearly identifiable data source and analysis procedure."
+        )
+    if "question" in low:
+        return (
+            "The research questions should mirror the objectives one-to-one and use language that matches the intended design. "
+            "Terms such as relationship, effect and impact imply different levels of analysis and should not be used interchangeably. "
+            "Edit the questions for alignment, punctuation and methodological consistency."
+        )
+    if "significance" in low:
+        return (
+            "This part should explain the expected value of the study without reporting findings that have not yet been produced. "
+            "At MPhil level, the contribution should be tied to evidence, policy, practice and scholarship in a balanced way. "
+            "Rewrite stakeholder benefits prospectively and avoid claims that imply the study has already demonstrated an effect."
+        )
+    if "limitation" in low:
+        return (
+            "This part should identify unavoidable weaknesses in the design and explain how they may affect interpretation. "
+            "The tense must match the stage of the work: proposed studies should not describe sampling, response or fieldwork constraints as completed events. "
+            "Revise the section so the limitations are realistic, method-linked and consistently expressed."
+        )
+    if "delimitation" in low:
+        return (
+            "This part should define the deliberate boundaries of the study, including sector, location, respondents, constructs and time scope. "
+            "A reader should be able to tell exactly what is included and excluded from the inquiry. "
+            "Replace unresolved prompts and ensure the stated boundaries match the methodology chapter."
+        )
+    if "definition" in low or "terms" in low:
+        return (
+            "This part should define key constructs in a way that is conceptually clear and measurable. "
+            "Avoid circular definitions, absolute claims and definitions that do not correspond to the proposed indicators. "
+            "Revise each definition so it states the construct boundary, relevant dimensions and link to the study context."
+        )
+    if "organisation" in low or "organization" in low:
+        return (
+            "This part should provide a concise map of the remaining chapters without making claims about results not yet produced. "
+            "The description should match the actual thesis structure and maintain the same proposal or completed-study tense used elsewhere. "
+            "Revise it after the chapter structure is finalised to avoid inconsistency."
+        )
+    if "reference" in low:
+        return (
+            "This part should correspond exactly with the in-text citations and follow the required referencing style. "
+            "Check author spelling, publication year, DOI completeness, source credibility and whether every listed item is cited in the chapter. "
+            "Remove uncited or unverifiable entries and correct mismatches before submission."
+        )
+    return (
+        "This section should be assessed for its role in the chapter, the quality of evidence used, conceptual clarity and alignment with the study purpose. "
+        "Revise any wording, citation or structural element that weakens the reader's ability to trace the argument from the problem to the methodology. "
+        "Keep the section focused on the selected degree level and the approved thesis format."
+    )
+
+
+def _is_weak_section_assessment(value: str) -> bool:
+    text = clean_text(value)
+    if not text:
+        return True
+    low = normalised(text)
+    if _GENERIC_SECTION_ASSESSMENT_RE.search(text):
+        return True
+    # A useful section comment should contain at least one supervision cue, not merely a coverage stamp.
+    cues = ("align", "evidence", "construct", "gap", "method", "purpose", "objective", "revise", "clarify", "support", "scope", "contribution", "citation")
+    if any(cue in low for cue in cues):
+        return False
+    return len(text) < 140
+
+
+def _polish_section_assessment(value: str) -> str:
+    text = _strip_visible_labels(value)
+    text = re.sub(r"\bThis section (?:has been|was) reviewed(?: against [^.]+)?\.?\s*", "", text, flags=re.I)
+    text = re.sub(r"\bIt appears adequate\.?\s*", "", text, flags=re.I)
+    text = re.sub(r"\bNo major issue(?:s)? (?:was|were) found\.?\s*", "", text, flags=re.I)
+    text = re.sub(r"\bselected academic level\b", "programme level", text, flags=re.I)
+    text = re.sub(r"\s{2,}", " ", text).strip(" ;,.")
+    if text:
+        text = text[0].upper() + text[1:]
+    return text
+
+
+def _section_review_comment(row: Dict[str, Any]) -> str:
+    """Build a natural, section-specific comment from the stored section review.
+
+    Section comments must not be empty coverage stamps. They should tell the
+    student what the section was assessed for and what kind of revision would
+    improve it, while issue comments remain attached to exact defects.
     """
     heading = clean_text(row.get("heading") or row.get("section_name") or "Section")
     if not heading or _is_synthetic_section_heading(heading):
         return ""
-    assessment = _strip_visible_labels(clean_text(row.get("section_assessment", "")))
-    warning = _strip_visible_labels(clean_text(row.get("coverage_warning", "")))
+
+    raw_assessment = _polish_section_assessment(clean_text(row.get("section_assessment", "")))
+    warning = _polish_section_assessment(clean_text(row.get("coverage_warning", "")))
+
+    if _is_weak_section_assessment(raw_assessment):
+        assessment = _section_comment_template(heading)
+    else:
+        assessment = raw_assessment
+        # Add a section-specific supervisory focus when the model assessment is
+        # useful but too narrow to stand alone as a section coverage comment.
+        if len(assessment) < 260:
+            assessment = assessment.rstrip(" .") + ". " + _section_comment_template(heading)
+
     assessment = public_text(
         assessment,
-        limit=520,
+        limit=760,
         reject_placeholders=True,
         reject_incomplete=True,
     )
     warning = public_text(
         warning,
-        limit=280,
+        limit=320,
         reject_placeholders=True,
         reject_incomplete=True,
     )
-    if not assessment and not warning:
-        assessment = "This section has been reviewed against the selected academic level. Check that its purpose, evidence and wording remain aligned with the chapter and the study objectives."
-    body = assessment or ""
+
+    body = assessment or _section_comment_template(heading)
     if warning and normalised(warning) not in normalised(body):
         body = (body.rstrip(" .") + ". " + warning.rstrip(" .") + ".").strip()
     body = re.sub(r"^this section\s*[:\-]\s*", "", body, flags=re.I).strip()
-    return _shorten_comment(f"{heading}: {body}", max(460, min(comment_max_chars(), 760)))
+    body = _strip_visible_labels(body)
+    return _shorten_comment(f"{heading}: {body}", max(560, min(comment_max_chars(), 980)))
 
 
 def _section_review_key(row: Dict[str, Any]) -> Tuple[Optional[int], Tuple[str, ...]]:
