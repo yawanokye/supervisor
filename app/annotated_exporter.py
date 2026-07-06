@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.6-final-depth-placeholder-safe"
+ANNOTATION_EXPORT_VERSION = "1.9.8.7-section-coverage-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -256,6 +256,119 @@ def _format_comment_group(comments: Iterable[str]) -> str:
         return unique[0]
     combined = unique[0] + " A related concern is that " + unique[1][0].lower() + unique[1][1:]
     return _shorten_comment(combined, comment_max_chars())
+
+
+def _is_synthetic_section_heading(value: str) -> bool:
+    low = normalised(value)
+    return any(term in low for term in (
+        "whole chapter coherence",
+        "whole chapter consistency",
+        "cross chapter coherence",
+        "cross chapter alignment",
+        "supervisor comment compliance audit",
+        "alignment audit",
+        "revision audit",
+    ))
+
+
+def _section_review_comment(row: Dict[str, Any]) -> str:
+    """Build a natural section-level comment from the stored section review.
+
+    Issue comments explain specific defects. This comment records that the
+    section itself was reviewed, which gives students and supervisors visible
+    coverage for every uploaded section, including sections with no exported
+    issue finding.
+    """
+    heading = clean_text(row.get("heading") or row.get("section_name") or "Section")
+    if not heading or _is_synthetic_section_heading(heading):
+        return ""
+    assessment = _strip_visible_labels(clean_text(row.get("section_assessment", "")))
+    warning = _strip_visible_labels(clean_text(row.get("coverage_warning", "")))
+    assessment = public_text(
+        assessment,
+        limit=520,
+        reject_placeholders=True,
+        reject_incomplete=True,
+    )
+    warning = public_text(
+        warning,
+        limit=280,
+        reject_placeholders=True,
+        reject_incomplete=True,
+    )
+    if not assessment and not warning:
+        assessment = "This section has been reviewed against the selected academic level. Check that its purpose, evidence and wording remain aligned with the chapter and the study objectives."
+    body = assessment or ""
+    if warning and normalised(warning) not in normalised(body):
+        body = (body.rstrip(" .") + ". " + warning.rstrip(" .") + ".").strip()
+    body = re.sub(r"^this section\s*[:\-]\s*", "", body, flags=re.I).strip()
+    return _shorten_comment(f"{heading}: {body}", max(460, min(comment_max_chars(), 760)))
+
+
+def _section_review_key(row: Dict[str, Any]) -> Tuple[Optional[int], Tuple[str, ...]]:
+    heading = clean_text(row.get("heading") or row.get("section_name") or "")
+    chapter_number = row.get("chapter_number")
+    try:
+        chapter_number = int(chapter_number) if chapter_number is not None else None
+    except (TypeError, ValueError):
+        chapter_number = None
+    path = tuple(clean_text(value) for value in row.get("section_path") or [] if clean_text(value))
+    if heading and (not path or normalised(path[-1]) != normalised(heading)):
+        path = path + (heading,)
+    elif not path and heading:
+        path = (heading,)
+    return chapter_number, path
+
+
+def _add_section_review_comments(
+    document,
+    review: Dict[str, Any],
+    *,
+    author: str,
+    initials: str,
+    fallback_comments: List[str],
+) -> None:
+    """Add one native Word comment for every reviewed section/subsection.
+
+    The AI engine already returns section assessments. Earlier exports showed
+    only issue comments, so sections without issues looked unreviewed. This
+    pass anchors each section assessment to the exact section heading where
+    possible and falls back to the first paragraph only when the heading cannot
+    be uniquely located.
+    """
+    seen: set[Tuple[Optional[int], Tuple[str, ...]]] = set()
+    for row in review.get("academic_section_reviews") or []:
+        heading = clean_text(row.get("heading") or row.get("section_name") or "")
+        if not heading or _is_synthetic_section_heading(heading):
+            continue
+        key = _section_review_key(row)
+        if key in seen:
+            continue
+        comment = _section_review_comment(row)
+        if not comment:
+            continue
+        seen.add(key)
+        chapter_number, headings = key
+        target = _find_heading(document, headings or (heading,), chapter_number=chapter_number)
+        if target is not None and _comment_on_paragraph(
+            document, target, [comment], author=author, initials=initials
+        ):
+            continue
+        # Fall back to the first direct evidence paragraph from the section
+        # review when heading matching is unavailable. This keeps the coverage
+        # comment in the relevant section rather than at the document opening.
+        source = row.get("source_section") or {}
+        for paragraph_data in source.get("paragraphs") or []:
+            try:
+                paragraph_number = int(paragraph_data.get("paragraph"))
+            except (TypeError, ValueError):
+                paragraph_number = 0
+            if not paragraph_number:
+                continue
+            # The caller's source map is not passed here, so use a heading-level
+            # fallback rather than risking incorrect paragraph anchoring.
+            break
+        fallback_comments.append(comment)
 
 
 def _comment_similarity(left_key: str, right_key: str) -> float:
@@ -876,6 +989,18 @@ def build_annotated_docx(
                 fallback_comments.extend(unique_comments)
         else:
             fallback_comments.extend(unique_comments)
+
+    # Add a section-level review note for every reviewed section or subsection.
+    # These comments are separate from issue findings and make coverage visible
+    # in the native Word Review pane. They are added after issue comments so
+    # exact issue anchors remain the primary feedback.
+    _add_section_review_comments(
+        document,
+        review,
+        author=author,
+        initials=initials,
+        fallback_comments=fallback_comments,
+    )
 
     _attach_document_level_comments(
         document,
