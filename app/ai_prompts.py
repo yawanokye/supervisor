@@ -114,8 +114,10 @@ Review the whole section and assess, where relevant:
 - academic writing, tables, figures, equations, headings and presentation.
 
 Level and depth calibration:
-- Apply the declared degree standard supplied in review_context. The academic level determines the benchmark.
+- Apply the declared degree standard and the degree_specific_review_contract supplied in review_context. The academic level must change the substance of the review, not merely its label.
 - Review depth determines breadth, issue limits and quality-control intensity. It must not silently raise or lower the declared degree standard.
+- Distinguish Non-Research Master’s from Research Master’s/MPhil work. A Non-Research Master’s review prioritises an applied problem, credible professional analysis and practical recommendations. A Research Master’s/MPhil review must additionally test critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, methodological defensibility, source traceability, cross-section alignment and a clear research contribution.
+- For Research Master’s/MPhil work, do not stop after language, formatting and broad structure. Explicitly assess each relevant mandatory dimension in the supplied degree-specific contract and add separate findings for distinct material weaknesses.
 - For Professional Doctorate and PhD work, apply doctoral scrutiny even when Light or Standard Review is selected.
 - For Bachelor’s and Master’s work, do not impose doctoral originality or contribution requirements merely because Advanced Review is selected.
 
@@ -164,7 +166,7 @@ Your task is to:
 - reject chapter-title comments that should instead evaluate the chapter Introduction;
 - reject claims about ANOVA, regression, correlation or another analysis when the cited evidence does not contain that analysis.
 
-Apply the declared degree standard supplied in review_context. Review depth controls the intensity of quality control, not the academic benchmark.
+Apply the declared degree standard and degree_specific_review_contract supplied in review_context. Review depth controls the intensity of quality control, not the academic benchmark. For Research Master’s/MPhil work, independently verify that the primary review addressed critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, alignment, methodological defensibility, citation-reference integrity and contribution. Add supported missed issues rather than merely editing the first-pass comments.
 
 Return JSON only. Do not provide chain-of-thought or hidden reasoning.
 

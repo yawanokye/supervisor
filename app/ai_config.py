@@ -60,7 +60,7 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.8.2 routes inexpensive first-pass work through DeepSeek and
+    VProfessor v1.9.8.4 calibrates provider strength, review coverage and audit capacity to every declared degree level. It routes inexpensive first-pass work through DeepSeek and
     selectively escalates uncertain or high-risk findings to OpenAI. Existing
     strict schemas, checkpoints and token accounting remain active.
     """
@@ -131,13 +131,27 @@ class HybridAIConfig:
     advanced_audit_max_output_tokens: int
     light_audit_max_output_tokens: int
     standard_audit_max_output_tokens: int
+    non_research_masters_max_output_tokens: int
+    non_research_masters_audit_max_output_tokens: int
+    non_research_masters_audit_reasoning_effort: str
+    research_masters_max_output_tokens: int
+    research_masters_audit_max_output_tokens: int
+    research_masters_audit_reasoning_effort: str
+    research_masters_deep_review: bool
+    professional_doctorate_max_output_tokens: int
+    professional_doctorate_audit_max_output_tokens: int
+    professional_doctorate_audit_reasoning_effort: str
+    phd_max_output_tokens: int
+    phd_audit_max_output_tokens: int
+    phd_audit_reasoning_effort: str
+    all_levels_degree_calibrated: bool
     fast_audit_batch_issue_limit: int
     fast_audit_max_batches: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
 
-    # v1.9.8.2 bounded cost-aware provider routing.
+    # v1.9.8.4 all-level degree-calibrated, bounded cost-aware provider routing.
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool
@@ -409,6 +423,48 @@ class HybridAIConfig:
             ),
             standard_audit_max_output_tokens=_env_int(
                 "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 3800
+            ),
+            non_research_masters_max_output_tokens=_env_int(
+                "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
+            ),
+            non_research_masters_audit_max_output_tokens=_env_int(
+                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4500
+            ),
+            non_research_masters_audit_reasoning_effort=_normalise_effort(
+                os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "medium")
+            ),
+            research_masters_max_output_tokens=_env_int(
+                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 9000
+            ),
+            research_masters_audit_max_output_tokens=_env_int(
+                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 6500
+            ),
+            research_masters_audit_reasoning_effort=_normalise_effort(
+                os.getenv("OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "high")
+            ),
+            research_masters_deep_review=_env_bool(
+                "VPROF_RESEARCH_MASTERS_DEEP_REVIEW", True
+            ),
+            professional_doctorate_max_output_tokens=_env_int(
+                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 11000
+            ),
+            professional_doctorate_audit_max_output_tokens=_env_int(
+                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 7500
+            ),
+            professional_doctorate_audit_reasoning_effort=_normalise_effort(
+                os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "high")
+            ),
+            phd_max_output_tokens=_env_int(
+                "AI_PHD_MAX_OUTPUT_TOKENS", 12000
+            ),
+            phd_audit_max_output_tokens=_env_int(
+                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 8000
+            ),
+            phd_audit_reasoning_effort=_normalise_effort(
+                os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "xhigh")
+            ),
+            all_levels_degree_calibrated=_env_bool(
+                "VPROF_ALL_LEVELS_DEGREE_CALIBRATED", True
             ),
             fast_audit_batch_issue_limit=_env_int(
                 "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100

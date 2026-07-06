@@ -42,8 +42,10 @@ class ReviewStage(str, Enum):
     COMMENT_DEDUPLICATION = "comment_deduplication"
     LIGHT_REVIEW = "light_review"
     STANDARD_REVIEW = "standard_review"
+    RESEARCH_INTENSIVE_REVIEW = "research_intensive_review"
     ADVANCED_REVIEW = "advanced_review"
     FINAL_AUDIT = "final_audit"
+    RESEARCH_INTENSIVE_AUDIT = "research_intensive_audit"
     EXTERNAL_EXAMINATION = "external_examination"
     JSON_REPAIR = "json_repair"
 
@@ -253,6 +255,33 @@ class CostAwareAIProvider:
                 config.selective_escalation_enabled,
             )
 
+        if stage_value is ReviewStage.RESEARCH_INTENSIVE_REVIEW:
+            # Research Master's/MPhil and doctoral work must not share the
+            # ordinary Flash-first route used for applied programmes. Balanced
+            # mode uses DeepSeek Pro for the full scholarly first pass and
+            # reserves OpenAI expert judgement for the bounded audit.
+            if profile is RoutingProfile.QUALITY:
+                primary, fallback, escalation = self._normalise_targets(
+                    oa_requested if requested_model else oa_expert,
+                    ds_quality,
+                    None,
+                )
+            elif profile is RoutingProfile.ECONOMY:
+                primary, fallback, escalation = self._normalise_targets(
+                    ds_quality,
+                    oa_chapter,
+                    None,
+                )
+            else:
+                primary, fallback, escalation = self._normalise_targets(
+                    ds_quality,
+                    oa_chapter,
+                    None,
+                )
+            return RoutePlan(
+                stage_value, profile, primary, fallback, escalation, False
+            )
+
         if stage_value is ReviewStage.ADVANCED_REVIEW:
             if profile is RoutingProfile.ECONOMY:
                 primary, fallback, escalation = self._normalise_targets(
@@ -275,6 +304,26 @@ class CostAwareAIProvider:
                 fallback,
                 escalation,
                 config.selective_escalation_enabled,
+            )
+
+        if stage_value is ReviewStage.RESEARCH_INTENSIVE_AUDIT:
+            # One bounded expert audit gives Research Master's/MPhil work the
+            # conceptual and methodological depth that GPT-5.4 mini alone did
+            # not consistently provide. Economy mode may remain DeepSeek-led.
+            if profile is RoutingProfile.ECONOMY:
+                primary, fallback, escalation = self._normalise_targets(
+                    ds_quality,
+                    oa_chapter,
+                    None,
+                )
+            else:
+                primary, fallback, escalation = self._normalise_targets(
+                    oa_requested if requested_model else oa_expert,
+                    ds_quality,
+                    None,
+                )
+            return RoutePlan(
+                stage_value, profile, primary, fallback, escalation, False
             )
 
         if stage_value is ReviewStage.FINAL_AUDIT:

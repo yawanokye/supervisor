@@ -157,9 +157,10 @@ REVIEW_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 
-DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, str]] = {
+DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
     "bachelors": {
         "label": "Bachelor’s dissertation",
+        "orientation": "foundational-research",
         "benchmark": (
             "Require a clear and researchable problem, coherent use of literature, appropriate and correctly applied methods, "
             "accurate analysis, defensible conclusions and competent academic presentation. Expect a modest but explicit contribution."
@@ -168,19 +169,25 @@ DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, str]] = {
     "non_research_masters": {
         "label": "Non-Research Master’s project",
         "benchmark": (
-            "Require a well-defined applied problem, integrated literature, justified professional or analytical methods, "
-            "credible evidence, sound interpretation and practical recommendations proportionate to the design."
+            "Require a well-defined applied problem, integrated and relevant literature, justified professional or analytical methods, "
+            "credible evidence, sound interpretation and practical recommendations proportionate to the design. Do not impose an MPhil-style "
+            "theoretical contribution or research-intensive originality requirement unless the programme guideline expressly requires it."
         ),
+        "orientation": "applied-master's",
     },
     "research_masters": {
         "label": "Research Master’s or MPhil dissertation",
         "benchmark": (
-            "Require critical synthesis, defensible theoretical grounding, explicit methodological justification, "
-            "objective-method-result alignment and a clear contribution appropriate to research Master’s work."
+            "Require research-intensive Master’s depth: critical synthesis rather than description, defensible theoretical and conceptual grounding, "
+            "a clearly evidenced research problem and gap, explicit methodological justification, construct and terminology precision, complete "
+            "purpose-objective-question-hypothesis-method-result alignment, source traceability, and a clear empirical, theoretical, methodological "
+            "or contextual contribution appropriate to MPhil work."
         ),
+        "orientation": "research-intensive-master's",
     },
     "professional_doctorate": {
         "label": "Professional Doctorate thesis",
+        "orientation": "practice-based-doctoral",
         "benchmark": (
             "Require doctoral rigour, a defensible original contribution to professional practice or policy, strong scholarly positioning, "
             "methodological robustness, critical reflexivity and evidence-based implications for the field of practice."
@@ -188,6 +195,7 @@ DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, str]] = {
     },
     "phd": {
         "label": "PhD thesis",
+        "orientation": "knowledge-creation-doctoral",
         "benchmark": (
             "Require an original contribution to knowledge, authoritative theoretical and empirical positioning, methodological rigour, "
             "robustness, engagement with alternative explanations and a defensible scholarly contribution."
@@ -226,6 +234,193 @@ def _combined_benchmark(academic_level: Any, depth: str) -> Dict[str, str]:
     }
 
 
+def _degree_key(academic_level: Any) -> str:
+    value = normalised(str(academic_level or "")).replace("-", " ")
+    if value == "phd" or value.startswith("doctor of philosophy"):
+        return "phd"
+    if "professional doctorate" in value or value.startswith("doctor of ") or value.startswith("doctoral"):
+        return "professional_doctorate"
+    if "non research masters" in value or "non research master" in value:
+        return "non_research_masters"
+    if "research masters" in value or "research master" in value or "mphil" in value:
+        return "research_masters"
+    return "bachelors"
+
+
+def _is_research_masters_level(academic_level: Any) -> bool:
+    return _degree_key(academic_level) == "research_masters"
+
+
+def _degree_issue_limit(academic_level: Any, depth: str) -> int:
+    """Return a degree-calibrated per-section issue ceiling, never a quota."""
+    base = int(_review_profile(depth)["normal_issue_limit_per_section"])
+    increments = {
+        "bachelors": 0,
+        "non_research_masters": 1,
+        "research_masters": 2,
+        "professional_doctorate": 3,
+        "phd": 4,
+    }
+    return base + increments[_degree_key(academic_level)]
+
+
+def _degree_audit_max_findings(academic_level: Any, depth: str) -> int:
+    base = int(_review_profile(depth)["quality_control_max_findings"])
+    minimums = {
+        "bachelors": {"light": 12, "standard": 24, "advanced": 32},
+        "non_research_masters": {"light": 15, "standard": 30, "advanced": 38},
+        "research_masters": {"light": 18, "standard": 36, "advanced": 44},
+        "professional_doctorate": {"light": 22, "standard": 48, "advanced": 60},
+        "phd": {"light": 24, "standard": 56, "advanced": 72},
+    }
+    return max(base, minimums[_degree_key(academic_level)][depth])
+
+
+def _chapter_review_checks(chapter: int) -> List[str]:
+    checks = {
+        1: [
+            "Check whether the background moves logically from the broad problem to the study context and the precise unresolved issue.",
+            "Check whether the problem statement is evidenced, identifies what is not known or not working, explains why the gap matters, and leads directly to the purpose.",
+            "Check one-to-one alignment among the title, problem, purpose, objectives, questions and hypotheses where applicable.",
+            "Check whether causal, predictive, relational and descriptive verbs are compatible with the intended research design.",
+            "Check whether significance is prospective and whether delimitations, limitations, definitions, proposal stage and terminology are internally consistent.",
+            "Audit in-text citations, unsupported empirical claims, reference-list correspondence, unresolved prompts and language consistency.",
+        ],
+        2: [
+            "Assess whether the literature is critically synthesised by themes, debates, methods and findings rather than presented as a catalogue of studies.",
+            "Check the relevance, currency, authority and traceability of sources and whether contrary evidence is represented fairly.",
+            "Check whether theoretical and conceptual choices are explained, integrated and linked to the study variables or phenomena.",
+            "Check whether the empirical review establishes a defensible gap and avoids claiming novelty merely because a setting differs.",
+        ],
+        3: [
+            "Check alignment of the approach, design, population, sampling, data sources, instruments, procedures and analysis with every objective and question.",
+            "Check operational definitions, measurement validity, reliability or trustworthiness, ethics, bias controls and reproducibility.",
+            "Check statistical or qualitative assumptions, model specification, diagnostic procedures and limits of inference.",
+        ],
+        4: [
+            "Check that every objective and hypothesis is answered with the correct analysis and that tables, figures and narratives agree.",
+            "Check statistical, qualitative or mixed-method interpretation, assumptions, uncertainty, effect size and avoidance of causal overstatement.",
+            "Check whether the discussion explains findings through theory and prior evidence, including contradictions and plausible alternatives.",
+        ],
+        5: [
+            "Check that conclusions are direct answers to the objectives and contain no new evidence or unsupported generalisation.",
+            "Check that recommendations arise from specific findings, identify responsible actors and remain feasible within the study evidence.",
+            "Check the stated contribution, limitations and future research against what the design and results can genuinely support.",
+        ],
+    }
+    return list(checks.get(chapter, []))
+
+
+def _degree_specific_review_contract(
+    academic_level: Any,
+    selected_chapter: Any,
+    depth: str,
+) -> Dict[str, Any]:
+    """Operational review contract for every supported degree level."""
+    key = _degree_key(academic_level)
+    try:
+        chapter = int(selected_chapter or 0)
+    except (TypeError, ValueError):
+        chapter = 0
+
+    common = [
+        "Evaluate every detected section and subsection using direct evidence from the uploaded document.",
+        "Distinguish a missing element from a present but weakly developed element.",
+        "Consolidate recurring proofreading defects, but do not merge distinct conceptual, alignment, citation or methodological problems.",
+        "Check factual support, source traceability, internal consistency and the limits of inference at the declared programme level.",
+    ]
+
+    if key == "bachelors":
+        required = [
+            "a clear, manageable and researchable problem",
+            "coherent use of relevant literature and basic conceptual understanding",
+            "alignment of the purpose, objectives, questions, methods, results and conclusions",
+            "appropriate and correctly applied methods and analysis",
+            "accurate interpretation, competent academic writing and a modest explicit contribution",
+        ]
+        contribution = "Expect a modest but explicit empirical, contextual or practical contribution appropriate to undergraduate research."
+        overlay = [
+            "Do not impose postgraduate theoretical originality, but require the student to explain rather than merely reproduce sources.",
+            "Prioritise fundamental research coherence, correct method application and evidence-based conclusions.",
+        ]
+    elif key == "non_research_masters":
+        required = [
+            "clarity, professional relevance and practical importance of the applied problem",
+            "coherence of the purpose, objectives, questions, methods, findings and recommendations",
+            "integrated and relevant literature that frames the professional problem",
+            "fitness and justification of the analytical or professional method",
+            "credible interpretation and feasible practice, management or policy recommendations",
+            "a defensible applied contribution without imposing research-intensive originality",
+        ]
+        contribution = "Expect a defensible applied or professional contribution. Do not require an MPhil-level theoretical contribution unless the programme guideline does."
+        overlay = [
+            "Assess whether the work converts evidence into a credible solution, decision framework, intervention or professional recommendation.",
+            "Require scholarly support and methodological justification, while keeping the benchmark focused on advanced application rather than original theory creation.",
+        ]
+    elif key == "research_masters":
+        required = [
+            "critical synthesis and scholarly positioning rather than study-by-study description",
+            "explicit theoretical or conceptual grounding and precise roles for every central construct",
+            "a significant, current and contextually evidenced research problem with a defensible empirical, theoretical, methodological or contextual gap",
+            "one-to-one alignment among the title, problem, purpose, objectives, questions, hypotheses where applicable, methods, results, conclusions and recommendations",
+            "compatibility between the research design and words such as effect, impact, influence, determinant, relationship and association",
+            "methodological defensibility, operationalisation, measurement validity, reproducibility, assumptions and limitations appropriate to the stated approach",
+            "citation-reference correspondence, source traceability, unsupported empirical claims, author-year consistency and source quality",
+            "a clear research contribution appropriate to a research Master's dissertation, without imposing doctoral originality",
+        ]
+        contribution = "Require a clear research contribution and critical scholarly judgement appropriate to MPhil work, but do not impose a PhD-level original contribution to knowledge."
+        overlay = [
+            "Test whether the argument moves beyond description to critical comparison, synthesis and defensible scholarly judgement.",
+            "Require the study gap, framework, methods and contribution to form one coherent research logic.",
+        ]
+    elif key == "professional_doctorate":
+        required = [
+            "doctoral-level critical synthesis and authoritative positioning in both scholarship and the field of practice",
+            "a complex and consequential professional, organisational, policy or practice problem supported by credible contextual evidence",
+            "a defensible theoretical or conceptual lens that informs professional inquiry rather than being appended decoratively",
+            "methodological robustness, practitioner reflexivity, ethics, stakeholder implications and limits of transferability",
+            "integration of evidence, professional knowledge and alternative explanations",
+            "a clearly articulated original contribution to professional practice, policy, organisational capability or applied knowledge",
+            "credible pathways from findings to implementation, evaluation or professional change",
+        ]
+        contribution = "Require an original and defensible doctoral contribution to professional practice, policy or applied knowledge, supported by rigorous scholarship and evidence."
+        overlay = [
+            "Assess whether the work produces doctoral-level improvement, innovation or insight in practice rather than merely a managerial recommendation.",
+            "Require critical reflexivity about the researcher's professional position, implementation context and stakeholder consequences where relevant.",
+        ]
+    else:  # PhD
+        required = [
+            "authoritative and critical command of the international and context-specific scholarly field",
+            "a precise unresolved problem and gap whose significance to knowledge is demonstrated rather than asserted",
+            "theoretical or conceptual advancement, challenge, integration or genuinely novel application",
+            "methodological rigour, transparency, robustness, assumptions, sensitivity and reproducibility appropriate to the discipline",
+            "engagement with rival explanations, contradictory evidence, boundary conditions and limitations",
+            "complete cross-chapter alignment and a sustained argument leading to an original contribution to knowledge",
+            "clear separation of what is confirmed, inferred, proposed and newly contributed by the thesis",
+        ]
+        contribution = "Require a substantial, original and defensible contribution to knowledge, with clear theoretical, empirical or methodological significance to the field."
+        overlay = [
+            "Interrogate every originality claim and require the thesis to specify exactly what is new, how it was established and why it matters to the discipline.",
+            "Require doctoral robustness, engagement with alternatives and a contribution that extends beyond a new setting or sample.",
+        ]
+
+    chapter_checks = _chapter_review_checks(chapter) + overlay
+
+    return {
+        "degree_key": key,
+        "orientation": DEGREE_LEVEL_PROFILES[key].get("orientation", key),
+        "review_depth": depth,
+        "per_section_issue_ceiling_not_quota": _degree_issue_limit(academic_level, depth),
+        "independent_audit_material_finding_capacity": _degree_audit_max_findings(academic_level, depth),
+        "mandatory_dimensions": common + required,
+        "chapter_specific_mandatory_checks": chapter_checks,
+        "contribution_standard": contribution,
+        "coverage_rule": (
+            "Explicitly assess every mandatory dimension relevant to the supplied chapter. A dimension may be marked adequate, but it must not be silently skipped. "
+            "The finding capacity is not a quota: never invent a weakness, yet do not suppress distinct material defects merely to keep the report short."
+        ),
+    }
+
 def _is_doctoral_level(academic_level: Any) -> bool:
     value = normalised(str(academic_level or ""))
     return (
@@ -246,6 +441,80 @@ def _is_research_intensive_level(academic_level: Any) -> bool:
         or "research master" in value
         or "mphil" in value
     )
+
+
+def _use_research_intensive_route(
+    academic_level: Any, config: HybridAIConfig
+) -> bool:
+    return bool(
+        _is_doctoral_level(academic_level)
+        or (
+            _is_research_masters_level(academic_level)
+            and config.research_masters_deep_review
+        )
+    )
+
+
+def _degree_primary_output_tokens(academic_level: Any, depth: str, config: HybridAIConfig) -> int:
+    if depth == "light":
+        return config.light_max_output_tokens
+    if depth == "advanced":
+        return config.advanced_max_output_tokens
+    if not config.all_levels_degree_calibrated:
+        return (
+            config.research_masters_max_output_tokens
+            if _is_research_masters_level(academic_level) and config.research_masters_deep_review
+            else config.standard_max_output_tokens
+        )
+    key = _degree_key(academic_level)
+    return {
+        "bachelors": config.standard_max_output_tokens,
+        "non_research_masters": config.non_research_masters_max_output_tokens,
+        "research_masters": config.research_masters_max_output_tokens,
+        "professional_doctorate": config.professional_doctorate_max_output_tokens,
+        "phd": config.phd_max_output_tokens,
+    }[key]
+
+
+def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConfig) -> Tuple[str, str, int, ReviewStage]:
+    key = _degree_key(academic_level)
+    research_stage = (
+        ReviewStage.RESEARCH_INTENSIVE_AUDIT
+        if _use_research_intensive_route(academic_level, config)
+        else ReviewStage.FINAL_AUDIT
+    )
+    if depth == "advanced":
+        return (
+            config.openai_final_audit_model,
+            config.openai_final_audit_reasoning_effort,
+            max(config.advanced_audit_max_output_tokens, min(config.advanced_max_output_tokens, 8000)),
+            research_stage,
+        )
+    if not config.all_levels_degree_calibrated:
+        if depth == "light":
+            return config.openai_chapter_model, "low", config.light_audit_max_output_tokens, research_stage
+        if key == "research_masters" and config.research_masters_deep_review:
+            return config.openai_expert_model, config.research_masters_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.research_masters_audit_max_output_tokens), research_stage
+        return config.openai_chapter_model, "medium", config.standard_audit_max_output_tokens, research_stage
+
+    if depth == "light":
+        settings = {
+            "bachelors": (config.openai_chapter_model, "low", config.light_audit_max_output_tokens),
+            "non_research_masters": (config.openai_chapter_model, "medium", max(config.light_audit_max_output_tokens, 3200)),
+            "research_masters": (config.openai_expert_model, "medium", max(config.light_audit_max_output_tokens, 4200)),
+            "professional_doctorate": (config.openai_expert_model, "high", max(config.light_audit_max_output_tokens, 5000)),
+            "phd": (config.openai_expert_model, "high", max(config.light_audit_max_output_tokens, 5500)),
+        }
+    else:
+        settings = {
+            "bachelors": (config.openai_chapter_model, "medium", config.standard_audit_max_output_tokens),
+            "non_research_masters": (config.openai_chapter_model, config.non_research_masters_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.non_research_masters_audit_max_output_tokens)),
+            "research_masters": (config.openai_expert_model, config.research_masters_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.research_masters_audit_max_output_tokens)),
+            "professional_doctorate": (config.openai_expert_model, config.professional_doctorate_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.professional_doctorate_audit_max_output_tokens)),
+            "phd": (config.openai_expert_model, config.phd_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.phd_audit_max_output_tokens)),
+        }
+    model, effort, tokens = settings[key]
+    return model, effort, tokens, research_stage
 
 
 _EXPERT_SECTION_TERMS = (
@@ -613,6 +882,9 @@ def _batch_prompt(
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
     benchmark = _combined_benchmark(summary.get("academic_level"), depth)
+    degree_contract = _degree_specific_review_contract(
+        summary.get("academic_level"), summary.get("selected_chapter"), depth
+    )
     sections = []
     for section in batch:
         sections.append({
@@ -714,6 +986,7 @@ def _batch_prompt(
             "review_benchmark": benchmark["degree_standard"],
             "depth_expectation": benchmark["review_intensity_expectation"],
             "review_intensity": benchmark["review_intensity"],
+            "degree_specific_review_contract": degree_contract,
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -726,8 +999,14 @@ def _batch_prompt(
             "return_exactly_one_review_for_each_section_key": True,
             "section_assessment_required_even_when_no_issue_is_found": True,
             "strengths_should_be_reported_where_deserved": True,
-            "normal_issue_limit_per_section": profile["normal_issue_limit_per_section"],
+            "normal_issue_limit_per_section": _degree_issue_limit(
+                summary.get("academic_level"), depth
+            ),
+            "independent_audit_material_finding_capacity": _degree_audit_max_findings(
+                summary.get("academic_level"), depth
+            ),
             "degree_standard_must_not_change_with_depth": True,
+            "degree_specific_dimensions_must_be_explicitly_assessed": True,
         },
         "accuracy_contract": {
             "do_not_introduce_external_countries_or_locations": True,
@@ -771,7 +1050,8 @@ def _batch_prompt(
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
-            "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title."
+            "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. "
+            "Apply the degree_specific_review_contract operationally. For Research Master’s/MPhil work, do not stop after proofreading and broad structural comments: assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant."
         ),
         "sections": sections,
     }
@@ -792,6 +1072,9 @@ def _focused_section_recovery_prompt(
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
             "review_scope": summary.get("review_scope"),
+            "degree_specific_review_contract": _degree_specific_review_contract(
+                summary.get("academic_level"), summary.get("selected_chapter"), depth
+            ),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -865,6 +1148,9 @@ def _verification_prompt(
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
     benchmark = _combined_benchmark(summary.get("academic_level"), depth)
+    degree_contract = _degree_specific_review_contract(
+        summary.get("academic_level"), summary.get("selected_chapter"), depth
+    )
     proposals = []
     paragraphs: Dict[str, Dict[str, Any]] = {}
     for section_review in batch:
@@ -886,6 +1172,7 @@ def _verification_prompt(
             "declared_degree_label": benchmark["degree_label"],
             "review_benchmark": benchmark["degree_standard"],
             "depth_expectation": benchmark["review_intensity_expectation"],
+            "degree_specific_review_contract": degree_contract,
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -900,7 +1187,12 @@ def _verification_prompt(
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
-            "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references."
+            "Use the degree_specific_review_contract as a mandatory coverage map. For Research Master’s/MPhil work, independently test every relevant "
+            "dimension and add material missed issues even when the primary review did not propose them. In Chapter One this includes problem-gap evidence, "
+            "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
+            "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
+            "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
+            "Do not invent issues to reach a number, but do not compress distinct material defects into a single vague comment."
         ),
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -994,6 +1286,9 @@ def _compact_quality_audit_prompt(
             "declared_degree_label": benchmark["degree_label"],
             "review_benchmark": benchmark["degree_standard"],
             "review_intensity": benchmark["review_intensity"],
+            "degree_specific_review_contract": _degree_specific_review_contract(
+                summary.get("academic_level"), summary.get("selected_chapter"), depth
+            ),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -1486,16 +1781,14 @@ async def enrich_review_with_academic_ai(
         section["section_key"] = _section_key(section, index)
 
     provider = router
+    primary_tokens = _degree_primary_output_tokens(academic_level, depth, config)
     if depth == "light":
-        primary_tokens = config.light_max_output_tokens
         primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
         batch_size = config.light_section_batch_size
     elif depth == "standard":
-        primary_tokens = config.standard_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.section_batch_size
     else:
-        primary_tokens = config.advanced_max_output_tokens
         primary_system_prompt = ACADEMIC_REVIEW_SYSTEM_PROMPT
         batch_size = config.advanced_section_batch_size
 
@@ -1531,7 +1824,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8.2-public-comment-quality-gate",
+            "pipeline": "academic-review-v1.9.8.4-all-level-degree-depth",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -1618,6 +1911,11 @@ async def enrich_review_with_academic_ai(
                 "batched_academic_review",
                 primary_tokens,
                 track_primary_progress=True,
+                route_stage=(
+                    ReviewStage.RESEARCH_INTENSIVE_REVIEW
+                    if _use_research_intensive_route(academic_level, config)
+                    else None
+                ),
             )
             for batch in section_batches
         ],
@@ -1869,21 +2167,9 @@ async def enrich_review_with_academic_ai(
     # evidence-grounded fallback is used. This prevents an otherwise useful
     # review from being exported with an empty report and no Word comments.
     if all_primary:
-        if depth == "light":
-            audit_model = config.openai_chapter_model
-            audit_effort = "low"
-            audit_tokens = config.light_audit_max_output_tokens
-        elif depth == "standard":
-            audit_model = config.openai_chapter_model
-            audit_effort = "medium"
-            audit_tokens = config.standard_audit_max_output_tokens
-        else:
-            audit_model = config.openai_final_audit_model
-            audit_effort = config.openai_final_audit_reasoning_effort
-            audit_tokens = max(
-                config.advanced_audit_max_output_tokens,
-                min(config.advanced_max_output_tokens, 6800),
-            )
+        audit_model, audit_effort, audit_tokens, audit_stage = _degree_audit_settings(
+            academic_level, depth, config
+        )
 
         verification_batches: List[List[Dict[str, Any]]] = []
         pending: List[Dict[str, Any]] = []
@@ -1936,7 +2222,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8.2-placeholder-safe",
+                "pipeline": "academic-comment-audit-v1.9.8.4-all-level-depth",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -1945,7 +2231,7 @@ async def enrich_review_with_academic_ai(
                 "model": audit_model,
                 "effort": audit_effort,
                 "routing": provider.route_signature(
-                    stage=ReviewStage.FINAL_AUDIT,
+                    stage=audit_stage,
                     review_depth=depth,
                     requested_model=audit_model,
                     requested_effort=audit_effort,
@@ -1993,7 +2279,7 @@ async def enrich_review_with_academic_ai(
                         if depth in {"light", "standard"}
                         else None
                     ),
-                    stage=ReviewStage.FINAL_AUDIT,
+                    stage=audit_stage,
                     review_depth=depth,
                     allow_escalation=(depth == "advanced"),
                 )
@@ -2130,7 +2416,11 @@ async def enrich_review_with_academic_ai(
         issue for section_review in section_reviews
         for issue in section_review["issues"]
     ]
-    for deterministic in deterministic_expert_issues(current):
+    for deterministic in deterministic_expert_issues(
+        current,
+        academic_level=academic_level,
+        research_approach=(review.get("summary") or {}).get("research_approach"),
+    ):
         valid = _valid_issue(deterministic, paragraph_index, context_lock)
         if valid:
             raw_issues.append(valid)
@@ -2312,6 +2602,11 @@ async def enrich_review_with_academic_ai(
         "review_benchmark": benchmark["degree_standard"],
         "declared_degree_standard": benchmark["degree_label"],
         "review_intensity": benchmark["review_intensity"],
+        "degree_specific_review_contract": _degree_specific_review_contract(
+            academic_level, summary.get("selected_chapter"), depth
+        ),
+        "degree_calibrated_issue_ceiling": _degree_issue_limit(academic_level, depth),
+        "degree_calibrated_audit_capacity": _degree_audit_max_findings(academic_level, depth),
         "academic_review_score": score, "overall_score": overall,
         "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
         "academic_review_complete": not incomplete,

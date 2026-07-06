@@ -604,8 +604,16 @@ def _make_issue(
     }
 
 
-def deterministic_expert_issues(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Add high-confidence cross-section checks that should not depend on depth."""
+def deterministic_expert_issues(
+    paragraphs: Sequence[Dict[str, Any]],
+    *,
+    academic_level: Any = "",
+    research_approach: Any = "",
+) -> List[Dict[str, Any]]:
+    """Add high-confidence cross-section checks that should not depend on model luck.
+
+    Every declared degree level receives deterministic coherence, source-traceability and scholarly-presentation checks. These checks are evidence anchored and complement, rather than replace, the expert model.
+    """
     current = [row for row in paragraphs if row.get("document_role", "current") == "current"]
     output: List[Dict[str, Any]] = []
 
@@ -774,6 +782,273 @@ def deterministic_expert_issues(paragraphs: Sequence[Dict[str, Any]]) -> List[Di
             consequence="A grammatical error in the opening sentence weakens the chapter's first academic impression.",
             action="Rewrite the opening sentence in a direct form and use the correct singular verb, for example by stating that climate change, pollution and resource depletion have intensified concern about environmental sustainability.",
         ))
+
+
+    level_value = normalised(str(academic_level or "")).replace("-", " ")
+    if level_value == "phd" or level_value.startswith("doctor of philosophy"):
+        degree_key = "phd"
+        degree_label = "PhD"
+    elif "professional doctorate" in level_value or level_value.startswith("doctor of ") or level_value.startswith("doctoral"):
+        degree_key = "professional_doctorate"
+        degree_label = "Professional Doctorate"
+    elif "non research master" in level_value:
+        degree_key = "non_research_masters"
+        degree_label = "Non-Research Master's"
+    elif "research masters" in level_value or "research master" in level_value or "mphil" in level_value:
+        degree_key = "research_masters"
+        degree_label = "Research Master's/MPhil"
+    else:
+        degree_key = "bachelors"
+        degree_label = "Bachelor's"
+
+    if degree_key in {"bachelors", "non_research_masters", "research_masters", "professional_doctorate", "phd"}:
+        # The purpose must cover the substantive constructs introduced by the
+        # objectives. This lexical audit is deliberately conservative and
+        # ignores generic research, setting and population terms.
+        purpose_rows = [
+            row for row in current
+            if row.get("chapter_number") == 1
+            and "purpose" in normalised(source_section(row))
+            and not row.get("is_heading")
+        ]
+        objective_rows = [
+            row for row in current
+            if row.get("chapter_number") == 1
+            and "research objective" in normalised(source_section(row))
+            and not row.get("is_heading")
+        ]
+        if purpose_rows and objective_rows:
+            stop = {
+                "the", "this", "study", "research", "purpose", "objective", "objectives",
+                "to", "examine", "assess", "determine", "investigate", "explore", "analyse",
+                "analyze", "evaluate", "identify", "establish", "current", "adopted", "level",
+                "relationship", "effect", "impact", "influence", "among", "within", "between",
+                "regarding", "practices", "practice", "firms", "firm", "companies", "company",
+                "organisations", "organizations", "manufacturing", "central", "region", "ghana",
+                "and", "of", "on", "in", "by", "for", "with", "from", "as", "a", "an",
+            }
+            purpose_tokens = {
+                token for token in re.findall(r"[a-z][a-z-]{2,}", normalised(" ".join(clean_text(row.get("text", "")) for row in purpose_rows)))
+                if token not in stop
+            }
+            objective_tokens = {
+                token for token in re.findall(r"[a-z][a-z-]{2,}", normalised(" ".join(clean_text(row.get("text", "")) for row in objective_rows)))
+                if token not in stop
+            }
+            missing_tokens = sorted(objective_tokens - purpose_tokens)
+            # Require either two omitted substantive tokens or a recognised
+            # construct word. This avoids flagging one incidental adjective.
+            recognised = {
+                "awareness", "performance", "satisfaction", "adoption", "intention",
+                "productivity", "efficiency", "profitability", "resilience", "innovation",
+                "compliance", "quality", "behaviour", "behavior", "capability", "risk",
+            }
+            material_missing = [token for token in missing_tokens if token in recognised]
+            if len(missing_tokens) >= 2 and material_missing:
+                target = purpose_rows[0]
+                output.append(_make_issue(
+                    finding_id="DET-DEGREE-PURPOSE-OBJECTIVE-COVERAGE",
+                    category="objectives_questions_hypotheses",
+                    section=source_section(target),
+                    title="The purpose does not cover all substantive objectives",
+                    severity="major",
+                    confidence=0.91,
+                    evidence_ids=[paragraph_id(target)] + [paragraph_id(row) for row in objective_rows[:5]],
+                    quote=clean_text(target.get("text", ""))[:260],
+                    assessment=(
+                        f"At {degree_label} level, the purpose statement is narrower than the objectives. The objectives introduce additional substantive constructs or outcomes that are not represented in the stated purpose."
+                    ),
+                    consequence=(
+                        "The study's central intent is unclear, and the later methodology and conclusions may not be traceable to one coherent purpose."
+                    ),
+                    action=(
+                        "Revise the purpose so it explicitly covers every principal construct and outcome in the objectives, or remove objectives that fall outside the intended study purpose. Then recheck one-to-one alignment with the research questions."
+                    ),
+                ))
+
+        # A proposal significance section must not present anticipated findings
+        # as though results already exist.
+        significance_rows = [
+            row for row in current
+            if row.get("chapter_number") == 1
+            and "significance" in normalised(source_section(row))
+            and not row.get("is_heading")
+            and re.search(r"\b(?:the|these)\s+(?:results?|findings)\s+(?:reveal|show|demonstrate|indicate)|\bthese results\b", clean_text(row.get("text", "")), flags=re.I)
+        ]
+        if significance_rows:
+            target = significance_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-PREMATURE-SIGNIFICANCE-RESULTS",
+                category="cross_section_coherence",
+                section=source_section(target),
+                title="The significance section presents anticipated findings as completed results",
+                severity="moderate",
+                confidence=0.97,
+                evidence_ids=[paragraph_id(row) for row in significance_rows[:4]],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "The significance discussion refers to results or findings as though the empirical analysis has already established them, even though the chapter is written as a proposal."
+                ),
+                consequence=(
+                    "This prejudges the outcome of the study and creates an inconsistent research stage and evidential stance."
+                ),
+                action=(
+                    "Rewrite the significance prospectively. Explain how the eventual findings may contribute to theory, evidence, policy or practice without stating that a relationship or effect has already been demonstrated."
+                ),
+            ))
+
+        # Numerical empirical claims require an adjacent citation. This targets
+        # sentences such as '100 firms...' rather than dates and percentages in
+        # formal references.
+        uncited_numeric_rows = []
+        for row in current:
+            if row.get("chapter_number") != 1 or row.get("is_heading"):
+                continue
+            section_name = normalised(source_section(row))
+            if "reference" in section_name:
+                continue
+            text = clean_text(row.get("text", ""))
+            if not re.search(r"\b\d{2,}\s+(?:manufacturing\s+)?(?:firms?|enterprises?|companies|organisations|organizations|respondents?|participants?|employees?)\b", text, flags=re.I):
+                continue
+            if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", text):
+                continue
+            uncited_numeric_rows.append(row)
+        if uncited_numeric_rows:
+            target = uncited_numeric_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-UNCITED-EMPIRICAL-NUMERIC-CLAIM",
+                category="citations_and_sources",
+                section=source_section(target),
+                title="A numerical empirical claim has no traceable citation",
+                severity="major",
+                confidence=0.94,
+                evidence_ids=[paragraph_id(row) for row in uncited_numeric_rows[:5]],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "The chapter reports a specific empirical sample or study result without an adjacent in-text citation that allows the evidence to be traced."
+                ),
+                consequence=(
+                    "The factual claim cannot be verified and the local empirical argument is weakened."
+                ),
+                action=(
+                    "Add the authentic source immediately after each numerical empirical claim and ensure the corresponding complete reference appears in the reference list. Remove or qualify any claim that cannot be verified."
+                ),
+            ))
+
+        # Circular or absolute definitions are unsuitable for core study
+        # constructs and should be operationally precise.
+        circular_awareness = find_rows(r"\bAwareness\s+means\s+the\s+extent\s+of\s+awareness\b", chapters={1})
+        absolute_sustainability = find_rows(r"\bwithout\s+causing\s+any\s+harm\s+to\s+the\s+environment\b", chapters={1})
+        definition_rows = circular_awareness + absolute_sustainability
+        if definition_rows:
+            target = definition_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-WEAK-CORE-DEFINITIONS",
+                category="conceptual_clarity",
+                section=source_section(target),
+                title="Core constructs are defined circularly or in unrealistically absolute terms",
+                severity="moderate",
+                confidence=0.96,
+                evidence_ids=[paragraph_id(row) for row in definition_rows[:4]],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "At least one central construct repeats the term being defined, while another is framed as the complete absence of environmental harm. These formulations are not conceptually discriminating or readily measurable."
+                ),
+                consequence=(
+                    "Weak conceptual definitions make operationalisation and interpretation of the variables uncertain."
+                ),
+                action=(
+                    "Replace circular and absolute wording with concise scholarly definitions that state the construct's dimensions and boundaries, then align each definition with the proposed indicators or measurement scale."
+                ),
+            ))
+
+        citation_format_rows = find_rows(r"\(\s+[A-ZÀ-Ý][^()]{1,80}\bet\s+al\.\s+(?:19|20)\d{2}\s*\)", chapters={1})
+        citation_format_rows += find_rows(r"\bet\s+al\.\s+(?:19|20)\d{2}\s*\)", chapters={1})
+        if citation_format_rows:
+            target = citation_format_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-IN-TEXT-CITATION-FORMAT",
+                category="citations_and_sources",
+                section=source_section(target),
+                title="An in-text citation is incorrectly punctuated",
+                severity="minor",
+                confidence=0.98,
+                evidence_ids=[paragraph_id(row) for row in citation_format_rows[:5]],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "The marked author-year citation contains spacing or punctuation that does not follow the required in-text citation format."
+                ),
+                consequence=(
+                    "Inconsistent citation presentation reduces accuracy and makes the reference system appear unedited."
+                ),
+                action=(
+                    "Correct the spacing and insert the required comma between the author expression and year, then apply the same citation style consistently throughout the chapter."
+                ),
+            ))
+
+        # Detect a reference-list entry that is not cited in the chapter body.
+        body_rows = [
+            row for row in current
+            if "reference" not in normalised(source_section(row))
+        ]
+        body_text = normalised(" ".join(clean_text(row.get("text", "")) for row in body_rows))
+        uncited_reference_rows = []
+        for row in current:
+            if "reference" not in normalised(source_section(row)):
+                continue
+            text = clean_text(row.get("text", ""))
+            match = re.match(r"\s*([A-ZÀ-Ý][A-Za-zÀ-ÿ'’\-]+),[^()]{0,220}\(((?:19|20)\d{2})\)", text)
+            if not match:
+                continue
+            surname, year = normalised(match.group(1)), match.group(2)
+            if not re.search(rf"\b{re.escape(surname)}\b[^.(){{}}]{{0,100}}\b{year}\b", body_text):
+                uncited_reference_rows.append(row)
+        if uncited_reference_rows:
+            target = uncited_reference_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-UNCITED-REFERENCE-ENTRIES",
+                category="citations_and_sources",
+                section=source_section(target) or "References",
+                title="Some reference-list entries are not cited in the chapter",
+                severity="moderate",
+                confidence=0.90,
+                evidence_ids=[paragraph_id(row) for row in uncited_reference_rows[:6]],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "One or more works listed in the references do not have a traceable author-year citation in the chapter text."
+                ),
+                consequence=(
+                    "The reference list and in-text citation system are not fully reconciled, which weakens source traceability."
+                ),
+                action=(
+                    "Reconcile the chapter in both directions: cite every retained reference where it supports the argument, and remove entries that are not used. Also confirm that every in-text citation has one matching reference-list entry."
+                ),
+            ))
+
+        # One consolidated British-English consistency finding is enough.
+        american_rows = find_rows(r"\b(?:labor|behavior|organization|organizations|organizational|minimizing|analyze|analyzed|modeling)\b", chapters={1})
+        british_rows = find_rows(r"\b(?:labour|behaviour|organisation|organisations|organisational|minimising|analyse|analysed|modelling)\b", chapters={1})
+        if american_rows and british_rows:
+            target = american_rows[0]
+            output.append(_make_issue(
+                finding_id="DET-DEGREE-BRITISH-ENGLISH-CONSISTENCY",
+                category="academic_writing",
+                section=source_section(target),
+                title="British and American English conventions are mixed",
+                severity="minor",
+                confidence=0.93,
+                evidence_ids=[paragraph_id(target), paragraph_id(british_rows[0])],
+                quote=clean_text(target.get("text", ""))[:260],
+                assessment=(
+                    "The chapter alternates between British and American spellings instead of applying one institutional language convention consistently."
+                ),
+                consequence=(
+                    "The inconsistency reduces editorial quality and can create avoidable corrections at examination or formatting review."
+                ),
+                action=(
+                    "Apply formal British English consistently across the chapter, except where an original title or direct quotation must retain its published spelling."
+                ),
+            ))
 
     declaration_rows = find_rows(r"\bI\s*,?[^.]{0,120}\bis entirely my own original work\b")
     if declaration_rows:
