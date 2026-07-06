@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.8.6-final-depth-placeholder-safe"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.8.7-section-coverage-comments"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     assert len(list(after.comments)) == 2
