@@ -105,14 +105,23 @@ function updateDepthGuidance() {
   }
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
   const levelLabel = academicLevelSelect.options[academicLevelSelect.selectedIndex]?.text || "the selected academic level";
+  const level = academicLevelSelect.value;
   lightReviewNote.classList.toggle("hidden", depth !== "light");
+  const levelFocus = {
+    "Bachelors": "problem clarity, basic literature integration, correct methods, accurate analysis and a modest explicit contribution",
+    "Non-Research Masters": "an advanced applied problem, integrated literature, justified professional methods, credible interpretation and feasible recommendations",
+    "Research Masters / MPhil": "critical synthesis, theory, construct roles, problem-gap evidence, alignment, methodological defensibility, citation integrity and a research contribution",
+    "Professional Doctorate": "doctoral scholarship, a consequential practice or policy problem, methodological robustness, reflexivity, implementation and an original contribution to professional practice",
+    "PhD": "authoritative scholarship, theoretical and methodological rigour, robustness, rival explanations and an original contribution to knowledge",
+  }[level] || "the requirements of the declared programme";
   if (depth === "light") {
-    reviewDepthHelp.textContent = `Light Review gives a concise review of every section and subsection at the ${levelLabel} standard. It reports only the most material issues.`;
+    reviewDepthHelp.textContent = `Light Review remains at the ${levelLabel} standard and checks ${levelFocus}, but reports only the most material issues.`;
   } else if (depth === "advanced") {
-    reviewDepthHelp.textContent = `Advanced Review applies an intensive review and independent accuracy audit at the ${levelLabel} standard. It does not impose a higher degree standard.`;
+    reviewDepthHelp.textContent = `Advanced Review applies the full ${levelLabel} benchmark, including ${levelFocus}, with expanded coverage and an independent expert audit.`;
   } else {
-    reviewDepthHelp.textContent = `Standard Review gives a full section-by-section review at the ${levelLabel} standard, with an independent comment-accuracy check.`;
+    reviewDepthHelp.textContent = `Standard Review applies the full ${levelLabel} benchmark, including ${levelFocus}, with a degree-calibrated independent accuracy audit.`;
   }
+
 }
 academicLevelSelect.addEventListener("change", () => {
   updateDepthGuidance();
