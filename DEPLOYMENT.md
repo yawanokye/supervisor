@@ -533,3 +533,11 @@ Deploy the v1.9.8.7 ZIP as the complete repository. No database migration and no
 ## v1.9.8.8 deployment note
 
 No database migration or environment-variable change is required. Deploy the complete v1.9.8.8 repository and restart both the Web Service and Worker. Submit new review jobs after deployment so the improved section-comment quality logic is applied.
+
+## Deploying v1.9.8.9 Expert DeepSeek V4 Pro mode
+
+1. Deploy the full v1.9.8.9 repository.
+2. Import `supervisor-v1.9.8.9-COMPLETE.env` or add the variables in `ENVIRONMENT_CHANGES_v1.9.8.9.md`.
+3. Ensure `DEEPSEEK_API_KEY` is valid and `VPROF_ENABLE_DEEPSEEK=true`.
+4. For the Pro-only test, keep `VPROF_ENABLE_OPENAI=false` and submit the MPhil document as a new Standard Review.
+5. Do not resume older checkpoints because they contain mixed-route and earlier comment-formatting state.

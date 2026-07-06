@@ -567,3 +567,13 @@
 - Removed weak phrases such as "reviewed against the selected academic level", "no major issues were found" and similar mechanical wording from native Word comments.
 - Kept issue-specific comments anchored to the exact text while making section-level comments more developmental and degree-aware.
 - Added tests to ensure section comments are specific, natural and not generic coverage notes.
+
+## v1.9.8.9 - Expert DeepSeek V4 Pro supervisory route
+
+- Added `VPROF_EXPERT_PROVIDER_MODE=deepseek_v4_pro_only` and `VPROF_FORCE_DEEPSEEK_V4_PRO=true`.
+- Routes supervisory review stages through DeepSeek V4 Pro only when expert mode is enabled.
+- Prevents fallback to Flash, OpenAI mini or OpenAI expert in expert DeepSeek-only mode.
+- Removes student-facing provider/recovery/manual-confirmation wording from section fallback comments.
+- Suppresses document-level recovery prefixes in exported native Word comments.
+- Raises recommended MPhil Standard finding floor to 22 for weak chapters.
+- Increases Research Master's/MPhil output allowance for expert Pro route.

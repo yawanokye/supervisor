@@ -397,3 +397,9 @@ Every detected section and subsection now receives a native Word section-review 
 ### v1.9.8.8 comment-quality behaviour
 
 The native Word comment exporter now treats section-coverage comments as supervisory feedback, not proof-of-review stamps. When a document section has no issue-specific finding, the exporter writes a section-specific note explaining what that section should achieve and what the student should check. For MPhil Standard review, this keeps coverage visible without weakening the academic tone of the feedback.
+
+## v1.9.8.9 Expert DeepSeek V4 Pro mode
+
+Set `VPROF_EXPERT_PROVIDER_MODE=deepseek_v4_pro_only` and `VPROF_FORCE_DEEPSEEK_V4_PRO=true` to use DeepSeek V4 Pro as the sole supervisory review model. This is recommended when MPhil Standard review requires deeper, more expert comments and the mixed Flash/OpenAI route produces shallow or recovery-note comments.
+
+In this mode, the app does not silently downgrade to Flash or OpenAI mini. If DeepSeek Pro fails, the job should be retried after checking provider access and logs.
