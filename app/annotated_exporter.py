@@ -23,9 +23,28 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.5-natural-developmental-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.8.5-natural-comments-placeholder-safe"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+# Unresolved drafting placeholders inside the student's own document must always
+# receive a native comment, even if the AI reviewer or the independent audit
+# misses them. This is deliberately handled at export time because the exporter
+# has access to the final Word paragraph/run map and can anchor the comment
+# exactly on the placeholder text.
+_BODY_PLACEHOLDER_RE = re.compile(
+    r"\[(?:\s*(?:insert|add|specify|provide|complete|fill\s+in|replace|enter|start|end|month|year|date|x\b)[^\]\r\n]{0,120})\]",
+    flags=re.I,
+)
+
+_NATURAL_LABEL_RE = re.compile(
+    r"\b(?:Issue|Why this matters|Revise by|Guidance|Academic implication|Academic consequence)\s*:\s*",
+    flags=re.I,
+)
+
+
+def _strip_visible_labels(value: str) -> str:
+    return re.sub(r"\s{2,}", " ", _NATURAL_LABEL_RE.sub("", clean_text(value))).strip()
 
 
 def _set_run_colour(run_element, colour: str) -> None:
@@ -101,7 +120,7 @@ def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str =
 
 
 def _sanitise_guidance(value: str) -> str:
-    text = clean_text(value)
+    text = _strip_visible_labels(value)
     patterns = [
         r"^(?:retain|keep) this finding and\s+",
         r"^require (?:the student to )?",
@@ -160,10 +179,12 @@ def _comment_body(row: Dict[str, Any]) -> str:
         parts.append(assessment.rstrip(" .") + ".")
     if action:
         action_text = action.rstrip(" .")
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify)\b", action_text, flags=re.I):
+        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate)\b", action_text, flags=re.I):
             parts.append(action_text[0].upper() + action_text[1:] + ".")
-        else:
+        elif re.match(r"^(?:using|undertaking|applying|providing|linking|situating|differentiating|checking)\b", action_text, flags=re.I):
             parts.append("Revise the passage by " + action_text[0].lower() + action_text[1:] + ".")
+        else:
+            parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
     elif assessment:
         parts.append("Revise the marked passage so the academic point is clear, properly supported and aligned with the section purpose.")
     if example:
@@ -173,42 +194,60 @@ def _comment_body(row: Dict[str, Any]) -> str:
     body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
     # Manual-confirmation and provider-failure status belongs in the internal
     # audit trail, never in a student's Word comment. Student-facing comments
-    # remain developmental, but avoid repetitive visible labels such as
-    # "Issue", "Why this matters", "Revise by" or "Guidance".
-    body = re.sub(r"\b(?:Issue|Why this matters|Revise by|Guidance)\s*:\s*", "", body)
+    # remain developmental but must read as natural supervision, not as a
+    # labelled template.
+    body = _strip_visible_labels(body)
     return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
 
 def _format_comment_group(comments: Iterable[str]) -> str:
     """Format text for the Word Review comment pane, not the document body."""
-    unique = []
+    unique: List[str] = []
     seen = set()
     for value in comments:
-        text = public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True).strip("[] ").rstrip(" ;.")
+        text = _strip_visible_labels(
+            public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+        ).strip("[] ").rstrip(" ;.")
         text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         key = normalised(text)
         if not text or not key:
             continue
         if key in seen:
             continue
-        # Avoid exporting several variants of the same guidance as a numbered bundle.
-        if any(_comment_similarity(key, existing_key) >= 0.52 for existing_key in seen):
+        # Avoid exporting several variants of the same guidance as a bundled comment.
+        if any(_comment_similarity(key, existing_key) >= 0.50 for existing_key in seen):
             continue
         seen.add(key)
-        shortened = _shorten_comment(text, comment_max_chars() if not unique else 520)
+        shortened = _shorten_comment(text, comment_max_chars() if not unique else 360)
         if not shortened:
             continue
-        unique.append(shortened)
-        if len(unique) >= 3:
+        unique.append(shortened.rstrip(" .") + ".")
+        if len(unique) >= 2:
             break
     if not unique:
         return ""
     if len(unique) == 1:
         return unique[0]
-    return "\n\nAlso consider: ".join(unique)
+    combined = unique[0] + " A related concern is that " + unique[1][0].lower() + unique[1][1:]
+    return _shorten_comment(combined, comment_max_chars())
 
 
 def _comment_similarity(left_key: str, right_key: str) -> float:
+    topical_clusters = [
+        ("purpose", "objectiv", "align"),
+        ("purpose", "narrow", "objectiv"),
+        ("significance", "result", "proposal"),
+        ("definition", "construct", "circular"),
+        ("limitation", "tense", "proposal"),
+        ("causal", "design", "cross"),
+        ("problem", "determinant", "objective"),
+        ("theor", "framework", "background"),
+        ("gap", "context", "problem"),
+        ("citation", "punctuat", "format"),
+    ]
+    for cluster in topical_clusters:
+        if all(token in left_key for token in cluster) and all(token in right_key for token in cluster):
+            return 0.92
     left_tokens = {token for token in re.findall(r"[a-z0-9]+", left_key) if len(token) >= 4}
     right_tokens = {token for token in re.findall(r"[a-z0-9]+", right_key) if len(token) >= 4}
     token_score = (len(left_tokens & right_tokens) / len(left_tokens | right_tokens)) if left_tokens and right_tokens else 0.0
@@ -588,6 +627,50 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
         )
     return sorted(evidence, key=rank)
 
+
+def _placeholder_finding_rows(source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Create deterministic review rows for unresolved bracketed prompts.
+
+    The main review engine also checks for placeholders, but export-time
+    detection prevents a missed or filtered finding from leaving obvious
+    author placeholders uncommented in the final DOCX.
+    """
+    rows: List[Dict[str, Any]] = []
+    seen: set[Tuple[int, str]] = set()
+    for paragraph_number, locator in sorted(source_map.items()):
+        text = ""
+        if locator.get("kind") == "paragraph" and locator.get("paragraph") is not None:
+            text = clean_text(locator["paragraph"].text)
+        elif locator.get("kind") == "table_row":
+            text = clean_text(" ".join(clean_text(p.text) for p in locator.get("cell_paragraphs") or []))
+        if not text:
+            continue
+        for match in _BODY_PLACEHOLDER_RE.finditer(text):
+            placeholder = clean_text(match.group(0))
+            key = (paragraph_number, normalised(placeholder))
+            if not placeholder or key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "status": STATUS_MISSING,
+                "annotation_eligible": True,
+                "category": "presentation",
+                "severity": "major",
+                "confidence": 0.99,
+                "reference_label": "Delimitation of the Study" if "date" in normalised(text) or "time scope" in normalised(text) else "Drafting placeholder",
+                "item": "Unresolved drafting placeholder remains in the chapter",
+                "comment": "The marked bracketed text is still a drafting prompt rather than final study information. This leaves the chapter incomplete and weakens the professional readiness of the submission.",
+                "required_action": "Replace the placeholder with the correct verified study detail and check the full document for any remaining bracketed prompts before resubmission.",
+                "illustrative_guidance": "state the actual data-collection period once it has been confirmed, instead of leaving a prompt in the text",
+                "problematic_quote": placeholder,
+                "evidence": [{
+                    "document_role": "current",
+                    "paragraph": paragraph_number,
+                    "text": text,
+                }],
+            })
+    return rows
+
 def native_comment_count(docx_bytes: bytes) -> int:
     """Return the number of native Word comments in an exported DOCX."""
     try:
@@ -619,6 +702,7 @@ def build_annotated_docx(
         list(review.get("academic_findings", []))
         + list(review.get("alignment_results", []))
         + list(review.get("revision_results", []))
+        + _placeholder_finding_rows(source_map)
     )
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
