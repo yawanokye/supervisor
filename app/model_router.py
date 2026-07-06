@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -125,6 +126,32 @@ class CostAwareAIProvider:
         except ValueError:
             return RoutingProfile.BALANCED
 
+    def _deepseek_v4_pro_only_mode(self) -> bool:
+        """Return True when expert review should stay on DeepSeek V4 Pro.
+
+        This mode is intended for users who prefer one strong DeepSeek Pro
+        expert route rather than mixing Flash, OpenAI mini and OpenAI expert
+        calls. It is especially useful for Research Master's/MPhil standard
+        review where a cheap first pass produced too few or too shallow
+        comments. The route is still schema-bound and keeps the existing
+        deterministic quality gates.
+        """
+        raw = os.getenv("VPROF_EXPERT_PROVIDER_MODE", "").strip().lower()
+        flag = os.getenv("VPROF_FORCE_DEEPSEEK_V4_PRO", "false").strip().lower()
+        return raw in {
+            "deepseek_v4_pro_only",
+            "deepseek_pro_only",
+            "v4_pro_only",
+            "deepseek-only",
+            "deepseek_only",
+        } or flag in {"1", "true", "yes", "on"}
+
+    def _stage_allows_deepseek_pro_only(self, stage: ReviewStage) -> bool:
+        # Keep external examination separately governed unless explicitly
+        # requested in a future release. The user's current concern is
+        # supervisory review quality for MPhil Standard review.
+        return stage is not ReviewStage.EXTERNAL_EXAMINATION
+
     def _enabled(self, target: Optional[RouteTarget]) -> bool:
         if target is None:
             return False
@@ -210,6 +237,18 @@ class CostAwareAIProvider:
             requested_model or config.openai_chapter_model,
             requested_effort or config.openai_chapter_reasoning_effort,
         )
+
+        if self._deepseek_v4_pro_only_mode() and self._stage_allows_deepseek_pro_only(stage_value):
+            # One expert-class DeepSeek V4 Pro route for every supervisory
+            # review stage. Do not fall back to Flash or OpenAI in this mode;
+            # a provider failure should be visible so the user can retry rather
+            # than receiving a lower-quality mixed-route output.
+            primary, fallback, escalation = self._normalise_targets(
+                ds_quality,
+                None,
+                None,
+            )
+            return RoutePlan(stage_value, profile, primary, fallback, escalation, False)
 
         cheap = {
             ReviewStage.DOCUMENT_TRIAGE,

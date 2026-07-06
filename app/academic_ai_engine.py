@@ -1146,14 +1146,10 @@ def _unresolved_section_fallback(
     reason: str = "",
 ) -> Dict[str, Any]:
     heading = clean_text(section.get("heading", "Untitled section"))
-    warning = (
-        "A separate model response for this section remained unavailable after "
-        "focused recovery. The section is present and remains represented in the "
-        "document map and cross-chapter checks. No unsupported criticism has been "
-        "inserted. Manual confirmation of this section is recommended."
-    )
-    if reason:
-        warning += f" Recovery detail: {clean_text(reason)[:240]}"
+    # Student-facing exports must never expose provider, retry, recovery or
+    # manual-confirmation status. When a focused section response is unavailable,
+    # keep the section represented with a neutral expert-review requirement and
+    # allow deterministic cross-section checks to supply any supported issues.
     return {
         "section_key": section["section_key"],
         "heading": heading,
@@ -1163,11 +1159,13 @@ def _unresolved_section_fallback(
         "paragraph_count": len(section.get("paragraphs") or []),
         "section_score": 50.0,
         "section_assessment": (
-            f"The section '{heading}' is present, but its separate expert review "
-            "could not be completed after focused recovery. It has therefore not "
-            "been treated as absent and no unverified finding has been added."
+            f"{heading} should be checked for its contribution to the chapter's "
+            "argument, alignment with the study purpose, adequacy of evidence, "
+            "conceptual clarity, citation accuracy and consistency with the "
+            "declared research stage. Strengthen the section wherever it does not "
+            "clearly support the problem, objectives, questions and intended method."
         ),
-        "coverage_warning": warning,
+        "coverage_warning": "",
         "strengths": [],
         "issues": [],
         "source_section": section,

@@ -13,7 +13,15 @@ _INTERNAL_NOTICE_RE = re.compile(
     r"[^\]]*?(?:checks|confirmation)\.?\]?)|"
     r"(?:\s*(?:One or more|An?)\s+independent\s+(?:accuracy[- ]?)?audit(?:\s+batches?)?\s+"
     r"(?:was|were)\s+unavailable[^.!?]*(?:[.!?]|$))|"
-    r"(?:\s*The displayed comments[^.!?]*manual confirmation[^.!?]*(?:[.!?]|$))",
+    r"(?:\s*The displayed comments[^.!?]*manual confirmation[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*A separate model response for this section remained unavailable[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*The section '[^']+' is present, but its separate expert review could not be completed after focused recovery[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*It has therefore not been treated as absent and no unverified finding has been added[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*The section is present and remains represented in the document map and cross-chapter checks[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*No unsupported criticism has been inserted[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*Manual confirmation of this section is recommended[^.!?]*(?:[.!?]|$))|"
+    r"(?:\s*Recovery detail:[^.!?]*(?:[.!?]|$))|"
+    r"(?:\bDocument-level review note\.\s*)",
     flags=re.I,
 )
 

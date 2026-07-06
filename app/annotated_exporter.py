@@ -369,6 +369,13 @@ def _is_weak_section_assessment(value: str) -> bool:
 
 def _polish_section_assessment(value: str) -> str:
     text = _strip_visible_labels(value)
+    text = re.sub(r"\bDocument-level review note\.\s*", "", text, flags=re.I)
+    text = re.sub(r"\bA separate model response for this section remained unavailable[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"\bThe section '[^']+' is present, but its separate expert review could not be completed after focused recovery[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"\bIt has therefore not been treated as absent and no unverified finding has been added[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"\bNo unsupported criticism has been inserted[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"\bManual confirmation of this section is recommended[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"\bRecovery detail:[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
     text = re.sub(r"\bThis section (?:has been|was) reviewed(?: against [^.]+)?\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bIt appears adequate\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bNo major issue(?:s)? (?:was|were) found\.?\s*", "", text, flags=re.I)
@@ -845,8 +852,37 @@ def _first_native_anchor(document) -> Optional[Paragraph]:
 def _attach_document_level_comments(
     document, comments: List[str], *, author: str, initials: str
 ) -> None:
-    """Keep unplaced findings in the Review pane without changing body text."""
-    unique = list(dict.fromkeys(clean_text(value) for value in comments if clean_text(value)))
+    """Keep unplaced findings in the Review pane without changing body text.
+
+    Public comments must not expose provider recovery, fallback, retry or
+    manual-confirmation messages. Unplaced comments are therefore exported as
+    polished whole-chapter guidance without the mechanical "Document-level
+    review note" prefix.
+    """
+    cleaned: List[str] = []
+    for value in comments:
+        text = public_text(
+            value,
+            limit=comment_max_chars(),
+            reject_placeholders=True,
+            reject_incomplete=True,
+        )
+        text = re.sub(r"^Document-level review note\.\s*", "", text, flags=re.I).strip()
+        low = normalised(text)
+        if not text:
+            continue
+        if any(token in low for token in (
+            "focused recovery",
+            "separate expert review",
+            "separate model response",
+            "manual confirmation",
+            "provider fallback",
+            "independent audit",
+            "recovery detail",
+        )):
+            continue
+        cleaned.append(text)
+    unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
     anchor = _first_native_anchor(document)
@@ -856,9 +892,8 @@ def _attach_document_level_comments(
         )
     for start in range(0, len(unique), 4):
         batch = unique[start:start + 4]
-        prefixed = [f"Document-level review note. {value}" for value in batch]
         if not _comment_on_paragraph(
-            document, anchor, prefixed, author=author, initials=initials
+            document, anchor, batch, author=author, initials=initials
         ):
             raise RuntimeError("A native Word comment could not be anchored.")
 
