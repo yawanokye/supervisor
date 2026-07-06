@@ -60,8 +60,9 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    DeepSeek fields remain only for backwards compatibility with dormant
-    modules and are not used by the active supervisory-review pipeline.
+    VProfessor v1.9.8 routes inexpensive first-pass work through DeepSeek and
+    selectively escalates uncertain or high-risk findings to OpenAI. Existing
+    strict schemas, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -130,6 +131,17 @@ class HybridAIConfig:
     structured_output_retries: int
     advanced_quality_control: bool
 
+    # v1.9.8 cost-aware provider routing.
+    routing_profile: str
+    enable_openai_routing: bool
+    enable_deepseek_routing: bool
+    selective_escalation_enabled: bool
+    escalation_confidence_threshold: float
+    default_call_budget_usd: float
+    external_call_budget_usd: float
+    deepseek_fast_model: str
+    deepseek_quality_model: str
+
     deepseek_pro_input_price: float
     deepseek_pro_cached_input_price: float
     deepseek_pro_output_price: float
@@ -189,6 +201,12 @@ class HybridAIConfig:
         advanced_model = os.getenv(
             "DEEPSEEK_ADVANCED_MODEL", review_model
         ).strip()
+        deepseek_fast_model = os.getenv(
+            "DEEPSEEK_FAST_MODEL", "deepseek-v4-flash"
+        ).strip() or "deepseek-v4-flash"
+        deepseek_quality_model = os.getenv(
+            "DEEPSEEK_QUALITY_MODEL", advanced_model or "deepseek-v4-pro"
+        ).strip() or "deepseek-v4-pro"
 
         # Role-specific variables are authoritative. The old
         # OPENAI_REVIEW_MODEL setting is intentionally ignored so a stale
@@ -378,6 +396,29 @@ class HybridAIConfig:
                 "AI_ADVANCED_SECOND_PASS", True
             ),
 
+            routing_profile=(
+                os.getenv("VPROF_ROUTING_PROFILE", "balanced").strip().lower()
+                if os.getenv("VPROF_ROUTING_PROFILE", "balanced").strip().lower()
+                in {"economy", "balanced", "quality"}
+                else "balanced"
+            ),
+            enable_openai_routing=_env_bool("VPROF_ENABLE_OPENAI", True),
+            enable_deepseek_routing=_env_bool("VPROF_ENABLE_DEEPSEEK", True),
+            selective_escalation_enabled=_env_bool(
+                "VPROF_ENABLE_SELECTIVE_ESCALATION", True
+            ),
+            escalation_confidence_threshold=_env_float(
+                "VPROF_ESCALATE_CONFIDENCE_BELOW", 0.78, 0.0, 1.0
+            ),
+            default_call_budget_usd=_env_float(
+                "VPROF_DEFAULT_CALL_BUDGET_USD", 0.75, 0.01
+            ),
+            external_call_budget_usd=_env_float(
+                "VPROF_EXTERNAL_CALL_BUDGET_USD", 2.00, 0.01
+            ),
+            deepseek_fast_model=deepseek_fast_model,
+            deepseek_quality_model=deepseek_quality_model,
+
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
             ),
@@ -386,6 +427,15 @@ class HybridAIConfig:
             ),
             deepseek_pro_output_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_OUTPUT", 0.87
+            ),
+            deepseek_flash_input_price=_env_float(
+                "PRICE_DEEPSEEK_FLASH_INPUT", 0.14
+            ),
+            deepseek_flash_cached_input_price=_env_float(
+                "PRICE_DEEPSEEK_FLASH_CACHED_INPUT", 0.0028
+            ),
+            deepseek_flash_output_price=_env_float(
+                "PRICE_DEEPSEEK_FLASH_OUTPUT", 0.28
             ),
             openai_review_input_price=chapter_input_price,
             openai_review_cached_input_price=chapter_cached_price,
@@ -397,7 +447,7 @@ class HybridAIConfig:
             openai_expert_cached_input_price=expert_cached_price,
             openai_expert_output_price=expert_output_price,
 
-            deepseek_extract_model=review_model,
+            deepseek_extract_model=deepseek_fast_model,
             openai_mini_model=chapter_model,
             openai_advanced_model=expert_model,
             openai_mini_reasoning_effort=chapter_effort,
@@ -484,7 +534,7 @@ class HybridAIConfig:
         return self.openai_expert_output_price
 
     def openai_prices_for_model(self, model: str) -> Tuple[float, float, float]:
-        """Return input, cached-input and output prices for a model role."""
+        """Return input, cached-input and output prices for an OpenAI model."""
         value = (model or "").strip().lower()
         expert_models = {
             self.openai_expert_model.lower(),
@@ -505,6 +555,33 @@ class HybridAIConfig:
             self.openai_chapter_output_price,
         )
 
+    def prices_for_model(
+        self, provider: str, model: str
+    ) -> Tuple[float, float, float]:
+        """Return prices for any configured provider and model role."""
+        provider_value = (provider or "").strip().lower()
+        model_value = (model or "").strip().lower()
+        if provider_value == "deepseek" or model_value.startswith("deepseek"):
+            if model_value == self.deepseek_fast_model.lower() or "flash" in model_value:
+                return (
+                    self.deepseek_flash_input_price,
+                    self.deepseek_flash_cached_input_price,
+                    self.deepseek_flash_output_price,
+                )
+            return (
+                self.deepseek_pro_input_price,
+                self.deepseek_pro_cached_input_price,
+                self.deepseek_pro_output_price,
+            )
+        return self.openai_prices_for_model(model)
+
+    @property
+    def any_provider_configured(self) -> bool:
+        return bool(
+            (self.enable_openai_routing and self.openai_configured)
+            or (self.enable_deepseek_routing and self.deepseek_configured)
+        )
+
     def resolve_mode(self, requested_mode: str, academic_level: str = "") -> str:
         requested = (requested_mode or "standard").strip().lower()
         requested = {
@@ -517,17 +594,17 @@ class HybridAIConfig:
             raise AIConfigurationError(
                 "Choose Light Review, Standard Review or Advanced Review."
             )
-        if not self.openai_configured:
+        if not self.any_provider_configured:
             raise AIConfigurationError(
                 "The academic review service is temporarily unavailable because "
-                "the OpenAI API key is not configured."
+                "no enabled AI provider key is configured."
             )
         return requested
 
     def public_status(self) -> Dict[str, Any]:
         available = (
             ["light", "standard", "advanced"]
-            if self.openai_configured
+            if self.any_provider_configured
             else []
         )
         return {

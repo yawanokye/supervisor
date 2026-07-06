@@ -15,7 +15,8 @@ from .ai_prompts import (
     FOCUSED_SECTION_RECOVERY_SYSTEM_PROMPT,
     LIGHT_REVIEW_SYSTEM_PROMPT,
 )
-from .ai_providers import AIProviderError, OpenAIProvider, ProviderResult
+from .ai_providers import AIProviderError, ProviderResult
+from .model_router import CostAwareAIProvider, ReviewStage, stage_for_depth
 from .academic_review_guide import guide_for_heading
 from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
 from .checkpointing import CheckpointManager, stable_hash
@@ -1259,12 +1260,11 @@ def _light_readiness(
 
 def _usage_cost(usage: AIUsageRecord, config: HybridAIConfig) -> AIUsageRecord:
     uncached = max(0, usage.input_tokens - usage.cached_input_tokens)
-    if usage.provider == "deepseek":
-        p_in = config.deepseek_pro_input_price
-        p_cache = config.deepseek_pro_cached_input_price
-        p_out = config.deepseek_pro_output_price
-    else:
-        p_in, p_cache, p_out = config.openai_prices_for_model(usage.model)
+    if usage.estimated_cost_usd > 0:
+        return usage
+    p_in, p_cache, p_out = config.prices_for_model(
+        usage.provider, usage.model
+    )
 
     cost = (
         uncached / 1_000_000 * p_in
@@ -1395,7 +1395,7 @@ async def enrich_review_with_academic_ai(
     config = config or HybridAIConfig.from_env()
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
     depth = config.resolve_mode(requested_mode, academic_level)
-    openai = OpenAIProvider(config) if config.openai_configured else None
+    router = CostAwareAIProvider(config)
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
@@ -1478,7 +1478,7 @@ async def enrich_review_with_academic_ai(
     for index, section in enumerate(sections):
         section["section_key"] = _section_key(section, index)
 
-    provider = openai
+    provider = router
     if depth == "light":
         primary_tokens = config.light_max_output_tokens
         primary_system_prompt = LIGHT_REVIEW_SYSTEM_PROMPT
@@ -1516,6 +1516,7 @@ async def enrich_review_with_academic_ai(
         tokens: int,
         *,
         track_primary_progress: bool = False,
+        route_stage: Optional[ReviewStage] = None,
     ) -> ProviderResult:
         nonlocal completed_primary_batches
         user_prompt = _batch_prompt(
@@ -1523,10 +1524,16 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.6-fast-grounded-auto-recovery",
+            "pipeline": "academic-review-v1.9.8-cost-aware-fast-grounded",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
+            "routing": provider.route_signature(
+                stage=route_stage or stage_for_depth(depth),
+                review_depth=depth,
+                requested_model=model,
+                requested_effort=effort,
+            ),
             "purpose": purpose,
             "tokens": tokens,
             "system_prompt": primary_system_prompt,
@@ -1557,6 +1564,8 @@ async def enrich_review_with_academic_ai(
                 purpose=purpose,
                 reasoning_effort=effort,
                 max_output_tokens=tokens,
+                stage=route_stage or stage_for_depth(depth),
+                review_depth=depth,
             )
             if checkpoint_manager is not None:
                 checkpoint_manager.save_provider_result(
@@ -1871,7 +1880,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.6-fast-grounded-auto-recovery",
+                "pipeline": "academic-comment-audit-v1.9.8-cost-aware-grounded",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -1879,6 +1888,12 @@ async def enrich_review_with_academic_ai(
                 "academic_level": academic_level,
                 "model": audit_model,
                 "effort": audit_effort,
+                "routing": provider.route_signature(
+                    stage=ReviewStage.FINAL_AUDIT,
+                    review_depth=depth,
+                    requested_model=audit_model,
+                    requested_effort=audit_effort,
+                ),
                 "tokens": audit_tokens,
                 "system_prompt": ACADEMIC_VERIFY_SYSTEM_PROMPT,
                 "user_prompt": prompt,
@@ -1901,7 +1916,7 @@ async def enrich_review_with_academic_ai(
                             if retry else "Verifying review comments"
                         ),
                     )
-                result = await openai.complete_json(
+                result = await provider.complete_json(
                     model=audit_model,
                     system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
                     user_prompt=prompt,
@@ -1912,6 +1927,8 @@ async def enrich_review_with_academic_ai(
                     ),
                     reasoning_effort=audit_effort,
                     max_output_tokens=audit_tokens,
+                    stage=ReviewStage.FINAL_AUDIT,
+                    review_depth=depth,
                 )
                 if checkpoint_manager is not None:
                     checkpoint_manager.save_provider_result(
@@ -2070,6 +2087,7 @@ async def enrich_review_with_academic_ai(
                     config.openai_final_audit_reasoning_effort,
                     "direct_grounded_comment_rescue",
                     max(config.advanced_audit_max_output_tokens, 7000),
+                    route_stage=ReviewStage.FINAL_AUDIT,
                 )
                 usage_records.append(_usage_cost(rescue_result.usage, config))
                 source_by_key = {
@@ -2228,7 +2246,7 @@ async def enrich_review_with_academic_ai(
         "usage": [record.model_dump() for record in usage_records],
         "estimated_cost_usd": round(sum(record.estimated_cost_usd for record in usage_records), 6),
         "academic_review_complete": not incomplete,
-        "active_provider": "openai",
+        "active_provider": "cost_aware_router",
         "comment_accuracy_second_pass": bool(all_primary),
         "comment_accuracy_audit_mode": "single_compact_evidence_audit" if all_primary else "not_required",
         "advanced_second_pass": bool(depth == "advanced" and all_primary),

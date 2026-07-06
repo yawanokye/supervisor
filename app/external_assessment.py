@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .ai_config import HybridAIConfig
 from .ai_providers import AIProviderError, OpenAIProvider
+from .model_router import CostAwareAIProvider, ReviewStage
 from .checkpointing import CheckpointManager, stable_hash
 from .assessment_schemas import (
     ExternalAssessmentAdjudication,
@@ -1174,7 +1175,7 @@ def prepare_external_assessment(
     return value
 
 async def _complete_assessment_stage(
-    provider: OpenAIProvider,
+    provider: CostAwareAIProvider,
     *,
     stage: str,
     schema_model: type,
@@ -1222,7 +1223,7 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.9.6-three-examiners-one-adjudicator",
+            "pipeline": "external-assessment-v1.9.8-cost-aware-three-examiners-one-adjudicator",
             "retry_generation": int(retry_generation or 0),
             "stage": stage,
             "attempt_number": attempt_number,
@@ -1232,6 +1233,12 @@ async def _complete_assessment_stage(
             "manifest_hash": manifest.get("manifest_hash"),
             "model": model,
             "reasoning_effort": reasoning_effort,
+            "routing": provider.route_signature(
+                stage=ReviewStage.EXTERNAL_EXAMINATION,
+                review_depth="external",
+                requested_model=model,
+                requested_effort=reasoning_effort,
+            ),
             "max_output_tokens": max_output_tokens,
             "system_prompt": EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
             "user_prompt": user_prompt,
@@ -1291,6 +1298,9 @@ async def _complete_assessment_stage(
                 request_max_retries=(
                     config.external_assessment_request_max_retries
                 ),
+                stage=ReviewStage.EXTERNAL_EXAMINATION,
+                review_depth="external",
+                allow_escalation=False,
             )
             stage_feedback = _validate_stage_output(
                 stage,
@@ -1354,12 +1364,14 @@ async def _complete_assessment_stage(
     )
 
 def _costed_usage(result: Any, config: HybridAIConfig) -> tuple[Any, float]:
+    if result.usage.estimated_cost_usd > 0:
+        return result.usage, float(result.usage.estimated_cost_usd)
     uncached = max(
         0,
         result.usage.input_tokens - result.usage.cached_input_tokens,
     )
-    input_price, cached_price, output_price = config.openai_prices_for_model(
-        result.usage.model
+    input_price, cached_price, output_price = config.prices_for_model(
+        result.usage.provider, result.usage.model
     )
     estimated_cost = (
         uncached / 1_000_000 * input_price
@@ -1473,7 +1485,7 @@ async def enrich_with_external_assessment(
               "submit it again."
         )
 
-    provider = OpenAIProvider(config)
+    provider = CostAwareAIProvider(config)
     outputs: Dict[str, Any] = {}
     results: List[Any] = []
 
