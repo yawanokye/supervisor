@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.9.8.5 - Developmental comment depth and ordered review floors
+## 1.9.8.6 - Final MPhil Standard depth and clean native comments
+
+- Applies the degree-depth floor after public comment deduplication so Research Master’s/MPhil Standard reviews do not fall below the expected material-feedback level after quality filtering.
+- Prevents duplicate placeholder comments when both the review engine and exporter detect the same bracketed drafting prompt.
+- Adds deterministic MPhil-level checks for sentence-level uncited empirical sample claims, in-text/reference author-name mismatch, and environmental sustainability versus environmental performance construct ambiguity.
+- Keeps native Word comments natural by removing remaining template residue and converting awkward generated instructions into direct supervisor guidance.
+- No database migration or environment change is required from v1.9.8.5.
+
+## 1.9.8.6 - Developmental comment depth and ordered review floors
 
 - Added developmental native Word comments with issue, why it matters and revise-by guidance.
 - Raised the default public comment length from 680 to 980 characters.
@@ -9,7 +17,7 @@
 - Reduced repeated alignment comments through stronger similarity grouping.
 - Added tests for developmental comments and level-ordered finding floors.
 
-## 1.9.8.5 - All-level degree-calibrated depth
+## 1.9.8.6 - All-level degree-calibrated depth
 
 - Gives Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD separate operational review contracts.
 - Adds distinct per-section material-issue ceilings and independent-audit capacities for every programme level.

@@ -1,9 +1,14 @@
-# ProjectReady AI Supervisor Assistant 1.9.8.5
+# ProjectReady AI Supervisor Assistant 1.9.8.6
 
-Version 1.9.8.5 adds developmental comment depth. Native Word comments now explain the issue, why it matters and the specific revision action, while the review orchestrator preserves the expected ordering between Light, Standard Non-Research Master’s and Standard MPhil reviews for the same weak chapter.
+## v1.9.8.6 final review-quality update
+
+This release finalises the MPhil Standard review behaviour. It preserves depth after duplicate filtering, prevents duplicate native comments for unresolved placeholders, adds deterministic checks for uncited empirical sample claims and citation-name mismatches, and keeps comments in a natural supervisor style without visible labels.
+
+
+Version 1.9.8.6 adds developmental comment depth. Native Word comments now explain the issue, why it matters and the specific revision action, while the review orchestrator preserves the expected ordering between Light, Standard Non-Research Master’s and Standard MPhil reviews for the same weak chapter.
 ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Version 1.9.8.5 applies substantive degree-calibrated depth to **all five programme levels**. Bachelor’s review focuses on foundational research coherence and correct method application. Non-Research Master’s review tests advanced application and professional usefulness. Research Master’s/MPhil review requires critical synthesis, theory, methodological defensibility and a clear research contribution. Professional Doctorate review requires doctoral scholarship, reflexivity and an original contribution to practice or policy. PhD review requires authoritative positioning, robustness and an original contribution to knowledge.
+Version 1.9.8.6 applies substantive degree-calibrated depth to **all five programme levels**. Bachelor’s review focuses on foundational research coherence and correct method application. Non-Research Master’s review tests advanced application and professional usefulness. Research Master’s/MPhil review requires critical synthesis, theory, methodological defensibility and a clear research contribution. Professional Doctorate review requires doctoral scholarship, reflexivity and an original contribution to practice or policy. PhD review requires authoritative positioning, robustness and an original contribution to knowledge.
 
 Each level now has its own issue ceiling, audit capacity, output allowance, chapter-specific checks and contribution standard. Research Master’s/MPhil, Professional Doctorate and PhD use the research-intensive route. Bachelor’s and Non-Research Master’s retain the lower-cost route but no longer share the same academic contract. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery, public-comment quality controls and token accounting remain active.
 
