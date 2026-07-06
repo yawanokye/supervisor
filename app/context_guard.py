@@ -265,7 +265,7 @@ def build_context_lock(
         "source_text_normalised": source_low,
         "strict_rule": (
             "Use only the countries, locations, organisations, populations and sectors explicitly present in the source. "
-            "If a detail is unknown, use a neutral placeholder such as [study country], [study setting], [target population] or [verified source]."
+            "If a detail is unknown, omit the illustrative example and instruct the student to provide or verify the missing detail without inserting a placeholder token."
         ),
     }
 
@@ -308,7 +308,7 @@ def _replace_disallowed_geography(text: str, context_lock: Dict[str, Any]) -> Tu
             continue
         output = re.sub(
             rf"(?<![A-Za-z]){re.escape(place)}(?![A-Za-z])",
-            "[study setting]",
+            "the confirmed study setting",
             output,
             flags=re.I,
         )
@@ -329,7 +329,7 @@ def _replace_unverified_citations(text: str, context_lock: Dict[str, Any]) -> Tu
             citation = clean_text(match.group(0))
             if normalised(citation) and normalised(citation) in source_low:
                 continue
-            output = output[:match.start()] + "[verified scholarly source]" + output[match.end():]
+            output = output[:match.start()] + "a verified scholarly source" + output[match.end():]
             adjusted = True
     return output, adjusted
 
@@ -344,7 +344,7 @@ def _replace_unverified_statistics(text: str, context_lock: Dict[str, Any]) -> T
         value = clean_text(match.group(0))
         if normalised(value) in source_low:
             continue
-        output = output[:match.start()] + "[verified statistic]" + output[match.end():]
+        output = output[:match.start()] + "a verified statistic" + output[match.end():]
         adjusted = True
     return output, adjusted
 
@@ -369,10 +369,9 @@ def sanitise_issue(issue: Dict[str, Any], context_lock: Dict[str, Any]) -> Dict[
         original = clean_text(output.get(field, ""))
         cleaned, changed = sanitise_generated_text(original, context_lock)
         if field == "illustrative_guidance" and changed:
-            cleaned = (
-                "Use only the confirmed study setting, constructs and population from the submitted document. "
-                "Where a detail or source is not supplied, use a neutral placeholder and insert verified information during revision."
-            )
+            # Do not export invented examples or visible placeholder prompts.
+            # The required action already tells the student what must be verified.
+            cleaned = ""
         output[field] = cleaned
         adjusted = adjusted or changed
 

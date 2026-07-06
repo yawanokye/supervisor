@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import re
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -28,6 +29,7 @@ from .ai_schemas import (
     AcademicVerificationBatch,
 )
 from .document_parser import clean_text, normalised
+from .comment_quality import prepare_public_issues
 from .supervisory_accuracy_guard import (
     apply_accuracy_gate,
     build_factual_index,
@@ -686,6 +688,7 @@ def _batch_prompt(
 
     packet = {
         "review_context": {
+            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "document_label": summary.get("document_label"),
@@ -729,7 +732,8 @@ def _batch_prompt(
         "accuracy_contract": {
             "do_not_introduce_external_countries_or_locations": True,
             "do_not_invent_citations_statistics_or_organisations": True,
-            "use_placeholders_for_unknown_context": True,
+            "use_placeholders_for_unknown_context": False,
+            "omit_illustrative_guidance_when_verified_details_are_unavailable": True,
             "distinguish_missing_from_weak_content": True,
             "make_method_advice_conditional_when_design_is_unknown": True,
             "do_not_review_context_only_chapters_as_the_selected_chapter": True,
@@ -765,7 +769,7 @@ def _batch_prompt(
             + complete_structure_instruction
             + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
-            "Give examples only from the confirmed study context, or use neutral placeholders when a contextual detail is not supplied. "
+            "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title."
         ),
@@ -783,6 +787,7 @@ def _focused_section_recovery_prompt(
     summary = review.get("summary") or {}
     packet = {
         "review_context": {
+            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -874,6 +879,7 @@ def _verification_prompt(
             paragraphs[_pid(paragraph)] = _payload(paragraph)
     packet = {
         "review_context": {
+            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -981,6 +987,7 @@ def _compact_quality_audit_prompt(
 
     packet = {
         "review_context": {
+            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -1338,7 +1345,7 @@ def _readiness(score: float, issues: Sequence[Dict[str, Any]], incomplete: bool)
     critical = sum(1 for issue in issues if issue.get("severity") == "critical")
     major = sum(1 for issue in issues if issue.get("severity") == "major")
     if incomplete:
-        return "Review completed with a limitation", "Most sections were reviewed, but one review batch could not be independently verified. The available findings remain usable, while the affected section should receive manual confirmation."
+        return "Review requires regeneration", "A required verification stage did not complete. Regenerate the review before treating the report or comments as final."
     if critical: return "Substantial revision required", f"The chapter contains {critical} critical academic issue(s) that must be resolved before supervisor approval."
     if score >= 85 and major == 0: return "Ready after minor refinement", "The chapter is academically sound overall, with targeted refinements still required."
     if score >= 70 and major <= 2: return "Revision required", "The chapter has a workable foundation but requires focused academic revision before approval."
@@ -1524,7 +1531,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8.1-bounded-fast-grounded",
+            "pipeline": "academic-review-v1.9.8.2-public-comment-quality-gate",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -1929,7 +1936,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8.1-single-bounded-grounded",
+                "pipeline": "academic-comment-audit-v1.9.8.2-placeholder-safe",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -2114,14 +2121,9 @@ async def enrich_review_with_academic_ai(
                     target["issues"].extend(values)
 
         if fallback_audits:
+            # Keep provider/audit failure details in internal metadata only.
+            # Student-facing reports must not expose technical fallback notices.
             verification_failed = True
-            for section_review in section_reviews:
-                section_review["coverage_warning"] = (
-                    section_review.get("coverage_warning", "")
-                    + " One or more independent accuracy-audit batches were unavailable; "
-                      "the displayed comments passed exact evidence and placement checks "
-                      "but are marked for manual confirmation."
-                ).strip()
 
 
     raw_issues = [
@@ -2244,6 +2246,12 @@ async def enrich_review_with_academic_ai(
 
     if depth == "light":
         strengths = strengths[:6]
+
+    # Final public-output quality gate. Internal provider/audit metadata remains
+    # available in the job record, but student-facing findings cannot contain
+    # placeholders, false future-date claims, duplicate advice or unfinished
+    # generated wording.
+    all_issues, public_quality_stats = prepare_public_issues(all_issues)
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
     incomplete = verification_failed or len(section_reviews) < len(sections)
     score = _academic_score(section_reviews, all_issues)
@@ -2315,6 +2323,9 @@ async def enrich_review_with_academic_ai(
         "accuracy_gate_kept": accuracy_gate_stats.get("kept", 0),
         "accuracy_gate_dropped": accuracy_gate_stats.get("dropped", 0),
         "accuracy_gate_adjusted": accuracy_gate_stats.get("adjusted", 0),
+        "public_comment_quality_kept": public_quality_stats.get("kept", 0),
+        "public_comment_quality_dropped": public_quality_stats.get("dropped", 0),
+        "public_comment_quality_adjusted": public_quality_stats.get("adjusted", 0),
         "universal_accuracy_audit_applied": True,
         "verified_finding_count": sum(
             1 for issue in all_issues

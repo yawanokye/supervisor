@@ -60,7 +60,7 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.8.1 routes inexpensive first-pass work through DeepSeek and
+    VProfessor v1.9.8.2 routes inexpensive first-pass work through DeepSeek and
     selectively escalates uncertain or high-risk findings to OpenAI. Existing
     strict schemas, checkpoints and token accounting remain active.
     """
@@ -137,7 +137,7 @@ class HybridAIConfig:
     structured_output_retries: int
     advanced_quality_control: bool
 
-    # v1.9.8.1 bounded cost-aware provider routing.
+    # v1.9.8.2 bounded cost-aware provider routing.
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool

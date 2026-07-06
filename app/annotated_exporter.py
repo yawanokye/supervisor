@@ -14,9 +14,16 @@ from docx.text.run import Run
 from docx.table import Table
 
 from .document_parser import clean_text, normalised
+from .comment_quality import (
+    comment_max_chars,
+    public_text,
+    sanitise_finding_row,
+    sanitise_finding_rows,
+    sentence_safe_trim,
+)
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.6-native-comments-fast-grounded"
+ANNOTATION_EXPORT_VERSION = "1.9.8.2-placeholder-safe-native-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -110,14 +117,15 @@ def _sanitise_guidance(value: str) -> str:
 
 
 
-def _shorten_comment(value: str, limit: int = 720) -> str:
-    text = clean_text(value)
-    if len(text) <= limit:
-        return text
-    shortened = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
-    return shortened + "."
+def _shorten_comment(value: str, limit: Optional[int] = None) -> str:
+    effective_limit = limit if limit is not None else comment_max_chars()
+    return sentence_safe_trim(value, effective_limit)
 
 def _comment_body(row: Dict[str, Any]) -> str:
+    safe_row = sanitise_finding_row(row)
+    if safe_row is None:
+        return ""
+    row = safe_row
     action = _sanitise_guidance(row.get("required_action", ""))
     assessment = _sanitise_guidance(row.get("comment", ""))
     if not action:
@@ -143,11 +151,14 @@ def _comment_body(row: Dict[str, Any]) -> str:
                 table_reference += f": {title}"
             reference = f"{reference}, {table_reference}" if reference else table_reference
     body = f"{reference}: {action}" if reference else action
-    if row.get("manual_confirmation_required"):
-        body += " [Manual confirmation recommended because the independent audit request was unavailable; the comment passed exact evidence and placement checks.]"
+    # Manual-confirmation and provider-failure status belongs in the internal
+    # audit trail, never in a student's Word comment.
     if example:
-        body += f" Example: {example}"
-    return _shorten_comment(body)
+        candidate = f"{body} Example: {example}"
+        shortened = _shorten_comment(candidate)
+        if shortened and len(shortened) > len(body):
+            body = candidate
+    return public_text(_shorten_comment(body), reject_placeholders=True)
 
 
 def _format_comment_group(comments: Iterable[str]) -> str:
@@ -155,13 +166,16 @@ def _format_comment_group(comments: Iterable[str]) -> str:
     unique = []
     seen = set()
     for value in comments:
-        text = clean_text(value).strip("[] ").rstrip(" ;.")
+        text = public_text(value, limit=620, reject_placeholders=True).strip("[] ").rstrip(" ;.")
         text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         key = normalised(text)
         if not text or not key or key in seen:
             continue
         seen.add(key)
-        unique.append(_shorten_comment(text, 620))
+        shortened = _shorten_comment(text, 620)
+        if not shortened:
+            continue
+        unique.append(shortened)
         if len(unique) >= 4:
             break
     if not unique:
@@ -570,7 +584,7 @@ def build_annotated_docx(
     missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
 
-    review_rows = (
+    review_rows = sanitise_finding_rows(
         list(review.get("academic_findings", []))
         + list(review.get("alignment_results", []))
         + list(review.get("revision_results", []))
@@ -582,6 +596,8 @@ def build_annotated_docx(
             continue
 
         comment = _comment_body(row)
+        if not comment:
+            continue
         evidence = [
             item for item in (row.get("evidence") or [])
             if item.get("document_role", "current") == "current"

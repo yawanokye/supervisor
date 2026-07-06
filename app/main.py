@@ -107,7 +107,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.8.1",
+    version="1.9.8.2",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -1327,7 +1327,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.8.1-bounded-cost-routing",
+            "pipeline": "review-pipeline-v1.9.8.2-public-comment-quality-gate",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1441,7 +1441,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.8.1-bounded-cost-routing",
+                "pipeline": "academic-review-complete-v1.9.8.2-public-comment-quality-gate",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -2238,7 +2238,10 @@ async def resume_review_job(
         completed_summary = completed_review.get("summary") or {}
         limited_output = bool(
             completed_summary.get("review_rebuild_recommended")
-            or completed_summary.get("readiness_label") == "Review completed with a limitation"
+            or completed_summary.get("readiness_label") in {
+                "Review completed with a limitation",
+                "Review requires regeneration",
+            }
             or (
                 float(completed_summary.get("overall_score") or 0.0) < 85.0
                 and not (completed_review.get("academic_findings") or [])

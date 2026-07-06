@@ -704,6 +704,77 @@ def deterministic_expert_issues(paragraphs: Sequence[Dict[str, Any]]) -> List[Di
             action="Report the value as p < .001 and apply the same correction consistently in the table, narrative interpretation and hypothesis decision.",
         ))
 
+    placeholder_rows = find_rows(
+        r"\[(?:insert|add|specify|provide|complete|start|end|x\b)[^\]]*\]"
+    )
+    if placeholder_rows:
+        target = placeholder_rows[0]
+        output.append(_make_issue(
+            finding_id="DET-UNRESOLVED-DRAFT-PLACEHOLDERS",
+            category="presentation",
+            section=source_section(target),
+            title="Unresolved drafting placeholders remain in the chapter",
+            severity="major",
+            confidence=0.99,
+            evidence_ids=[paragraph_id(row) for row in placeholder_rows[:6]],
+            quote=clean_text(target.get("text", ""))[:260],
+            assessment="The submitted chapter still contains bracketed drafting prompts instead of final study information.",
+            consequence="The document is incomplete and cannot be treated as submission-ready while required dates or other study details remain unresolved.",
+            action="Replace every bracketed drafting prompt with the correct verified study information and check the full chapter for any remaining placeholders before resubmission.",
+        ))
+
+    malformed_question_rows = find_rows(r"\.\?")
+    if malformed_question_rows:
+        target = malformed_question_rows[0]
+        output.append(_make_issue(
+            finding_id="DET-MALFORMED-QUESTION-PUNCTUATION",
+            category="academic_writing",
+            section=source_section(target),
+            title="A research question contains malformed punctuation",
+            severity="minor",
+            confidence=0.99,
+            evidence_ids=[paragraph_id(target)],
+            quote=clean_text(target.get("text", ""))[:260],
+            assessment="The question ends with a full stop followed by a question mark.",
+            consequence="The error reduces the professional presentation of the research questions.",
+            action="Remove the full stop and retain a single question mark at the end of the sentence.",
+        ))
+
+    proposal_rows = find_rows(r"\b(?:will be obtained|will be collected|will be considered|will be covered)\b", chapters={1})
+    completed_rows = find_rows(r"\b(?:the study faced|data were collected|findings showed|results revealed)\b", chapters={1})
+    if proposal_rows and completed_rows:
+        target = completed_rows[0]
+        output.append(_make_issue(
+            finding_id="DET-CHAPTER-ONE-TENSE-MISMATCH",
+            category="academic_writing",
+            section=source_section(target),
+            title="Proposal and completed-study tenses are mixed",
+            severity="moderate",
+            confidence=0.96,
+            evidence_ids=[paragraph_id(proposal_rows[0]), paragraph_id(target)],
+            quote=clean_text(target.get("text", ""))[:260],
+            assessment="Chapter One uses future tense for a proposed study but also describes constraints as though the study and data collection have already been completed.",
+            consequence="The mixed stage signals make the status of the research unclear and weaken internal consistency.",
+            action="Use proposal-appropriate future or present tense throughout if the study has not been completed. Use past tense consistently only when reporting a completed study.",
+        ))
+
+    opening_grammar_rows = find_rows(r"\bThe study revolve\b", chapters={1})
+    if opening_grammar_rows:
+        target = opening_grammar_rows[0]
+        output.append(_make_issue(
+            finding_id="DET-OPENING-SUBJECT-VERB-AGREEMENT",
+            category="academic_writing",
+            section=source_section(target),
+            title="The opening sentence contains a subject-verb agreement error",
+            severity="minor",
+            confidence=0.99,
+            evidence_ids=[paragraph_id(target)],
+            quote="The study revolve",
+            assessment="The singular subject 'study' is paired with the plural verb form 'revolve'. The sentence is also awkwardly framed as the study revolving around global environmental issues.",
+            consequence="A grammatical error in the opening sentence weakens the chapter's first academic impression.",
+            action="Rewrite the opening sentence in a direct form and use the correct singular verb, for example by stating that climate change, pollution and resource depletion have intensified concern about environmental sustainability.",
+        ))
+
     declaration_rows = find_rows(r"\bI\s*,?[^.]{0,120}\bis entirely my own original work\b")
     if declaration_rows:
         target = declaration_rows[0]

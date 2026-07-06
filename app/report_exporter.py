@@ -12,6 +12,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_trim
+
 INK = "1F2937"
 MUTED = "667085"
 BRAND = "2F5597"
@@ -114,11 +116,7 @@ def _unique(values: Iterable[Any], limit: int | None = None) -> List[str]:
 
 
 def _trim(value: str, limit: int) -> str:
-    value = _clean(value)
-    if len(value) <= limit:
-        return value
-    cut = value[:limit].rsplit(" ", 1)[0]
-    return cut.rstrip(" ,;:") + "…"
+    return sentence_safe_trim(public_text(value, reject_placeholders=True), limit)
 
 
 def _severity_rank(value: str) -> int:
@@ -141,7 +139,8 @@ def _finding_anchor(row: Dict[str, Any]) -> Tuple[str, str]:
 
 def _group_findings(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     groups: "OrderedDict[Tuple[str, str], Dict[str, Any]]" = OrderedDict()
-    for row in sorted(rows, key=lambda x: (_severity_rank(x.get("severity", "minor")), _normalised(x.get("item", "")))):
+    safe_rows = sanitise_finding_rows(rows)
+    for row in sorted(safe_rows, key=lambda x: (_severity_rank(x.get("severity", "minor")), _normalised(x.get("item", "")))):
         key = _finding_anchor(row)
         group = groups.setdefault(key, {
             "section": _clean(row.get("section_reference") or row.get("section") or "Chapter-wide review"),
@@ -492,7 +491,7 @@ def _section_corrections(
     limit: int | None = None,
     chapter_number: int | None = None,
 ) -> List[str]:
-    rows = _rows_for_section(section_name, findings, chapter_number)
+    rows = _rows_for_section(section_name, sanitise_finding_rows(findings), chapter_number)
     rows = [
         row for row in rows
         if row.get("status") not in {"meets_requirement", "not_applicable"}
@@ -554,7 +553,7 @@ def _chapter_number_from_rows(
 
 def _summary_units(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     summary = review.get("summary") or {}
-    findings = review.get("academic_findings") or []
+    findings = sanitise_finding_rows(review.get("academic_findings") or [])
     strengths = review.get("academic_strengths") or []
     section_rows = [
         row for row in _ordered_section_reviews(review)
