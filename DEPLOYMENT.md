@@ -525,3 +525,7 @@ Bachelor’s and Non-Research Master’s remain on the cost-efficient ordinary r
 Deploy v1.9.8.6 as a complete replacement for v1.9.8.4. Existing accounts, balances, stored reviews and the database schema remain compatible. Submit active review jobs as new jobs because comment-depth and finding-retention behaviour changed.
 
 Use `supervisor-v1.9.8.6-render.env.example` on both the Render web service and worker. The key new settings are `VPROF_DEVELOPMENTAL_COMMENTS=true`, `VPROF_COMMENT_DEPTH_FLOOR_ENABLED=true`, `VPROF_COMMENT_MAX_CHARS=980`, and the four `VPROF_STANDARD_*_MIN_FINDINGS` values.
+
+## v1.9.8.7 deployment note
+
+Deploy the v1.9.8.7 ZIP as the complete repository. No database migration and no new Render environment variable are required. Submit new reviews rather than resuming old checkpoints so the new section-coverage comments are generated.

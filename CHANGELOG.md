@@ -551,3 +551,10 @@
 - Invalidated earlier supervisory-review checkpoints by introducing v1.9.3 pipeline identifiers.
 - Added chapter-packet execution and recovery configuration.
 - Passed 170 automated tests.
+
+## v1.9.8.7 - Section Coverage Comments
+
+- Added native Word section-level review comments so every detected section or subsection receives visible feedback, even when no issue finding is exported for that section.
+- Preserved the existing issue comments as primary feedback while anchoring section assessments to exact headings where possible.
+- Kept comments natural and non-mechanical, without checklist labels.
+- No new environment variable or database migration is required.

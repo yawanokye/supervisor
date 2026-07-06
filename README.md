@@ -389,3 +389,7 @@ AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS=900
 AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS=360
 AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES=0
 ```
+
+### v1.9.8.7 section coverage comments
+
+Every detected section and subsection now receives a native Word section-review comment in addition to issue-specific comments. This makes review coverage visible in the Word document, including sections where the reviewer found no material defect to export.
