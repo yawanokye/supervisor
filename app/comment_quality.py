@@ -36,7 +36,7 @@ _GENERIC_BRACKET_PLACEHOLDER_RE = re.compile(
 
 _DANGLING_END_RE = re.compile(
     r"(?:\b(?:and|or|of|to|for|with|among|between|while|including|such as|the|a|an|this|that|these|those|its|their|on|at|by|from)"
-    r"|\b(?:assessing|examining|including|manufacturing|Ghanaian))\s*[.!?]?$",
+    r"|\b(?:assessing|examining|including|manufacturing|Ghanaian|write|describe|explain|state|show|demonstrate|provide))\s*[.!?]?$",
     flags=re.I,
 )
 
@@ -102,7 +102,8 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 def comment_max_chars() -> int:
-    return _env_int("VPROF_COMMENT_MAX_CHARS", 680, 320, 1200)
+    # Developmental Word comments need enough room to explain the issue, why it matters and the required correction.
+    return _env_int("VPROF_COMMENT_MAX_CHARS", 980, 420, 1600)
 
 
 def similarity_threshold() -> float:

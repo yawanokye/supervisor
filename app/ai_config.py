@@ -60,7 +60,7 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.8.4 calibrates provider strength, review coverage and audit capacity to every declared degree level. It routes inexpensive first-pass work through DeepSeek and
+    VProfessor v1.9.8.5 calibrates provider strength, review coverage and audit capacity to every declared degree level. It routes inexpensive first-pass work through DeepSeek and
     selectively escalates uncertain or high-risk findings to OpenAI. Existing
     strict schemas, checkpoints and token accounting remain active.
     """
@@ -145,13 +145,19 @@ class HybridAIConfig:
     phd_audit_max_output_tokens: int
     phd_audit_reasoning_effort: str
     all_levels_degree_calibrated: bool
+    developmental_comments_enabled: bool
+    comment_depth_floor_enabled: bool
+    standard_non_research_min_findings: int
+    standard_research_masters_min_findings: int
+    standard_professional_doctorate_min_findings: int
+    standard_phd_min_findings: int
     fast_audit_batch_issue_limit: int
     fast_audit_max_batches: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
 
-    # v1.9.8.4 all-level degree-calibrated, bounded cost-aware provider routing.
+    # v1.9.8.5 all-level degree-calibrated, bounded cost-aware provider routing.
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool
@@ -465,6 +471,24 @@ class HybridAIConfig:
             ),
             all_levels_degree_calibrated=_env_bool(
                 "VPROF_ALL_LEVELS_DEGREE_CALIBRATED", True
+            ),
+            developmental_comments_enabled=_env_bool(
+                "VPROF_DEVELOPMENTAL_COMMENTS", True
+            ),
+            comment_depth_floor_enabled=_env_bool(
+                "VPROF_COMMENT_DEPTH_FLOOR_ENABLED", True
+            ),
+            standard_non_research_min_findings=_env_int(
+                "VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS", 14, 0
+            ),
+            standard_research_masters_min_findings=_env_int(
+                "VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS", 18, 0
+            ),
+            standard_professional_doctorate_min_findings=_env_int(
+                "VPROF_STANDARD_PROFESSIONAL_DOCTORATE_MIN_FINDINGS", 22, 0
+            ),
+            standard_phd_min_findings=_env_int(
+                "VPROF_STANDARD_PHD_MIN_FINDINGS", 26, 0
             ),
             fast_audit_batch_issue_limit=_env_int(
                 "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100

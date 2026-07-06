@@ -276,6 +276,41 @@ def _degree_audit_max_findings(academic_level: Any, depth: str) -> int:
     return max(base, minimums[_degree_key(academic_level)][depth])
 
 
+def _degree_comment_floor(academic_level: Any, depth: str, config: HybridAIConfig) -> int:
+    """Minimum material comments to try to preserve for a non-trivial chapter.
+
+    This is not a quota for inventing issues. It controls how aggressively the
+    orchestrator retains evidence-anchored first-pass findings after the audit
+    has removed unsupported or duplicate comments.
+    """
+    if not config.comment_depth_floor_enabled:
+        return 0
+    key = _degree_key(academic_level)
+    if depth == "light":
+        return {
+            "bachelors": 6,
+            "non_research_masters": 8,
+            "research_masters": 10,
+            "professional_doctorate": 12,
+            "phd": 14,
+        }[key]
+    if depth == "standard":
+        return {
+            "bachelors": 10,
+            "non_research_masters": config.standard_non_research_min_findings,
+            "research_masters": config.standard_research_masters_min_findings,
+            "professional_doctorate": config.standard_professional_doctorate_min_findings,
+            "phd": config.standard_phd_min_findings,
+        }[key]
+    return {
+        "bachelors": 16,
+        "non_research_masters": max(18, config.standard_non_research_min_findings + 4),
+        "research_masters": max(24, config.standard_research_masters_min_findings + 6),
+        "professional_doctorate": max(30, config.standard_professional_doctorate_min_findings + 8),
+        "phd": max(36, config.standard_phd_min_findings + 10),
+    }[key]
+
+
 def _chapter_review_checks(chapter: int) -> List[str]:
     checks = {
         1: [
@@ -1051,7 +1086,7 @@ def _batch_prompt(
             "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. "
-            "Apply the degree_specific_review_contract operationally. For Research Master’s/MPhil work, do not stop after proofreading and broad structural comments: assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant."
+            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant."
         ),
         "sections": sections,
     }
@@ -1187,8 +1222,7 @@ def _verification_prompt(
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
-            "Use the degree_specific_review_contract as a mandatory coverage map. For Research Master’s/MPhil work, independently test every relevant "
-            "dimension and add material missed issues even when the primary review did not propose them. In Chapter One this includes problem-gap evidence, "
+            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the declared level and add material missed issues even when the primary review did not propose them. Keep the issue ordering by academic level and review depth, so a Standard Research Master’s/MPhil review should normally retain more material, research-intensive findings than a Standard Non-Research Master’s review of the same weak chapter. In Chapter One this includes problem-gap evidence, "
             "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
             "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
             "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
@@ -1824,7 +1858,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8.4-all-level-degree-depth",
+            "pipeline": "academic-review-v1.9.8.5-all-level-developmental-depth",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2222,7 +2256,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8.4-all-level-depth",
+                "pipeline": "academic-comment-audit-v1.9.8.5-all-level-developmental-depth",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -2536,6 +2570,49 @@ async def enrich_review_with_academic_ai(
 
     if depth == "light":
         strengths = strengths[:6]
+
+    # If a non-trivial chapter has many evidence-anchored first-pass issues but
+    # the audit leaves a shallow report, retain additional supported findings up
+    # to the degree/depth floor. This protects the expected ordering: Light <
+    # Standard Non-Research Master's < Standard MPhil/doctorate for the same
+    # weak document, without inventing comments or making extra paid calls.
+    floor = _degree_comment_floor(academic_level, depth, config)
+    if floor and len(all_issues) < floor and len(current) >= 12:
+        existing_signatures = {_issue_signature(issue) for issue in all_issues}
+        severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
+        candidates = []
+        for item in all_primary:
+            severity = str(item.get("severity") or "minor").lower()
+            confidence = float(item.get("confidence") or 0.0)
+            if severity == "minor" and depth != "advanced":
+                continue
+            if confidence < (0.70 if depth == "light" else 0.64):
+                continue
+            valid = _valid_issue(dict(item), paragraph_index, context_lock)
+            if not valid:
+                continue
+            signature = _issue_signature(valid)
+            if signature in existing_signatures:
+                continue
+            valid["verification_status"] = "depth_floor_evidence_retention"
+            valid["manual_confirmation_required"] = True
+            candidates.append(valid)
+        candidates.sort(
+            key=lambda row: (
+                severity_rank.get(str(row.get("severity") or "minor"), 9),
+                -float(row.get("confidence") or 0.0),
+            )
+        )
+        candidates, _ = apply_accuracy_gate(candidates, paragraph_index, current)
+        for candidate in candidates:
+            signature = _issue_signature(candidate)
+            if signature in existing_signatures:
+                continue
+            all_issues.append(candidate)
+            existing_signatures.add(signature)
+            if len(all_issues) >= floor:
+                break
+        all_issues = _consolidate_repetitive_issues(_deduplicate_issues(all_issues))
 
     # Final public-output quality gate. Internal provider/audit metadata remains
     # available in the job record, but student-facing findings cannot contain

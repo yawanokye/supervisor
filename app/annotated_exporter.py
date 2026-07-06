@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.4-all-level-degree-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.8.5-developmental-degree-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -126,12 +126,6 @@ def _comment_body(row: Dict[str, Any]) -> str:
     if safe_row is None:
         return ""
     row = safe_row
-    action = _sanitise_guidance(row.get("required_action", ""))
-    assessment = _sanitise_guidance(row.get("comment", ""))
-    if not action:
-        action = assessment or "Revise this passage to address the identified academic weakness."
-    example = _sanitise_guidance(row.get("illustrative_guidance", ""))
-    example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
 
     reference = clean_text(
         row.get("reference_label")
@@ -150,15 +144,30 @@ def _comment_body(row: Dict[str, Any]) -> str:
             if title:
                 table_reference += f": {title}"
             reference = f"{reference}, {table_reference}" if reference else table_reference
-    body = f"{reference}: {action}" if reference else action
+
+    issue = _sanitise_guidance(row.get("item", ""))
+    assessment = _sanitise_guidance(row.get("comment", ""))
+    action = _sanitise_guidance(row.get("required_action", ""))
+    example = _sanitise_guidance(row.get("illustrative_guidance", ""))
+    example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
+
+    parts = []
+    heading = reference or "Supervisor review"
+    if issue:
+        parts.append(f"Issue: {issue}.")
+    if assessment:
+        parts.append(f"Why this matters: {assessment}")
+    if action:
+        parts.append(f"Revise by: {action}")
+    elif assessment:
+        parts.append("Revise by: Correct the marked passage in line with the issue identified above.")
+    if example:
+        parts.append(f"Guidance: {example}")
+
+    body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
     # Manual-confirmation and provider-failure status belongs in the internal
     # audit trail, never in a student's Word comment.
-    if example:
-        candidate = f"{body} Example: {example}"
-        shortened = _shorten_comment(candidate)
-        if shortened and len(shortened) > len(body):
-            body = candidate
-    return public_text(_shorten_comment(body), reject_placeholders=True)
+    return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
 
 def _format_comment_group(comments: Iterable[str]) -> str:
@@ -166,23 +175,36 @@ def _format_comment_group(comments: Iterable[str]) -> str:
     unique = []
     seen = set()
     for value in comments:
-        text = public_text(value, limit=620, reject_placeholders=True).strip("[] ").rstrip(" ;.")
+        text = public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True).strip("[] ").rstrip(" ;.")
         text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         key = normalised(text)
-        if not text or not key or key in seen:
+        if not text or not key:
+            continue
+        if key in seen:
+            continue
+        # Avoid exporting several variants of the same guidance as a numbered bundle.
+        if any(_comment_similarity(key, existing_key) >= 0.52 for existing_key in seen):
             continue
         seen.add(key)
-        shortened = _shorten_comment(text, 620)
+        shortened = _shorten_comment(text, comment_max_chars() if not unique else 520)
         if not shortened:
             continue
         unique.append(shortened)
-        if len(unique) >= 4:
+        if len(unique) >= 3:
             break
     if not unique:
         return ""
     if len(unique) == 1:
         return unique[0]
-    return "\n".join(f"{index}. {text}" for index, text in enumerate(unique, start=1))
+    return "\n\nAdditional related note: ".join(unique)
+
+
+def _comment_similarity(left_key: str, right_key: str) -> float:
+    left_tokens = {token for token in re.findall(r"[a-z0-9]+", left_key) if len(token) >= 4}
+    right_tokens = {token for token in re.findall(r"[a-z0-9]+", right_key) if len(token) >= 4}
+    token_score = (len(left_tokens & right_tokens) / len(left_tokens | right_tokens)) if left_tokens and right_tokens else 0.0
+    sequence_score = __import__("difflib").SequenceMatcher(None, left_key, right_key).ratio()
+    return max(token_score, sequence_score)
 
 def _replace_run_with_parts(run, before: str, marked: str, after: str):
     """Split a plain-text run without changing its visible formatting.

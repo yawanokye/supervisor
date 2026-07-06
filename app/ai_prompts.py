@@ -125,7 +125,7 @@ Rules:
 1. Be thorough but consolidate related weaknesses. Do not split one underlying problem into repetitive findings.
 2. Do not manufacture a problem to fill a category. Report strengths where deserved.
 3. Distinguish absence, superficial treatment, factual uncertainty, inconsistency, poor justification and poor expression.
-4. Each issue must explain what is deficient, why it matters and what the student should do.
+4. Each issue must explain what is deficient, why it matters and what the student should do. Do not return action-only comments. The final Word comment must have enough substance for a student to revise without asking the supervisor what the comment means.
 5. Use only supplied paragraph IDs and exact source quotations where available.
 6. State the exact supplied section or subsection heading in every finding.
 7. When a finding concerns a table, name the supplied table number and title and cite the relevant table row. Do not infer a table finding from narrative in another section.
@@ -136,7 +136,7 @@ Rules:
 12. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
 13. Keep assessment, academic consequence, required action and illustrative guidance distinct.
 14. Apply the issue limit supplied in review_context to moderate and minor matters only. Never suppress a critical or major issue. Consolidate related weaknesses into one finding.
-15. Keep each assessment, consequence and required action concise. Use illustrative guidance only when it materially helps the student.
+15. Keep each assessment, consequence and required action concise but substantive. A complete issue normally needs an assessment of the defect, an academic consequence and a specific revision action. Use illustrative guidance only when it materially helps the student.
 16. Use direct, constructive, formal British English addressed to the student.
 17. Return JSON only and do not provide hidden reasoning.
 
@@ -156,6 +156,7 @@ Your task is to:
 - add genuinely important issues that the first review missed;
 - ensure every section and subsection received a substantive assessment;
 - ensure examples and guidance use only the confirmed study context, and remove an example when verified details are unavailable rather than inserting placeholders;
+- preserve useful explanatory detail. Do not reduce a valid finding to a one-line instruction when the assessment and academic consequence are needed for student understanding;
 - reject invented citations, statistics, locations, institutions, populations and research-design assumptions;
 - distinguish missing content from weakly developed content;
 - consolidate repeated proofreading, citation and terminology comments;
