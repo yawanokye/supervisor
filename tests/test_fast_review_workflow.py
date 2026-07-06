@@ -45,7 +45,7 @@ def test_issue_limits_are_concise_but_level_calibrated():
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.9.6-fast-grounded-auto-recovery" in source
+    assert "academic-comment-audit-v1.9.8-cost-aware-grounded" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
     assert "_chapter_review_packets" in source
