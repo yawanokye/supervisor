@@ -558,3 +558,12 @@
 - Preserved the existing issue comments as primary feedback while anchoring section assessments to exact headings where possible.
 - Kept comments natural and non-mechanical, without checklist labels.
 - No new environment variable or database migration is required.
+
+## v1.9.8.8 - Supervisory Comment Quality Update
+
+- Improved section-coverage comments so they no longer read as generic confirmation stamps.
+- Added section-specific supervisory templates for Background, Statement of the Problem, Purpose, Objectives, Research Questions, Significance, Limitations, Delimitations, Definitions, Organisation of the Study and References.
+- Preserved useful model-generated section assessments, but polished them and expanded short comments with section-specific guidance.
+- Removed weak phrases such as "reviewed against the selected academic level", "no major issues were found" and similar mechanical wording from native Word comments.
+- Kept issue-specific comments anchored to the exact text while making section-level comments more developmental and degree-aware.
+- Added tests to ensure section comments are specific, natural and not generic coverage notes.

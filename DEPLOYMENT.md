@@ -529,3 +529,7 @@ Use `supervisor-v1.9.8.6-render.env.example` on both the Render web service and 
 ## v1.9.8.7 deployment note
 
 Deploy the v1.9.8.7 ZIP as the complete repository. No database migration and no new Render environment variable are required. Submit new reviews rather than resuming old checkpoints so the new section-coverage comments are generated.
+
+## v1.9.8.8 deployment note
+
+No database migration or environment-variable change is required. Deploy the complete v1.9.8.8 repository and restart both the Web Service and Worker. Submit new review jobs after deployment so the improved section-comment quality logic is applied.

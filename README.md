@@ -393,3 +393,7 @@ AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES=0
 ### v1.9.8.7 section coverage comments
 
 Every detected section and subsection now receives a native Word section-review comment in addition to issue-specific comments. This makes review coverage visible in the Word document, including sections where the reviewer found no material defect to export.
+
+### v1.9.8.8 comment-quality behaviour
+
+The native Word comment exporter now treats section-coverage comments as supervisory feedback, not proof-of-review stamps. When a document section has no issue-specific finding, the exporter writes a section-specific note explaining what that section should achieve and what the student should check. For MPhil Standard review, this keeps coverage visible without weakening the academic tone of the feedback.
