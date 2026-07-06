@@ -128,5 +128,5 @@ def test_academic_engine_uses_integrated_router_and_expert_audit():
     assert "_batch_model_route(batch, academic_level, config)" in source
     assert "universal_comment_accuracy_audit" in source
     assert "focused_comment_accuracy_retry" in source
-    assert "audit_model = config.openai_final_audit_model" in source
+    assert "_degree_audit_settings" in source
     assert '"active_provider": "cost_aware_router"' in source

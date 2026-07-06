@@ -122,5 +122,5 @@ def test_admin_dashboard_contains_individual_and_bulk_allocation_controls() -> N
     assert "Expected standard pages" in template
     assert "reserve_review_tokens" in main
     assert "settle_review_tokens" in main
-    assert 'version="1.9.8.2"' in main
+    assert 'version="1.9.8.4"' in main
     assert "class TokenLedger" in database
