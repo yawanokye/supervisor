@@ -602,3 +602,13 @@
 - Suppressed false Definition of Terms section-coverage comments when content is present.
 - Added inline annotated DOCX export with red revision text and blue supervisor comments.
 - Added UI links for native-comment and inline-annotated comparison.
+
+## v1.9.9.3 - All-level strengthened supervisory review
+
+- Strengthened review depth for all supported academic levels: Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD.
+- Increased degree-calibrated audit capacity and public comment floors so weak submissions do not collapse into a small set of generic comments.
+- Added a final degree-contract rescue after public comment cleaning. Deterministic, evidence-anchored checklist findings are re-tested at the end so required categories are not silently lost during filtering.
+- Added level-specific Chapter One contribution checks: modest undergraduate contribution, applied/professional master’s contribution, MPhil research contribution, professional doctorate practice/policy contribution and PhD original knowledge contribution.
+- Added all-level conceptual/applied/theoretical anchoring checks instead of applying this only to MPhil and doctoral work.
+- Suppressed false section-absence comments, especially claims that Definition of Terms has no definitions when definitions are present.
+- Strengthened comment grammar polishing to prevent outputs such as “so that it incorporate” and “so that it where required”.

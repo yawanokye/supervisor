@@ -556,3 +556,7 @@ VPROF_DETERMINISTIC_CHECKLIST_MAX_ISSUES=36
 ## v1.9.9.1 deployment note
 
 Deploy as a full replacement of v1.9.9.0. Start new review jobs after deployment. Do not resume old checkpoints because they were created before the hard checklist and DOCX no-title-page-fallback changes.
+
+## v1.9.9.3 deployment note
+
+Deploy as a full replacement and start new review jobs. Do not resume old v1.9.9.2 jobs because their checkpoints do not contain the strengthened all-level degree-contract rescue.
