@@ -715,6 +715,8 @@ async function waitForReview(pollUrl, options = {}) {
   let temporaryFailures = 0;
   let pollDelay = 2500;
   let resumeRequested = false;
+  let recoveryFirstSeenAt = 0;
+  let autoResumeFailures = 0;
 
   while (Date.now() - started < maximumWait) {
     await new Promise(resolve => setTimeout(resolve, pollDelay));
@@ -777,16 +779,28 @@ async function waitForReview(pollUrl, options = {}) {
       }
       if (job.status === "failed" && job.resume_url) {
         const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
+        if (!recoveryFirstSeenAt) recoveryFirstSeenAt = Date.now();
+        const maxRecoveryMs = Math.max(60, Number(job.client_auto_recovery_seconds || 600)) * 1000;
+        if (job.auto_resume_allowed === false || Date.now() - recoveryFirstSeenAt > maxRecoveryMs || autoResumeFailures >= 1) {
+          localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+          setStopReviewUrl("");
+          const message = job.error || job.message || (
+            savedUnits
+              ? `Automatic recovery stopped after ${savedUnits} saved checkpoint${savedUnits === 1 ? "" : "s"}. Open Review History and select Recover once, or submit the document again.`
+              : "Automatic recovery stopped. Open Review History and select Recover once, or submit the document again."
+          );
+          const terminalError = new Error(message);
+          terminalError.terminal = true;
+          throw terminalError;
+        }
+
         loadingMessage.textContent = savedUnits
           ? `The review stopped safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Recovering the interrupted stage…`
           : "The review stopped safely. Recovering the interrupted stage…";
-        if (!resumeRequested && job.auto_resume_allowed !== false) {
+        if (!resumeRequested) {
           resumeRequested = true;
-          try {
-            await requestJobResume(job.resume_url);
-          } catch (_) {
-            // The portal keeps the manual Recover action available.
-          }
+          const ok = await requestJobResume(job.resume_url);
+          if (!ok) autoResumeFailures += 1;
         }
         pollDelay = 5000;
         continue;
@@ -802,6 +816,19 @@ async function waitForReview(pollUrl, options = {}) {
       }
       if (job.status === "paused" && job.recoverable) {
         const savedUnits = Number(job.completed_units || job.checkpoint_count || 0);
+        if (!recoveryFirstSeenAt) recoveryFirstSeenAt = Date.now();
+        const maxRecoveryMs = Math.max(60, Number(job.client_auto_recovery_seconds || 600)) * 1000;
+        if (job.auto_resume_allowed === false || Date.now() - recoveryFirstSeenAt > maxRecoveryMs) {
+          localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+          setStopReviewUrl("");
+          const terminalError = new Error(
+            savedUnits
+              ? `Automatic recovery stopped after ${savedUnits} saved checkpoint${savedUnits === 1 ? "" : "s"}. Open Review History and select Resume once, or submit the document again.`
+              : "Automatic recovery stopped. Open Review History and select Resume once, or submit the document again."
+          );
+          terminalError.terminal = true;
+          throw terminalError;
+        }
         loadingMessage.textContent = savedUnits
           ? `Review paused safely with ${savedUnits} completed checkpoint${savedUnits === 1 ? "" : "s"}. Resuming from the last saved point…`
           : "Review paused safely. Resuming from the last saved point…";
@@ -816,10 +843,6 @@ async function waitForReview(pollUrl, options = {}) {
           } catch (_) {
             // The server-side automatic recovery may still resume the job.
           }
-        }
-        if (job.auto_resume_allowed === false) {
-          loadingMessage.textContent =
-            "Automatic recovery stopped after repeated attempts. The saved checkpoints are safe. Open Review History and select Resume once after deploying the recovery update.";
         }
         pollDelay = 5000;
         continue;
