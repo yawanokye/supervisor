@@ -572,3 +572,11 @@ After deploying this version, do not wait indefinitely on an old browser spinner
 2. Confirm that your OpenAI organisation has access to the selected models. GPT-5.6 Luna is preview/limited-access; keep the fallback model configured.
 3. Restart both Render Web Service and Worker.
 4. Run a fresh review. Do not resume old jobs created under previous provider routing.
+
+
+## v1.9.9.6 – Combined Pipeline Summary Scope Fix
+
+- Fixes a background review crash after a successful OpenAI Responses API call.
+- Ensures the final degree-contract/checklist rescue stage always has a safe local summary object.
+- Prevents `UnboundLocalError: cannot access local variable 'summary'` in `academic_ai_engine.py`.
+- No database migration or environment change required.

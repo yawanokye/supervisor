@@ -630,3 +630,11 @@
 - Routes final audit, full-thesis synthesis and external examination to `OPENAI_FINAL_SYNTHESIS_MODEL` with fallback.
 - Keeps DeepSeek disabled for this mode to avoid provider-mixing instability during tests.
 - Does not enable Batch API for live reviews; Batch remains suitable for asynchronous queued/offline reviews.
+
+
+## v1.9.9.6 – Combined Pipeline Summary Scope Fix
+
+- Fixes a background review crash after a successful OpenAI Responses API call.
+- Ensures the final degree-contract/checklist rescue stage always has a safe local summary object.
+- Prevents `UnboundLocalError: cannot access local variable 'summary'` in `academic_ai_engine.py`.
+- No database migration or environment change required.
