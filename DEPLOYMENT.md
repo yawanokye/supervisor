@@ -541,3 +541,14 @@ No database migration or environment-variable change is required. Deploy the com
 3. Ensure `DEEPSEEK_API_KEY` is valid and `VPROF_ENABLE_DEEPSEEK=true`.
 4. For the Pro-only test, keep `VPROF_ENABLE_OPENAI=false` and submit the MPhil document as a new Standard Review.
 5. Do not resume older checkpoints because they contain mixed-route and earlier comment-formatting state.
+
+## v1.9.9.0 deterministic checklist deployment note
+
+This release does not require a database migration. Deploy the full repository or patch and redeploy both web and worker services. Do not resume old checkpoints if you want the new deterministic checklist findings to appear in DOCX comments.
+
+Recommended settings:
+
+```env
+VPROF_DETERMINISTIC_SUPERVISORY_CHECKLIST=true
+VPROF_DETERMINISTIC_CHECKLIST_MAX_ISSUES=36
+```

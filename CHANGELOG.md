@@ -577,3 +577,12 @@
 - Suppresses document-level recovery prefixes in exported native Word comments.
 - Raises recommended MPhil Standard finding floor to 22 for weak chapters.
 - Increases Research Master's/MPhil output allowance for expert Pro route.
+
+## v1.9.9.0 - Deterministic Supervisory Checklist
+
+- Added a deterministic supervisory checklist engine based on the uploaded Thesis Self-Evaluation Checklist and dissertation/thesis preparation guideline.
+- Injected checklist-derived findings into the academic review pipeline before the factual accuracy and public comment gates.
+- Added scope control so a Chapter One upload is not penalised for missing Chapters Two to Five.
+- Prevented checklist findings from falling back to title-page material when the correct section cannot be anchored.
+- Added guideline-derived expectations for theoretical/conceptual framework, literature critique, method justification, analysis mapping, results discussion and recommendations traced to findings.
+- Added regression tests for checklist anchoring and uploaded-chapter scope.

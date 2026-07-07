@@ -403,3 +403,9 @@ The native Word comment exporter now treats section-coverage comments as supervi
 Set `VPROF_EXPERT_PROVIDER_MODE=deepseek_v4_pro_only` and `VPROF_FORCE_DEEPSEEK_V4_PRO=true` to use DeepSeek V4 Pro as the sole supervisory review model. This is recommended when MPhil Standard review requires deeper, more expert comments and the mixed Flash/OpenAI route produces shallow or recovery-note comments.
 
 In this mode, the app does not silently downgrade to Flash or OpenAI mini. If DeepSeek Pro fails, the job should be retried after checking provider access and logs.
+
+### v1.9.9.0 deterministic supervisory checklist
+
+The academic review pipeline now includes a deterministic checklist stage derived from the Thesis Self-Evaluation Checklist and dissertation/thesis guidelines. It checks uploaded work for required supervisory evidence such as problem clarity, background-to-problem logic, purpose-objective-question alignment, literature critique, research design justification, sampling and measurement adequacy, analysis mapping, ethics, results-by-objective presentation and recommendations traceable to findings.
+
+The deterministic stage does not rewrite the thesis and does not depend on model judgement. It produces evidence-anchored findings that are then passed through the same factual, public-comment and DOCX anchoring gates as model-generated findings.
