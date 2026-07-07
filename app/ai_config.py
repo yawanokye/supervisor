@@ -169,6 +169,23 @@ class HybridAIConfig:
     deepseek_quality_model: str
     openai_fast_model: str
 
+    # v1.9.9.5 combined OpenAI thesis pipeline roles.
+    combined_app_pipeline_enabled: bool
+    openai_cleaning_model: str
+    openai_section_analysis_model: str
+    openai_section_analysis_fallback_model: str
+    openai_final_synthesis_model: str
+    openai_final_synthesis_fallback_model: str
+    openai_cleaning_input_price: float
+    openai_cleaning_cached_input_price: float
+    openai_cleaning_output_price: float
+    openai_section_input_price: float
+    openai_section_cached_input_price: float
+    openai_section_output_price: float
+    openai_final_input_price: float
+    openai_final_cached_input_price: float
+    openai_final_output_price: float
+
     deepseek_pro_input_price: float
     deepseek_pro_cached_input_price: float
     deepseek_pro_output_price: float
@@ -315,6 +332,25 @@ class HybridAIConfig:
         expert_output_price = _env_float(
             "PRICE_OPENAI_EXPERT_OUTPUT", 15.00
         )
+
+        combined_pipeline_enabled = _env_bool(
+            "VPROF_COMBINED_APP_PIPELINE", False
+        )
+        cleaning_model = os.getenv(
+            "OPENAI_CLEANING_MODEL", "gpt-4.1-nano"
+        ).strip() or "gpt-4.1-nano"
+        section_model = os.getenv(
+            "OPENAI_SECTION_ANALYSIS_MODEL", "gpt-5.6-luna"
+        ).strip() or "gpt-5.6-luna"
+        section_fallback_model = os.getenv(
+            "OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL", chapter_model
+        ).strip() or chapter_model
+        final_synthesis_model = os.getenv(
+            "OPENAI_FINAL_SYNTHESIS_MODEL", "gpt-5.5"
+        ).strip() or "gpt-5.5"
+        final_synthesis_fallback_model = os.getenv(
+            "OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL", audit_model or expert_model
+        ).strip() or audit_model or expert_model
 
         return cls(
             enabled=_env_bool("AI_REVIEW_ENABLED", True),
@@ -530,6 +566,22 @@ class HybridAIConfig:
                 "OPENAI_FAST_MODEL", "gpt-5.4-nano"
             ).strip() or "gpt-5.4-nano",
 
+            combined_app_pipeline_enabled=combined_pipeline_enabled,
+            openai_cleaning_model=cleaning_model,
+            openai_section_analysis_model=section_model,
+            openai_section_analysis_fallback_model=section_fallback_model,
+            openai_final_synthesis_model=final_synthesis_model,
+            openai_final_synthesis_fallback_model=final_synthesis_fallback_model,
+            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 0.10),
+            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.01),
+            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 0.40),
+            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 1.00),
+            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.10),
+            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 6.00),
+            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 5.00),
+            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.50),
+            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 30.00),
+
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
             ),
@@ -661,6 +713,36 @@ class HybridAIConfig:
                 self.openai_fast_input_price,
                 self.openai_fast_cached_input_price,
                 self.openai_fast_output_price,
+            )
+        if value == self.openai_cleaning_model.lower():
+            return (
+                self.openai_cleaning_input_price,
+                self.openai_cleaning_cached_input_price,
+                self.openai_cleaning_output_price,
+            )
+        if value in {
+            self.openai_section_analysis_model.lower(),
+            self.openai_section_analysis_fallback_model.lower(),
+        }:
+            if value == self.openai_section_analysis_fallback_model.lower() and value == self.openai_chapter_model.lower():
+                return (
+                    self.openai_chapter_input_price,
+                    self.openai_chapter_cached_input_price,
+                    self.openai_chapter_output_price,
+                )
+            return (
+                self.openai_section_input_price,
+                self.openai_section_cached_input_price,
+                self.openai_section_output_price,
+            )
+        if value in {
+            self.openai_final_synthesis_model.lower(),
+            self.openai_final_synthesis_fallback_model.lower(),
+        }:
+            return (
+                self.openai_final_input_price,
+                self.openai_final_cached_input_price,
+                self.openai_final_output_price,
             )
         expert_models = {
             self.openai_expert_model.lower(),

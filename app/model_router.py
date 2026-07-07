@@ -152,6 +152,87 @@ class CostAwareAIProvider:
         # supervisory review quality for MPhil Standard review.
         return stage is not ReviewStage.EXTERNAL_EXAMINATION
 
+    def _combined_openai_pipeline_enabled(self) -> bool:
+        return bool(getattr(self.config, "combined_app_pipeline_enabled", False))
+
+    def _combined_pipeline_plan(self, stage: ReviewStage, profile: RoutingProfile) -> RoutePlan:
+        """Three-role OpenAI thesis pipeline.
+
+        Phase 1 routes cleaning/formatting and JSON repair to the cheap nano
+        model. Phase 2 routes section and domain checks to the section-analysis
+        model, normally GPT-5.6 Luna where access is available. Phase 3 routes
+        final synthesis and committee-style audits to GPT-5.5/GPT-5.4.
+
+        The Batch API is not used directly here because live reviews need a
+        synchronous response. The role separation is compatible with a future
+        asynchronous queued batch runner.
+        """
+        if not self.openai or not self.config.enable_openai_routing:
+            raise AIProviderError(
+                "The combined OpenAI thesis pipeline requires OPENAI_API_KEY and VPROF_ENABLE_OPENAI=true."
+            )
+
+        cleaning = RouteTarget(
+            ProviderName.OPENAI,
+            self.config.openai_cleaning_model,
+            "minimal",
+        )
+        section = RouteTarget(
+            ProviderName.OPENAI,
+            self.config.openai_section_analysis_model,
+            self.config.openai_chapter_reasoning_effort or "high",
+        )
+        section_fallback = RouteTarget(
+            ProviderName.OPENAI,
+            self.config.openai_section_analysis_fallback_model,
+            self.config.openai_chapter_reasoning_effort or "high",
+        )
+        final = RouteTarget(
+            ProviderName.OPENAI,
+            self.config.openai_final_synthesis_model,
+            self.config.openai_final_audit_reasoning_effort or "xhigh",
+        )
+        final_fallback = RouteTarget(
+            ProviderName.OPENAI,
+            self.config.openai_final_synthesis_fallback_model,
+            self.config.openai_final_audit_reasoning_effort or "xhigh",
+        )
+
+        phase1 = {
+            ReviewStage.DOCUMENT_TRIAGE,
+            ReviewStage.STRUCTURE_MAP,
+            ReviewStage.LANGUAGE_SCAN,
+            ReviewStage.COMMENT_DEDUPLICATION,
+            ReviewStage.JSON_REPAIR,
+        }
+        phase3 = {
+            ReviewStage.FINAL_AUDIT,
+            ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+            ReviewStage.EXTERNAL_EXAMINATION,
+        }
+        if stage in phase1:
+            primary, fallback, escalation = self._normalise_targets(
+                cleaning, section_fallback, None
+            )
+            return RoutePlan(stage, profile, primary, fallback, escalation, False)
+        if stage in phase3:
+            primary, fallback, escalation = self._normalise_targets(
+                final, final_fallback, None
+            )
+            return RoutePlan(stage, profile, primary, fallback, escalation, False)
+
+        primary, fallback, escalation = self._normalise_targets(
+            section, section_fallback, final
+        )
+        return RoutePlan(
+            stage,
+            profile,
+            primary,
+            fallback,
+            escalation,
+            False,
+        )
+
     def _enabled(self, target: Optional[RouteTarget]) -> bool:
         if target is None:
             return False
@@ -237,6 +318,9 @@ class CostAwareAIProvider:
             requested_model or config.openai_chapter_model,
             requested_effort or config.openai_chapter_reasoning_effort,
         )
+
+        if self._combined_openai_pipeline_enabled():
+            return self._combined_pipeline_plan(stage_value, profile)
 
         if self._deepseek_v4_pro_only_mode() and self._stage_allows_deepseek_pro_only(stage_value):
             # One expert-class DeepSeek V4 Pro route for every supervisory
