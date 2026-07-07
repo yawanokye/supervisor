@@ -560,3 +560,8 @@ Deploy as a full replacement of v1.9.9.0. Start new review jobs after deployment
 ## v1.9.9.3 deployment note
 
 Deploy as a full replacement and start new review jobs. Do not resume old v1.9.9.2 jobs because their checkpoints do not contain the strengthened all-level degree-contract rescue.
+
+
+## v1.9.9.4 deployment note
+
+After deploying this version, do not wait indefinitely on an old browser spinner. Refresh the page and open Review History. Jobs whose automatic recovery budget is exhausted will show a Recover action if the saved upload is still available. Start new tests as fresh reviews rather than relying on an already looping browser session.

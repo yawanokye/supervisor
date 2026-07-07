@@ -612,3 +612,12 @@
 - Added all-level conceptual/applied/theoretical anchoring checks instead of applying this only to MPhil and doctoral work.
 - Suppressed false section-absence comments, especially claims that Definition of Terms has no definitions when definitions are present.
 - Strengthened comment grammar polishing to prevent outputs such as “so that it incorporate” and “so that it where required”.
+
+
+## v1.9.9.4 — Recovery hard-stop and stuck-review protection
+
+- Prevents indefinite browser polling when a review remains on "Recovering the interrupted stage".
+- Adds server-side stale recovery normalisation for queued/processing jobs that stop progressing.
+- Stops automatic resume once the configured recovery window or retry budget is exhausted.
+- Keeps saved checkpoints available for one manual Recover action from Review History.
+- Ensures the Review History "Recover stalled stage" action has a functioning endpoint.
