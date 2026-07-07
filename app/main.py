@@ -101,6 +101,8 @@ AUTOMATIC_RETRY_MAX_DELAY_SECONDS = max(30, int(os.getenv("AUTOMATIC_RETRY_MAX_D
 AUTO_RESUME_JOBS = os.getenv("AUTO_RESUME_JOBS", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
+RECOVERY_STALLED_AFTER_SECONDS = max(120, int(os.getenv("RECOVERY_STALLED_AFTER_SECONDS", "600")))
+CLIENT_AUTO_RECOVERY_SECONDS = max(60, int(os.getenv("CLIENT_AUTO_RECOVERY_SECONDS", "600")))
 WORKER_ID = f"{os.getenv('RENDER_INSTANCE_ID', 'local')}-{uuid.uuid4().hex[:10]}"
 ALLOWED_EXTENSIONS = (".docx", ".pdf")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "development-only-change-this-secret")
@@ -108,7 +110,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "tr
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.8.6",
+    version="1.9.9.4",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -1015,6 +1017,114 @@ def _is_stalled_record(db: Session, record: ReviewRecord) -> bool:
     if not last_activity:
         return False
     return (datetime.now(timezone.utc) - last_activity).total_seconds() >= STAGE_STALE_AFTER_SECONDS
+
+
+def _auto_resume_allowed_for(record: ReviewRecord) -> bool:
+    return bool(
+        AUTO_RESUME_JOBS
+        and record.payload_available
+        and record.recoverable
+        and int(record.resume_count or 0) < MAX_AUTO_RESUMES
+    )
+
+
+def _last_recovery_activity(db: Session, record: ReviewRecord) -> Optional[datetime]:
+    candidates = [
+        _normalise_db_datetime(record.last_heartbeat_at),
+        _normalise_db_datetime(record.lease_expires_at),
+        _stage_last_activity(db, record),
+        _normalise_db_datetime(record.started_at),
+        _normalise_db_datetime(record.created_at),
+    ]
+    candidates = [value for value in candidates if value is not None]
+    return max(candidates) if candidates else None
+
+
+def _normalise_stalled_recovery_record(db: Session, record: ReviewRecord) -> ReviewRecord:
+    """Convert silent recovery loops into a clear terminal state.
+
+    A recoverable job may get trapped in queued/failed recovery if the worker is
+    not rescheduled, if a model call repeatedly fails, or if the browser keeps
+    auto-posting the resume URL.  The user should not stare at an infinite
+    spinner; once automatic recovery is no longer credible, the saved
+    checkpoints remain available but the portal must show a manual Recover
+    action instead.
+    """
+    if record.status == "completed":
+        return record
+
+    now = datetime.now(timezone.utc)
+    attempts = int(record.resume_count or 0)
+    payload_ok = bool(record.payload_available and payload_available(record.job_id))
+    lease_expires = _normalise_db_datetime(record.lease_expires_at)
+    lease_is_active = bool(lease_expires and lease_expires > now)
+    in_memory_active = record.job_id in RUNNING_JOB_IDS or record.job_id in SCHEDULED_JOB_IDS
+
+    if record.status == "processing":
+        heartbeat = _normalise_db_datetime(record.last_heartbeat_at)
+        heartbeat_stale = bool(
+            heartbeat
+            and (now - heartbeat).total_seconds() >= JOB_STALE_AFTER_SECONDS
+        )
+        if heartbeat_stale and not lease_is_active and not in_memory_active:
+            if payload_ok and attempts < MAX_AUTO_RESUMES:
+                record.status = "queued"
+                record.message = "The stage stopped sending progress and has been queued for one automatic recovery attempt"
+                record.error = "The worker heartbeat became stale. Completed checkpoints were retained."
+                record.recoverable = True
+                record.lease_owner = None
+                record.lease_expires_at = None
+                db.commit()
+                _schedule_review_job(record.job_id, resumed=True)
+            else:
+                record.status = "failed"
+                record.message = "Automatic recovery stopped; saved checkpoints are available"
+                record.error = (
+                    "The review worker stopped sending progress and the automatic recovery budget has been exhausted. "
+                    "Use Recover once from Review History, or submit the document again if recovery fails."
+                )
+                record.recoverable = payload_ok
+                record.payload_available = payload_ok
+                record.lease_owner = None
+                record.lease_expires_at = None
+                db.commit()
+        return record
+
+    if record.status == "queued" and record.recoverable and payload_ok:
+        activity = _last_recovery_activity(db, record)
+        age = (now - activity).total_seconds() if activity else 0
+        if (not in_memory_active) and age >= RECOVERY_STALLED_AFTER_SECONDS:
+            if attempts < MAX_AUTO_RESUMES:
+                record.message = "Queued recovery is being restarted from the last completed checkpoint"
+                record.error = "The queued recovery did not start in time and has been rescheduled."
+                db.commit()
+                _schedule_review_job(record.job_id, resumed=True)
+            else:
+                record.status = "failed"
+                record.message = "Automatic recovery stopped after repeated attempts"
+                record.error = (
+                    "The review did not progress after the saved checkpoint recovery attempts. "
+                    "The upload and completed checkpoints are still available for one manual Recover action."
+                )
+                record.recoverable = True
+                record.payload_available = True
+                db.commit()
+        return record
+
+    if record.status == "failed" and (not payload_ok or attempts >= MAX_AUTO_RESUMES):
+        if record.message != "Automatic recovery stopped after repeated attempts":
+            record.message = "Automatic recovery stopped after repeated attempts"
+            if not record.error:
+                record.error = (
+                    "The review could not complete automatically. The saved checkpoints remain available "
+                    "for a manual Recover action if the upload is still present."
+                )
+            record.recoverable = payload_ok
+            record.payload_available = payload_ok
+            db.commit()
+        return record
+
+    return record
 
 
 def _assert_job_lease(job_id: str) -> None:
@@ -2210,6 +2320,71 @@ async def stop_review_job(
     return response
 
 
+@app.post("/api/review/jobs/{job_id}/recover-stalled", status_code=202)
+async def recover_stalled_review_job(
+    job_id: str,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Force a stalled processing/queued job back to the last durable checkpoint."""
+    _verify_csrf(request, csrf_token)
+    user = _current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+
+    record = (
+        db.query(ReviewRecord)
+        .filter(ReviewRecord.job_id == job_id)
+        .first()
+    )
+    if not record or (
+        user.role != "admin" and record.lecturer_id != user.id
+    ):
+        raise HTTPException(status_code=404, detail="Review job not found.")
+    if record.status == "completed":
+        raise HTTPException(status_code=409, detail="This review is already complete.")
+
+    saved_payload_available = payload_available(job_id)
+    if not saved_payload_available:
+        raise HTTPException(
+            status_code=409,
+            detail="The saved upload is unavailable. Submit the document again.",
+        )
+
+    task = JOB_TASKS.get(job_id)
+    if task and not task.done():
+        task.cancel()
+    RUNNING_JOB_IDS.discard(job_id)
+    SCHEDULED_JOB_IDS.discard(job_id)
+    JOB_CACHE.pop(job_id, None)
+
+    record.status = "queued"
+    record.message = "Manual recovery requested from the last completed checkpoint"
+    record.error = None
+    record.recoverable = True
+    record.payload_available = True
+    record.lease_owner = None
+    record.lease_expires_at = None
+    db.commit()
+
+    scheduled = _schedule_review_job(job_id, resumed=True)
+    if "text/html" in request.headers.get("accept", ""):
+        _set_flash(
+            request,
+            "Recovery started from the last completed checkpoint.",
+            "success",
+        )
+        return RedirectResponse("/portal", status_code=303)
+    return {
+        "job_id": job_id,
+        "status": "queued" if scheduled else record.status,
+        "progress": int(record.progress or 2),
+        "message": "Recovery started from the last completed checkpoint" if scheduled else "The review is already running",
+        "poll_url": f"/api/review/jobs/{job_id}",
+    }
+
+
 @app.post("/api/review/jobs/{job_id}/resume", status_code=202)
 async def resume_review_job(
     job_id: str,
@@ -2359,6 +2534,10 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     record = db.query(ReviewRecord).filter(ReviewRecord.job_id == job_id).first()
     if not record or (user.role != "admin" and record.lecturer_id != user.id):
         raise HTTPException(status_code=404, detail="Review job not found or expired.")
+    record = _normalise_stalled_recovery_record(db, record)
+    if job and record.status in {"failed", "completed", "stopped"}:
+        JOB_CACHE.pop(job_id, None)
+        job = None
     if job:
         response = dict(job)
         response.update({
@@ -2375,10 +2554,8 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             "recoverable": bool(record.recoverable),
             "payload_available": bool(record.payload_available),
             "resume_count": int(record.resume_count or 0),
-            "auto_resume_allowed": bool(
-                AUTO_RESUME_JOBS
-                and int(record.resume_count or 0) < MAX_AUTO_RESUMES
-            ),
+            "auto_resume_allowed": _auto_resume_allowed_for(record),
+            "client_auto_recovery_seconds": CLIENT_AUTO_RECOVERY_SECONDS,
             "last_heartbeat_at": (
                 record.last_heartbeat_at.isoformat()
                 if record.last_heartbeat_at
@@ -2411,10 +2588,8 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
         "recoverable": bool(record.recoverable),
         "payload_available": bool(record.payload_available),
         "resume_count": int(record.resume_count or 0),
-        "auto_resume_allowed": bool(
-            AUTO_RESUME_JOBS
-            and int(record.resume_count or 0) < MAX_AUTO_RESUMES
-        ),
+        "auto_resume_allowed": _auto_resume_allowed_for(record),
+        "client_auto_recovery_seconds": CLIENT_AUTO_RECOVERY_SECONDS,
         "last_heartbeat_at": (
             record.last_heartbeat_at.isoformat()
             if record.last_heartbeat_at
