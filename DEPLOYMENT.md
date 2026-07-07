@@ -552,3 +552,7 @@ Recommended settings:
 VPROF_DETERMINISTIC_SUPERVISORY_CHECKLIST=true
 VPROF_DETERMINISTIC_CHECKLIST_MAX_ISSUES=36
 ```
+
+## v1.9.9.1 deployment note
+
+Deploy as a full replacement of v1.9.9.0. Start new review jobs after deployment. Do not resume old checkpoints because they were created before the hard checklist and DOCX no-title-page-fallback changes.

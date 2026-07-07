@@ -586,3 +586,19 @@
 - Prevented checklist findings from falling back to title-page material when the correct section cannot be anchored.
 - Added guideline-derived expectations for theoretical/conceptual framework, literature critique, method justification, analysis mapping, results discussion and recommendations traced to findings.
 - Added regression tests for checklist anchoring and uploaded-chapter scope.
+
+## v1.9.9.1 – Hard deterministic checklist and DOCX anchoring correction
+
+- Added a hard Chapter One MPhil supervisory contract for obvious checklist failures.
+- Added deterministic comments for purpose-objective drift, missing hypotheses, weak local evidence, weak theory anchoring, proposal-stage tense, unresolved placeholders, circular definitions, citation punctuation, author mismatch, spelling convention inconsistency and reference-list audit.
+- Suppressed bland generic checklist comments where a specific hard-check comment exists.
+- Prevented unresolved section-level comments from being exported to the title page.
+- Changed document-level comment anchoring to the first academic chapter/section anchor instead of the first paragraph.
+
+## v1.9.9.2 - Evidence-safe checklist and inline annotation comparison
+
+- Fixed imprecise section matching that could misread Limitations as Delimitations.
+- Added stricter public-comment sanitation for internal extraction terms.
+- Suppressed false Definition of Terms section-coverage comments when content is present.
+- Added inline annotated DOCX export with red revision text and blue supervisor comments.
+- Added UI links for native-comment and inline-annotated comparison.

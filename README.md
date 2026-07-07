@@ -409,3 +409,7 @@ In this mode, the app does not silently downgrade to Flash or OpenAI mini. If De
 The academic review pipeline now includes a deterministic checklist stage derived from the Thesis Self-Evaluation Checklist and dissertation/thesis guidelines. It checks uploaded work for required supervisory evidence such as problem clarity, background-to-problem logic, purpose-objective-question alignment, literature critique, research design justification, sampling and measurement adequacy, analysis mapping, ethics, results-by-objective presentation and recommendations traceable to findings.
 
 The deterministic stage does not rewrite the thesis and does not depend on model judgement. It produces evidence-anchored findings that are then passed through the same factual, public-comment and DOCX anchoring gates as model-generated findings.
+
+### v1.9.9.1 hard supervisory checklist
+
+Version 1.9.9.1 strengthens v1.9.9.0 by adding a hard Chapter One MPhil contract. The deterministic checklist now produces specific, evidence-anchored findings for obvious supervisory failures rather than relying on generic checklist wording. It also prevents native DOCX fallback comments from being attached to title-page text such as the university name.
