@@ -30,6 +30,7 @@ from .ai_schemas import (
 )
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
+from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .supervisory_accuracy_guard import (
     apply_accuracy_gate,
     build_factual_index,
@@ -1856,7 +1857,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.8.6-final-mphil-depth",
+            "pipeline": "academic-review-v1.9.9.0-deterministic-supervisory-checklist",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2454,6 +2455,20 @@ async def enrich_review_with_academic_ai(
         research_approach=(review.get("summary") or {}).get("research_approach"),
     ):
         valid = _valid_issue(deterministic, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
+    # v1.9.9.0: add evidence-backed deterministic supervisory checklist findings
+    # before the accuracy/public-output gates. This makes the native DOCX review
+    # depend on the attached supervisory checklist and thesis guidelines, not only
+    # on model-generated findings. Findings still need an exact paragraph anchor
+    # and pass through the same placement and public-comment quality gates.
+    for checklist_issue in deterministic_supervisory_checklist_issues(
+        current,
+        academic_level=academic_level,
+        research_approach=(review.get("summary") or {}).get("research_approach"),
+    ):
+        valid = _valid_issue(checklist_issue, paragraph_index, context_lock)
         if valid:
             raw_issues.append(valid)
 
