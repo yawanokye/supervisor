@@ -1159,13 +1159,10 @@ def _unresolved_section_fallback(
         "part": section.get("part", 1),
         "paragraph_count": len(section.get("paragraphs") or []),
         "section_score": 50.0,
-        "section_assessment": (
-            f"{heading} should be checked for its contribution to the chapter's "
-            "argument, alignment with the study purpose, adequacy of evidence, "
-            "conceptual clarity, citation accuracy and consistency with the "
-            "declared research stage. Strengthen the section wherever it does not "
-            "clearly support the problem, objectives, questions and intended method."
-        ),
+        # Keep unavailable model responses out of student-facing comments. The
+        # exporter will use its own section-specific template if a coverage note
+        # is needed, and deterministic checklist findings will add exact issues.
+        "section_assessment": "",
         "coverage_warning": "",
         "strengths": [],
         "issues": [],

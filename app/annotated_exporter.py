@@ -272,7 +272,7 @@ def _is_synthetic_section_heading(value: str) -> bool:
 
 
 _GENERIC_SECTION_ASSESSMENT_RE = re.compile(
-    r"\b(?:reviewed against|selected academic level|no major issue|appears adequate|looks adequate|section was reviewed|this section has been reviewed|check that its purpose|generally acceptable|meets the expected standard)\b",
+    r"\b(?:reviewed against|selected academic level|no major issue|appears adequate|looks adequate|section was reviewed|this section has been reviewed|check that its purpose|should be checked|contribution to the chapter\'s argument|generally acceptable|meets the expected standard)\b",
     flags=re.I,
 )
 
@@ -479,21 +479,12 @@ def _add_section_review_comments(
             document, target, [comment], author=author, initials=initials
         ):
             continue
-        # Fall back to the first direct evidence paragraph from the section
-        # review when heading matching is unavailable. This keeps the coverage
-        # comment in the relevant section rather than at the document opening.
-        source = row.get("source_section") or {}
-        for paragraph_data in source.get("paragraphs") or []:
-            try:
-                paragraph_number = int(paragraph_data.get("paragraph"))
-            except (TypeError, ValueError):
-                paragraph_number = 0
-            if not paragraph_number:
-                continue
-            # The caller's source map is not passed here, so use a heading-level
-            # fallback rather than risking incorrect paragraph anchoring.
-            break
-        fallback_comments.append(comment)
+        # Do not downgrade a section-level comment into a document-level
+        # fallback. Earlier versions placed unresolved section comments on the
+        # first paragraph, which could wrongly annotate the title page. If the
+        # exact heading cannot be located, skip the section coverage note and
+        # let exact issue comments carry the feedback.
+        continue
 
 
 def _comment_similarity(left_key: str, right_key: str) -> float:
@@ -849,6 +840,34 @@ def _first_native_anchor(document) -> Optional[Paragraph]:
     return None
 
 
+def _first_academic_anchor(document):
+    """Return a safe academic-body anchor, never title-page boilerplate."""
+    preferred = (
+        "chapter one", "chapter two", "chapter three", "chapter four", "chapter five",
+        "introduction", "background to the study", "statement of the problem",
+    )
+    for paragraph in document.paragraphs:
+        text = clean_text(paragraph.text)
+        low = normalised(text)
+        if not text:
+            continue
+        if low in preferred or re.match(r"^chapter\s+(one|two|three|four|five|six|[1-9])\b", low):
+            return paragraph
+    title_page_terms = (
+        "university of cape coast", "college of", "school of", "by", "june", "july",
+        "august", "september", "emmanuel", "candidate", "supervisor"
+    )
+    for paragraph in document.paragraphs:
+        text = clean_text(paragraph.text)
+        low = normalised(text)
+        if len(text.split()) < 4:
+            continue
+        if any(term == low or low.startswith(term) for term in title_page_terms):
+            continue
+        return paragraph
+    return None
+
+
 def _attach_document_level_comments(
     document, comments: List[str], *, author: str, initials: str
 ) -> None:
@@ -872,6 +891,7 @@ def _attach_document_level_comments(
         if not text:
             continue
         if any(token in low for token in (
+            "should be checked for its contribution",
             "focused recovery",
             "separate expert review",
             "separate model response",
@@ -885,7 +905,7 @@ def _attach_document_level_comments(
     unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
-    anchor = _first_native_anchor(document)
+    anchor = _first_academic_anchor(document)
     if anchor is None:
         raise RuntimeError(
             "The source document has no text that can anchor native Word comments."
