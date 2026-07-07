@@ -2151,10 +2151,21 @@ async def enrich_review_with_academic_ai(
         and not section_reviews
         and depth in {"light", "standard"}
     ):
+        failure_details = []
+        for failed_idx in failed_batches[:3]:
+            try:
+                err = primary_results[failed_idx]
+            except Exception:
+                err = None
+            if isinstance(err, Exception):
+                failure_details.append(f"packet {failed_idx + 1}: {type(err).__name__}: {err}")
+        detail = "; ".join(failure_details)
         raise AIProviderError(
-            "The fast review providers did not complete the first chapter pass. "
-            "The job was stopped before starting another full paid pass. Check "
-            "the DeepSeek key, model access and provider logs, then retry once."
+            "The configured review provider returned a response, but the first chapter pass "
+            "could not be converted into a valid academic review. The job stopped before "
+            "starting another full paid pass. This is usually a structured-output, truncation, "
+            "model-access, or timeout problem rather than a DOCX problem. "
+            f"Last provider error: {detail or 'not available'}."
         )
 
     if missing_sections:

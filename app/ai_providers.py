@@ -12,7 +12,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from .ai_config import HybridAIConfig
-from .ai_schemas import AIUsageRecord
+from .ai_schemas import AIUsageRecord, AcademicSectionReviewItem
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,18 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
 
     if name == "AcademicReviewBatch":
         reviews = value.get("reviews") if isinstance(value.get("reviews"), list) else []
-        value = {"reviews": reviews}
+        normalised_reviews = []
+        for item in reviews:
+            if not isinstance(item, dict):
+                continue
+            try:
+                normalised_reviews.append(
+                    _normalise_model_payload(item, AcademicSectionReviewItem)
+                )
+            except AIProviderError:
+                # Keep the original item so Pydantic can report a precise error.
+                normalised_reviews.append(item)
+        value = {"reviews": normalised_reviews}
 
     elif name in {"AcademicSectionReview", "AcademicSectionReviewItem"}:
         if isinstance(value.get("review"), dict):
@@ -594,7 +605,10 @@ class OpenAIProvider:
 
         if isinstance(last_error, ValidationError):
             raise AIProviderError(
-                f"OpenAI output failed schema validation: {last_error}"
+                f"OpenAI output for model '{model}' and purpose '{purpose}' failed schema validation: {last_error}"
             ) from last_error
-        raise AIProviderError(str(last_error or "OpenAI request failed."))
+        raise AIProviderError(
+            f"OpenAI request for model '{model}' and purpose '{purpose}' failed: "
+            f"{str(last_error or 'unknown provider error')}"
+        )
 
