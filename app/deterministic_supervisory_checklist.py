@@ -38,6 +38,27 @@ def _degree_key(level: Any) -> str:
     return "bachelors"
 
 
+
+
+def _degree_expectation_phrase(degree: str) -> str:
+    return {
+        "bachelors": "At Bachelor’s level, this weakness matters because the work must show basic research coherence, accurate presentation and correct application of method.",
+        "non_research_masters": "At Non-Research Master’s level, this weakness matters because the work must show applied problem clarity, credible evidence and defensible professional recommendations.",
+        "research_masters": "At MPhil level, this weakness matters because the work must show independent research judgement, conceptual clarity and methodological rigour.",
+        "professional_doctorate": "At Professional Doctorate level, this weakness matters because the work must connect doctoral scholarship to a defensible contribution to practice or policy.",
+        "phd": "At PhD level, this weakness matters because the thesis must support an original and defensible contribution to knowledge.",
+    }.get(degree, "At the declared academic level, this weakness matters because the work must meet the appropriate scholarly standard.")
+
+
+def _degree_theory_requirement(degree: str) -> str:
+    return {
+        "bachelors": "The chapter should show at least a clear conceptual understanding of the main variables or ideas.",
+        "non_research_masters": "The chapter should show the applied or professional logic that connects the problem, evidence and proposed analysis.",
+        "research_masters": "The chapter should prepare the reader for a defensible theoretical or conceptual framework.",
+        "professional_doctorate": "The chapter should connect the professional problem to a defensible scholarly and practice-based framework.",
+        "phd": "The chapter should signal the theoretical or conceptual position from which an original contribution to knowledge will be developed.",
+    }.get(degree, "The chapter should explain the conceptual logic of the study.")
+
 def _chapter_scope(paragraphs: Sequence[Dict[str, Any]]) -> Set[int]:
     chapters = {
         int(row.get("chapter_number"))
@@ -245,12 +266,7 @@ def _issue_text(rule: Dict[str, Any], status: str, section: str, degree: str) ->
         consequence = "A partial treatment may pass a surface checklist but still leave the argument, method or chapter logic underdeveloped at the declared level."
         action = f"Revise {section} so the requirement is not merely mentioned but explained, justified and linked to the study problem, objectives or methods as appropriate."
 
-    if degree == "research_masters":
-        consequence += " At MPhil level, this weakness is material because the work is expected to show independent research judgement, conceptual clarity and methodological rigour."
-    elif degree == "phd":
-        consequence += " At PhD level, this weakness is material because the thesis must support an original and defensible contribution to knowledge."
-    elif degree == "professional_doctorate":
-        consequence += " At professional doctorate level, this weakness is material because the study must connect doctoral scholarship to a defensible contribution to practice or policy."
+    consequence += " " + _degree_expectation_phrase(degree)
     return {"title": title, "assessment": assessment, "consequence": consequence, "action": action}
 
 
@@ -564,7 +580,7 @@ def hard_chapter_one_supervisory_issues(
                 section="Title",
                 title="The title does not reflect all substantive constructs in the objectives",
                 assessment="The title focuses on green procurement practices and environmental sustainability, but the objectives also introduce awareness and operational performance as substantive areas of inquiry.",
-                consequence="At MPhil level, title-scope mismatch weakens the reader's expectation of what the study actually investigates and contributes to the broader purpose-objective misalignment.",
+                consequence="At the declared level, title-scope mismatch weakens the reader's expectation of what the study actually investigates and contributes to the broader purpose-objective misalignment.",
                 action="Revise the title to reflect the full construct scope of the study, or remove the constructs that are not central enough to appear in the title and purpose.",
                 anchor=title_anchor,
                 category="cross_section_coherence",
@@ -575,16 +591,29 @@ def hard_chapter_one_supervisory_issues(
         low_bg = normalised(bg_text)
         theory_terms = ("theoretical framework", "conceptual framework", "natural resource based", "institutional theory", "stakeholder theory", "triple bottom line theory")
         has_named_theory = any(term in low_bg for term in theory_terms)
-        if degree in {"research_masters", "professional_doctorate", "phd"} and not has_named_theory:
+        if not has_named_theory:
+            if degree == "bachelors":
+                title = "The background needs a clearer conceptual anchor for the key variables"
+                action = "Add a short explanation of how green procurement, environmental sustainability, awareness and operational performance relate conceptually, without imposing a full postgraduate theoretical framework."
+                severity = "moderate"
+            elif degree == "non_research_masters":
+                title = "The background needs a clearer applied or professional logic"
+                action = "Add a concise applied framework showing how the professional problem, green procurement practices, environmental outcomes and operational performance connect in the study context."
+                severity = "major"
+            else:
+                title = "The background does not establish an explicit theoretical or conceptual anchor"
+                action = "Add a concise theoretical or conceptual anchor and show how it explains the expected relationship among green procurement, environmental sustainability, awareness and operational performance."
+                severity = "major"
             issues.append(_issue(
-                code="B1.2-THEORY",
+                code="B1.2-LEVEL-CONCEPTUAL-ANCHOR",
                 section="Background to the Study",
-                title="The background does not establish an explicit theoretical or conceptual anchor",
-                assessment="The background introduces green procurement, environmental sustainability, awareness and operational performance, but it does not clearly identify the theory or conceptual logic that binds these constructs together.",
-                consequence="For MPhil work, the introduction should prepare the reader for a defensible theoretical or conceptual framework rather than presenting constructs as a list of related topics.",
-                action="Add a concise theoretical or conceptual anchor and show how it explains the expected relationship among green procurement, environmental sustainability, awareness and operational performance.",
+                title=title,
+                assessment="The background introduces green procurement, environmental sustainability, awareness and operational performance, but it does not clearly identify the level-appropriate logic that binds these constructs together.",
+                consequence=_degree_theory_requirement(degree),
+                action=action,
                 anchor=_first_substantive(background),
                 category="theoretical_grounding",
+                severity=severity,
                 quote=_first_substantive(background).get("text", "") if _first_substantive(background) else "",
             ))
         if "ghana" in low_bg and "central region" in low_bg and not any(term in low_bg for term in ("statistics", "regulatory", "policy", "manufacturing association", "ghana statistical", "epa")):
@@ -593,7 +622,7 @@ def hard_chapter_one_supervisory_issues(
                 section="Background to the Study",
                 title="The local contextual justification is not sufficiently evidenced",
                 assessment="The background mentions Ghana and the Central Region, but it does not provide strong local empirical, policy or industry evidence showing the scale or seriousness of the green procurement problem in that setting.",
-                consequence="A regional MPhil study needs more than a final sentence naming the context; the reader must see why this location and sector require investigation.",
+                consequence="A regional study needs more than a final sentence naming the context; the reader must see why this location and sector require investigation at the declared academic level.",
                 action="Insert traceable Ghanaian or Central Region evidence, such as manufacturing-sector data, policy/regulatory evidence or recent empirical studies, and use it to justify the selected context.",
                 anchor=_first_substantive(background),
                 category="research_gap_and_problem",
@@ -644,7 +673,7 @@ def hard_chapter_one_supervisory_issues(
                 section="Statement of the Problem",
                 title="The empirical gap is not sharply separated from foreign-context literature",
                 assessment="The statement of the problem relies heavily on studies from other national or sectoral contexts, but it does not clearly separate practical problem, empirical gap, contextual gap and methodological gap.",
-                consequence="At MPhil level, merely saying foreign findings cannot be extrapolated to Ghana is insufficient unless the exact gap and its relevance to the proposed variables are made explicit.",
+                consequence="At the declared level, merely saying foreign findings cannot be extrapolated to Ghana is insufficient unless the exact gap and its relevance to the proposed variables are made explicit.",
                 action="Rewrite the problem statement so it identifies the practical problem, the unresolved empirical gap, the Central Region contextual gap and the exact research focus in separate but connected moves.",
                 anchor=_first_substantive(problem),
                 category="research_gap_and_problem",
@@ -679,7 +708,7 @@ def hard_chapter_one_supervisory_issues(
                 section="Research Questions",
                 title="Relational and impact objectives are stated without corresponding hypotheses or justification",
                 assessment="The objectives and questions use relationship, effect and impact language, but the chapter does not provide corresponding hypotheses or explain why research questions alone are sufficient.",
-                consequence="For a quantitative MPhil study, inferential objectives normally require clear hypotheses or an explicit methodological justification for their absence.",
+                consequence="For a quantitative research-intensive or doctoral study, inferential objectives normally require clear hypotheses or an explicit methodological justification for their absence.",
                 action="Add hypotheses aligned to the relational objectives, or revise the design language so the study is framed as descriptive/associational rather than impact-testing.",
                 anchor=_first_substantive(questions) or _first_substantive(objectives),
                 category="objectives_questions_hypotheses",
@@ -734,6 +763,45 @@ def hard_chapter_one_supervisory_issues(
                 anchor=_first_substantive(significance),
                 category="chapter_structure",
                 severity="moderate",
+            ))
+
+        contribution_terms = ("contribution to knowledge", "original contribution", "contribution to practice", "contribution to policy", "applied contribution", "professional contribution")
+        if not any(term in low_sig for term in contribution_terms):
+            if degree == "bachelors":
+                title = "The expected contribution is not stated plainly"
+                assessment = "The significance section lists beneficiaries, but it does not clearly state the modest empirical, contextual or practical contribution expected from the study."
+                action = "Add one concise sentence stating the expected contribution of the study in a way that is proportionate to undergraduate research."
+                severity = "moderate"
+            elif degree == "non_research_masters":
+                title = "The applied or professional contribution is not explicit"
+                assessment = "The significance section lists stakeholders, but it does not clearly state the professional, managerial, policy or applied decision-making contribution expected from the study."
+                action = "State the expected applied contribution and link it to a concrete professional, policy or organisational decision problem."
+                severity = "major"
+            elif degree == "research_masters":
+                title = "The research contribution expected from the MPhil study is not explicit"
+                assessment = "The significance section mentions beneficiaries, but it does not clearly state the expected empirical, theoretical, methodological or contextual contribution to scholarship."
+                action = "Add a concise research contribution statement that explains what the study is expected to add beyond confirming that the topic matters."
+                severity = "major"
+            elif degree == "professional_doctorate":
+                title = "The original contribution to professional practice or policy is not explicit"
+                assessment = "The significance section does not clearly state the doctoral-level contribution to practice, policy, organisational capability or professional knowledge."
+                action = "State the expected original contribution to professional practice or policy and identify who can use it, how and under what conditions."
+                severity = "critical"
+            else:
+                title = "The original contribution to knowledge is not explicit"
+                assessment = "The significance section does not clearly state what original contribution to knowledge the thesis is expected to make."
+                action = "State the expected theoretical, empirical or methodological contribution to knowledge and explain why it matters to the field."
+                severity = "critical"
+            issues.append(_issue(
+                code="B4.1-LEVEL-CONTRIBUTION",
+                section="Significance of the Study",
+                title=title,
+                assessment=assessment,
+                consequence=_degree_expectation_phrase(degree),
+                action=action,
+                anchor=_first_substantive(significance),
+                category="critical_analysis" if degree in {"professional_doctorate", "phd"} else "chapter_structure",
+                severity=severity,
             ))
 
     if limitations:

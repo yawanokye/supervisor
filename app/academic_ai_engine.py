@@ -268,48 +268,95 @@ def _degree_issue_limit(academic_level: Any, depth: str) -> int:
 def _degree_audit_max_findings(academic_level: Any, depth: str) -> int:
     base = int(_review_profile(depth)["quality_control_max_findings"])
     minimums = {
-        "bachelors": {"light": 12, "standard": 24, "advanced": 32},
-        "non_research_masters": {"light": 15, "standard": 30, "advanced": 38},
-        "research_masters": {"light": 18, "standard": 36, "advanced": 44},
-        "professional_doctorate": {"light": 22, "standard": 48, "advanced": 60},
-        "phd": {"light": 24, "standard": 56, "advanced": 72},
+        "bachelors": {"light": 16, "standard": 32, "advanced": 44},
+        "non_research_masters": {"light": 20, "standard": 42, "advanced": 54},
+        "research_masters": {"light": 24, "standard": 56, "advanced": 70},
+        "professional_doctorate": {"light": 28, "standard": 68, "advanced": 86},
+        "phd": {"light": 32, "standard": 80, "advanced": 100},
     }
     return max(base, minimums[_degree_key(academic_level)][depth])
 
 
 def _degree_comment_floor(academic_level: Any, depth: str, config: HybridAIConfig) -> int:
-    """Minimum material comments to try to preserve for a non-trivial chapter.
+    """Minimum material comments to preserve for a non-trivial chapter.
 
-    This is not a quota for inventing issues. It controls how aggressively the
-    orchestrator retains evidence-anchored first-pass findings after the audit
-    has removed unsupported or duplicate comments.
+    v1.9.9.3 makes the floor stronger for every academic level. The floor is
+    still not a licence to invent issues; it tells the orchestrator to keep
+    evidence-anchored, public-safe findings instead of over-compressing the
+    review into a small number of comments.
     """
     if not config.comment_depth_floor_enabled:
         return 0
     key = _degree_key(academic_level)
     if depth == "light":
         return {
-            "bachelors": 6,
-            "non_research_masters": 8,
-            "research_masters": 10,
-            "professional_doctorate": 12,
-            "phd": 14,
+            "bachelors": 8,
+            "non_research_masters": 10,
+            "research_masters": 12,
+            "professional_doctorate": 14,
+            "phd": 16,
         }[key]
     if depth == "standard":
         return {
-            "bachelors": 10,
-            "non_research_masters": config.standard_non_research_min_findings,
-            "research_masters": config.standard_research_masters_min_findings,
-            "professional_doctorate": config.standard_professional_doctorate_min_findings,
-            "phd": config.standard_phd_min_findings,
+            "bachelors": 14,
+            "non_research_masters": max(18, config.standard_non_research_min_findings),
+            "research_masters": max(24, config.standard_research_masters_min_findings),
+            "professional_doctorate": max(28, config.standard_professional_doctorate_min_findings),
+            "phd": max(32, config.standard_phd_min_findings),
         }[key]
     return {
-        "bachelors": 16,
-        "non_research_masters": max(18, config.standard_non_research_min_findings + 4),
-        "research_masters": max(24, config.standard_research_masters_min_findings + 6),
-        "professional_doctorate": max(30, config.standard_professional_doctorate_min_findings + 8),
-        "phd": max(36, config.standard_phd_min_findings + 10),
+        "bachelors": 20,
+        "non_research_masters": max(24, config.standard_non_research_min_findings + 6),
+        "research_masters": max(32, config.standard_research_masters_min_findings + 8),
+        "professional_doctorate": max(38, config.standard_professional_doctorate_min_findings + 10),
+        "phd": max(44, config.standard_phd_min_findings + 12),
     }[key]
+
+
+def _degree_required_public_categories(academic_level: Any, selected_chapter: Any, depth: str) -> Set[str]:
+    """Categories that should be visibly represented in a strong review.
+
+    These are not artificial quotas. They are a final coverage contract: if the
+    document genuinely contains evidence-anchored problems in these categories,
+    the public report should not silently omit them after model/audit/dedup
+    filtering.
+    """
+    key = _degree_key(academic_level)
+    try:
+        chapter = int(selected_chapter or 0)
+    except (TypeError, ValueError):
+        chapter = 0
+    base = {"academic_writing", "cross_section_coherence", "chapter_structure"}
+    if chapter == 1 or chapter == 0:
+        base |= {"research_gap_and_problem", "objectives_questions_hypotheses", "citations_and_sources"}
+        if key in {"research_masters", "professional_doctorate", "phd"}:
+            base |= {"theoretical_grounding"}
+        if key in {"professional_doctorate", "phd"}:
+            base |= {"critical_analysis"}
+    elif chapter == 2:
+        base |= {"critical_analysis", "theoretical_grounding", "citations_and_sources"}
+    elif chapter == 3:
+        base |= {"methodological_rigour", "ethics_and_integrity", "objectives_questions_hypotheses"}
+    elif chapter == 4:
+        base |= {"results_and_interpretation", "critical_analysis", "citations_and_sources"}
+    elif chapter == 5:
+        base |= {"conclusions_and_recommendations", "cross_section_coherence", "critical_analysis"}
+    if depth == "light":
+        # Light reviews should still catch critical/major issues, but we do not
+        # force every category into the visible output.
+        return {"cross_section_coherence", "research_gap_and_problem", "objectives_questions_hypotheses", "academic_writing"} & base
+    return base
+
+
+def _category_signature(issue: Dict[str, Any]) -> Tuple[str, str]:
+    return (
+        str(issue.get("category") or ""),
+        hashlib.sha256(normalised(" ".join([
+            clean_text(issue.get("section", "")),
+            clean_text(issue.get("issue_title", "")),
+            clean_text(issue.get("required_action", "")),
+        ])).encode("utf-8")).hexdigest()[:24],
+    )
 
 
 def _chapter_review_checks(chapter: int) -> List[str]:
@@ -2676,6 +2723,69 @@ async def enrich_review_with_academic_ai(
             public_quality_stats["post_public_refill_added"] = len(working) - len(all_issues)
             public_quality_stats["kept"] = len(working)
             all_issues = working
+
+
+    # v1.9.9.3: final level-wide coverage rescue. Deterministic checklist
+    # findings are re-tested after public cleaning so that all supported degree
+    # levels visibly cover their mandatory supervisory categories. This prevents
+    # Bachelor's, Non-Research Master's, MPhil, Professional Doctorate and PhD
+    # reviews from collapsing into a small proofreading-style comment set.
+    required_categories = _degree_required_public_categories(
+        academic_level, summary.get("selected_chapter"), depth
+    )
+    present_categories = {str(issue.get("category") or "") for issue in all_issues}
+    if required_categories - present_categories or (floor and len(all_issues) < floor):
+        coverage_pool: List[Dict[str, Any]] = []
+        for item in deterministic_supervisory_checklist_issues(
+            current,
+            academic_level=academic_level,
+            research_approach=(review.get("summary") or {}).get("research_approach"),
+            max_issues=max(48, floor * 3 if floor else 48),
+        ):
+            valid = _valid_issue(dict(item), paragraph_index, context_lock)
+            if valid:
+                valid["verification_status"] = "final_degree_contract_rescue"
+                valid["manual_confirmation_required"] = False
+                coverage_pool.append(valid)
+        coverage_pool, _coverage_accuracy = apply_accuracy_gate(coverage_pool, paragraph_index, current)
+        coverage_public, _coverage_public_stats = prepare_public_issues(coverage_pool)
+        existing_signatures = {_issue_signature(issue) for issue in all_issues}
+        existing_category_sigs = {_category_signature(issue) for issue in all_issues}
+        additions: List[Dict[str, Any]] = []
+        # First add missing mandatory categories.
+        for candidate in coverage_public:
+            cat = str(candidate.get("category") or "")
+            if cat not in required_categories or cat in present_categories:
+                continue
+            sig = _issue_signature(candidate)
+            cat_sig = _category_signature(candidate)
+            if sig in existing_signatures or cat_sig in existing_category_sigs:
+                continue
+            additions.append(candidate)
+            existing_signatures.add(sig)
+            existing_category_sigs.add(cat_sig)
+            present_categories.add(cat)
+        # Then fill the strengthened level/depth floor with the strongest
+        # remaining deterministic findings.
+        if floor and len(all_issues) + len(additions) < floor:
+            for candidate in coverage_public:
+                sig = _issue_signature(candidate)
+                cat_sig = _category_signature(candidate)
+                if sig in existing_signatures or cat_sig in existing_category_sigs:
+                    continue
+                if str(candidate.get("severity") or "minor").lower() == "minor" and depth != "advanced":
+                    continue
+                additions.append(candidate)
+                existing_signatures.add(sig)
+                existing_category_sigs.add(cat_sig)
+                if len(all_issues) + len(additions) >= floor:
+                    break
+        if additions:
+            working, _working_stats = prepare_public_issues(list(all_issues) + additions)
+            if len(working) > len(all_issues):
+                public_quality_stats["final_degree_contract_added"] = len(working) - len(all_issues)
+                public_quality_stats["kept"] = len(working)
+                all_issues = working
 
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
     incomplete = verification_failed or len(section_reviews) < len(sections)

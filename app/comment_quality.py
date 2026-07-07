@@ -218,6 +218,64 @@ def _conditionalise_hypothesis_advice(value: str) -> str:
     return text
 
 
+
+
+def _polish_action_grammar(value: str) -> str:
+    """Repair common imperative grammar defects before comments reach DOCX/inline export."""
+    text = clean_text(value)
+    if not text:
+        return text
+    # Fix provider-generated phrases like "so that it incorporate" / "so that it where required".
+    replacements = [
+        (r"\bso that it incorporate\b", "by incorporating"),
+        (r"\bso that it incorporates\b", "by incorporating"),
+        (r"\bso that it include\b", "by including"),
+        (r"\bso that it includes\b", "by including"),
+        (r"\bso that it provide\b", "by providing"),
+        (r"\bso that it provides\b", "by providing"),
+        (r"\bso that it supply\b", "by supplying"),
+        (r"\bso that it supplies\b", "by supplying"),
+        (r"\bso that it populate\b", "by populating"),
+        (r"\bso that it where required\b", "where required"),
+        (r"\bRevise the marked passage by where required\b", "Where required"),
+        (r"\bRevise the passage by where required\b", "Where required"),
+        (r"\bRevise the marked passage by use\b", "Revise the marked passage by using"),
+        (r"\bRevise the passage by use\b", "Revise the passage by using"),
+        (r"\bRevise the marked passage by undertake\b", "Revise the marked passage by undertaking"),
+        (r"\bRevise the passage by undertake\b", "Revise the passage by undertaking"),
+        (r"\bRevise the marked passage so that it\s+", "Revise the marked passage by "),
+        (r"\bRevise the passage so that it\s+", "Revise the passage by "),
+    ]
+    for pattern, repl in replacements:
+        text = re.sub(pattern, repl, text, flags=re.I)
+    # Normalise double auxiliaries created by rewrites.
+    text = re.sub(r"\bby (incorporating|including|providing|supplying|populating)\s+local\b", r"by \1 local", text, flags=re.I)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
+def _false_section_absence_claim(issue: Dict[str, Any]) -> bool:
+    """Reject public comments that falsely claim a present section has no content.
+
+    These claims were observed when a model reviewed a heading-only packet while
+    the section body followed immediately after the heading. Deterministic checks
+    may still flag weak definitions or missing evidence, but a student-facing
+    comment must not say content is absent unless the parser proved absence.
+    """
+    section = normalised(issue.get("section", ""))
+    combined = normalised(" ".join(clean_text(issue.get(field, "")) for field in (
+        "issue_title", "assessment", "academic_consequence", "required_action", "illustrative_guidance", "problematic_quote"
+    )))
+    if "definition" in section and any(phrase in combined for phrase in (
+        "no definitions follow", "no definitions", "left undefined", "heading is present but no definitions", "no terms are defined"
+    )):
+        return True
+    if any(phrase in combined for phrase in (
+        "heading is present, but no", "section is present, but no", "supplied document", "supplied section"
+    )) and not issue.get("verification_status", "").startswith("hard_deterministic"):
+        return True
+    return False
+
 def _future_date_only_issue(issue: Dict[str, Any], current_year: int) -> bool:
     combined = " ".join(
         clean_text(issue.get(field, ""))
@@ -247,11 +305,14 @@ def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] 
     current_year = current_year or datetime.now(timezone.utc).year
     if _future_date_only_issue(output, current_year):
         return None
+    if _false_section_absence_claim(output):
+        return None
 
     for field in ("section", "issue_title", "assessment", "academic_consequence", "required_action", "illustrative_guidance"):
         raw = strip_internal_notices(output.get(field, ""))
         if field in {"required_action", "illustrative_guidance"}:
             raw = _conditionalise_hypothesis_advice(raw)
+            raw = _polish_action_grammar(raw)
         if contains_placeholder(raw):
             if field == "required_action":
                 raw = _fallback_action(str(output.get("category") or "other"))
@@ -385,7 +446,7 @@ def sanitise_finding_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     for field in ("item", "comment", "required_action", "illustrative_guidance", "reference_label", "section_reference", "section"):
         value = output.get(field, "")
         if field == "required_action":
-            value = _conditionalise_hypothesis_advice(clean_text(value))
+            value = _polish_action_grammar(_conditionalise_hypothesis_advice(clean_text(value)))
         cleaned = public_text(
             value,
             reject_placeholders=True,
