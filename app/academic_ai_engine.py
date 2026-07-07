@@ -2725,6 +2725,14 @@ async def enrich_review_with_academic_ai(
             all_issues = working
 
 
+    # v1.9.9.6: ensure a safe summary object exists before the final degree
+    # contract rescue runs. In the combined OpenAI pipeline the provider can
+    # return successfully before the later summary assembly block executes;
+    # the coverage rescue must therefore not reference an uninitialised local.
+    summary = review.get("summary") or {}
+    if not isinstance(summary, dict):
+        summary = {}
+
     # v1.9.9.3: final level-wide coverage rescue. Deterministic checklist
     # findings are re-tested after public cleaning so that all supported degree
     # levels visibly cover their mandatory supervisory categories. This prevents
