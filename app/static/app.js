@@ -572,14 +572,23 @@ function renderReview(review) {
 
   renderExternalAssessment(review);
   const annotatedButton = document.getElementById("annotatedButton");
+  const inlineAnnotatedButton = document.getElementById("inlineAnnotatedButton");
   if (s.annotated_document_available) {
     annotatedButton.classList.remove("hidden");
     annotatedButton.disabled = false;
     annotatedButton.onclick = () => {
       window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/annotated.docx`;
     };
+    if (inlineAnnotatedButton) {
+      inlineAnnotatedButton.classList.remove("hidden");
+      inlineAnnotatedButton.disabled = false;
+      inlineAnnotatedButton.onclick = () => {
+        window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/annotated-inline.docx`;
+      };
+    }
   } else {
     annotatedButton.classList.add("hidden");
+    if (inlineAnnotatedButton) inlineAnnotatedButton.classList.add("hidden");
   }
 
   const downloadButton = document.getElementById("downloadButton");
