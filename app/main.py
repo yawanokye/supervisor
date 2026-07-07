@@ -21,6 +21,7 @@ from .academic_ai_engine import ReviewOutputValidationError, enrich_review_with_
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_providers import AIProviderError
 from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, native_comment_count
+from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_inline_annotated_docx
 from .auth import (
     authenticate,
     create_bootstrap_admin,
@@ -2540,6 +2541,59 @@ async def export_annotated_document(review_id: str, request: Request, db: Sessio
         headers={
             "Content-Disposition": (
                 f'attachment; filename="{stem}-supervisor-reviewed.docx"'
+            )
+        },
+    )
+
+
+@app.get("/api/review/{review_id}/annotated-inline.docx")
+async def export_inline_annotated_document(review_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    record = _authorised_review_record(db, user, review_id)
+    review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review result is not available.")
+    if not record.job_id or not payload_available(record.job_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The inline annotated document requires the saved source DOCX. "
+                "Submit a fresh review if the original upload is no longer available."
+            ),
+        )
+    try:
+        payload = await asyncio.to_thread(load_job_payload, record.job_id)
+        source_data = bytes((payload or {}).get("data") or b"")
+        source_name = str((payload or {}).get("filename") or record.filename or "")
+        if not source_data or not source_name.lower().endswith(".docx"):
+            raise ValueError("The saved source is not an annotatable DOCX file.")
+        comment_author = clean_text(
+            (record.lecturer.full_name if record.lecturer else "")
+            or (review.get("summary") or {}).get("reviewer_name")
+            or user.full_name
+        )
+        data = await asyncio.to_thread(
+            build_inline_annotated_docx,
+            source_data,
+            review,
+            comment_author or None,
+        )
+    except Exception as exc:
+        logger.exception("Could not generate inline annotated document")
+        raise HTTPException(
+            status_code=409,
+            detail="The inline annotated document could not be generated. Submit a fresh review and try again.",
+        ) from exc
+
+    stem = os.path.splitext(os.path.basename(record.filename or "thesis.docx"))[0]
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{stem}-inline-annotated.docx"'
             )
         },
     )

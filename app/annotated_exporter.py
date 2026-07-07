@@ -23,7 +23,7 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 
-ANNOTATION_EXPORT_VERSION = "1.9.8.8-supervisory-comment-quality"
+ANNOTATION_EXPORT_VERSION = "1.9.9.2-evidence-safe-inline"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -206,7 +206,7 @@ def _comment_body(row: Dict[str, Any]) -> str:
         parts.append(assessment.rstrip(" .") + ".")
     if action:
         action_text = _normalise_action_start(action)
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate)\b", action_text, flags=re.I):
+        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply)\b", action_text, flags=re.I):
             parts.append(action_text + ".")
         else:
             parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
@@ -376,6 +376,7 @@ def _polish_section_assessment(value: str) -> str:
     text = re.sub(r"\bNo unsupported criticism has been inserted[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
     text = re.sub(r"\bManual confirmation of this section is recommended[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
     text = re.sub(r"\bRecovery detail:[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+    text = re.sub(r"[^.!?]*\b(?:manifest|document map|paragraph id|section packet|parser|fallback|recovery|focused recovery|model response|P\d{1,4})\b[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
     text = re.sub(r"\bThis section (?:has been|was) reviewed(?: against [^.]+)?\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bIt appears adequate\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bNo major issue(?:s)? (?:was|were) found\.?\s*", "", text, flags=re.I)
@@ -399,6 +400,17 @@ def _section_review_comment(row: Dict[str, Any]) -> str:
 
     raw_assessment = _polish_section_assessment(clean_text(row.get("section_assessment", "")))
     warning = _polish_section_assessment(clean_text(row.get("coverage_warning", "")))
+
+    # Do not release false section-coverage claims such as "no terms are
+    # defined" when the heading exists. Definition sections are frequently
+    # multi-paragraph and can be misread by a section packet. Exact issue
+    # comments still flag weak or circular definitions where evidence exists.
+    if ("definition" in normalised(heading) or "terms" in normalised(heading)) and re.search(
+        r"\b(?:no|not|without)\b.{0,40}\b(?:definition|definitions|terms)\b|\b(?:definition|terms)\b.{0,40}\b(?:absent|missing|not defined|no definitions)\b",
+        raw_assessment,
+        flags=re.I,
+    ):
+        raw_assessment = ""
 
     if _is_weak_section_assessment(raw_assessment):
         assessment = _section_comment_template(heading)

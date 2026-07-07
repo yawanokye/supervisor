@@ -25,6 +25,13 @@ _INTERNAL_NOTICE_RE = re.compile(
     flags=re.I,
 )
 
+
+
+_INTERNAL_LEAK_SENTENCE_RE = re.compile(
+    r"(?:^|\s)(?:[^.!?]*\b(?:manifest|document map|paragraph id|section packet|parser|fallback|recovery|focused recovery|model response|P\d{1,4})\b[^.!?]*(?:[.!?]|$))",
+    flags=re.I,
+)
+
 _PLACEHOLDER_RE = re.compile(
     r"\[(?:"
     r"verified\s+(?:scholarly\s+)?source|verified\s+statistic|verified\s+information|"
@@ -140,6 +147,10 @@ def strip_internal_notices(value: Any) -> str:
     text = clean_text(value)
     if suppress_internal_notices():
         text = _INTERNAL_NOTICE_RE.sub("", text)
+        # Student-facing comments must never expose internal extraction, manifest,
+        # paragraph-ID or recovery details. Drop the entire sentence because the
+        # remaining fragment is usually not meaningful supervision.
+        text = _INTERNAL_LEAK_SENTENCE_RE.sub(" ", text)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")
 
 

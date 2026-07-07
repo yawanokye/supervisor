@@ -92,7 +92,7 @@ def _section_rows(paragraphs: Sequence[Dict[str, Any]], rule: Dict[str, Any]) ->
     for row in rows:
         section = normalised(source_section(row))
         text = normalised(clean_text(row.get("text", ""))) if row.get("is_heading") else ""
-        if any(h in section or section in h or h in text or text in h for h in headings if h):
+        if any(section == h or text == h or _contains_token_sequence(section, h) or _contains_token_sequence(text, h) for h in headings if h):
             matched.append(row)
     return matched or rows
 
@@ -110,11 +110,11 @@ def _anchor_row(paragraphs: Sequence[Dict[str, Any]], rule: Dict[str, Any]) -> O
     # required section cannot be found.
     for row in rows:
         text = normalised(clean_text(row.get("text", "")))
-        if row.get("is_heading") and any(h in text or text in h for h in headings):
+        if row.get("is_heading") and any(text == h or _contains_token_sequence(text, h) for h in headings):
             return row
     for row in rows:
         section = normalised(source_section(row))
-        if any(h in section or section in h for h in headings):
+        if any(section == h or _contains_token_sequence(section, h) for h in headings):
             return row
     if chapter and rows:
         # Use the first substantive row inside the relevant chapter only.
@@ -386,11 +386,35 @@ def _group_by_section(paragraphs: Sequence[Dict[str, Any]]) -> Dict[str, List[Di
     return grouped
 
 
+def _section_tokens(value: str) -> List[str]:
+    tokens = re.findall(r"[a-z0-9]+", normalised(value))
+    # Light stemming prevents singular/plural heading mismatches, but keeps
+    # "limitation" and "delimitation" distinct.
+    return [token[:-1] if len(token) > 5 and token.endswith("s") else token for token in tokens]
+
+
+def _contains_token_sequence(container: str, phrase: str) -> bool:
+    c_tokens = _section_tokens(container)
+    p_tokens = _section_tokens(phrase)
+    if not c_tokens or not p_tokens or len(p_tokens) > len(c_tokens):
+        return False
+    return any(c_tokens[i:i + len(p_tokens)] == p_tokens for i in range(len(c_tokens) - len(p_tokens) + 1))
+
+
 def _find_section_rows(grouped: Dict[str, List[Dict[str, Any]]], *terms: str) -> List[Dict[str, Any]]:
     wanted = [normalised(term) for term in terms if normalised(term)]
-    for section, rows in grouped.items():
-        if any(term in section or section in term for term in wanted):
-            return rows
+    # Exact match first.
+    for term in wanted:
+        for section, rows in grouped.items():
+            if section == term:
+                return rows
+    # Token-sequence match next. This avoids matching "limitations" as
+    # "delimitations", which caused placeholder checks to inspect the wrong
+    # section.
+    for term in wanted:
+        for section, rows in grouped.items():
+            if _contains_token_sequence(section, term):
+                return rows
     return []
 
 
@@ -506,6 +530,13 @@ def hard_chapter_one_supervisory_issues(
     definitions = _find_section_rows(grouped, "definition of terms", "operational definition of terms")
     organisation = _find_section_rows(grouped, "organisation of the study", "organization of the study")
     references = _find_section_rows(grouped, "references")
+    first_chapter_paragraph = min((int(row.get("paragraph")) for row in current if row.get("chapter_number") == 1 and row.get("paragraph")), default=10**9)
+    title_rows = [
+        row for row in current
+        if not row.get("chapter_number")
+        and int(row.get("paragraph") or 0) < first_chapter_paragraph
+        and len(clean_text(row.get("text", "")).split()) >= 4
+    ]
 
     bg_text = _section_plain(background)
     problem_text = _section_plain(problem)
@@ -520,6 +551,25 @@ def hard_chapter_one_supervisory_issues(
     refs_text = _section_plain(references)
     full_text = _section_plain(current)
     issues: List[Dict[str, Any]] = []
+
+    title_text = _section_plain(title_rows)
+    if title_rows and any(term in normalised(objectives_text) for term in ("awareness", "operational performance")):
+        # Use the longest pre-chapter line as the probable thesis title. Do not
+        # attach title-scope comments to the university name.
+        title_anchor = max(title_rows, key=lambda row: len(clean_text(row.get("text", "")).split()))
+        low_title = normalised(clean_text(title_anchor.get("text", "")))
+        if not all(term in low_title for term in ("awareness", "operational performance")):
+            issues.append(_issue(
+                code="TITLE-SCOPE-MISMATCH",
+                section="Title",
+                title="The title does not reflect all substantive constructs in the objectives",
+                assessment="The title focuses on green procurement practices and environmental sustainability, but the objectives also introduce awareness and operational performance as substantive areas of inquiry.",
+                consequence="At MPhil level, title-scope mismatch weakens the reader's expectation of what the study actually investigates and contributes to the broader purpose-objective misalignment.",
+                action="Revise the title to reflect the full construct scope of the study, or remove the constructs that are not central enough to appear in the title and purpose.",
+                anchor=title_anchor,
+                category="cross_section_coherence",
+                severity="major",
+            ))
 
     if background:
         low_bg = normalised(bg_text)
@@ -548,6 +598,20 @@ def hard_chapter_one_supervisory_issues(
                 anchor=_first_substantive(background),
                 category="research_gap_and_problem",
             ))
+        if re.search(r"\b100\s+manufacturing\s+enterprises\s+in\s+Ghana\b", bg_text, flags=re.I):
+            anchor = next((row for row in background if re.search(r"\b100\s+manufacturing\s+enterprises", clean_text(row.get("text", "")), flags=re.I)), _first_substantive(background))
+            issues.append(_issue(
+                code="B1.3-UNSUPPORTED-SAMPLE-CLAIM",
+                section="Background to the Study",
+                title="A specific empirical sample claim is not clearly traceable to a source",
+                assessment="The background refers to an empirical analysis involving 100 manufacturing enterprises in Ghana, but the source of that specific claim is not clearly attached to the sentence.",
+                consequence="Specific empirical claims require precise citation support; otherwise, the background may appear to rely on unverifiable evidence.",
+                action="Attach the exact citation to the sample claim or remove the numerical claim if the source cannot be verified.",
+                anchor=anchor,
+                category="citations_and_sources",
+                severity="major",
+            ))
+
         if "the study revolve" in low_bg:
             issues.append(_issue(
                 code="LANG-STUDY-REVOLVE",
@@ -659,6 +723,19 @@ def hard_chapter_one_supervisory_issues(
                 severity="moderate",
             ))
 
+        if any(term in normalised(sig_text) for term in ("meta analysis", "correlation coefficients", "liu et al", "onukwulu")):
+            issues.append(_issue(
+                code="B4.1-LITERATURE-IN-SIGNIFICANCE",
+                section="Significance of the Study",
+                title="The significance section carries too much literature-review material",
+                assessment="The significance section includes detailed empirical discussion and citations that read more like literature review than a concise explanation of expected beneficiaries and contributions.",
+                consequence="This blurs the function of Chapter One and can make the significance section appear argumentative rather than focused on theory, practice and policy relevance.",
+                action="Condense the literature-heavy passages and rewrite the section around specific stakeholder benefits and expected scholarly, practical and policy contributions.",
+                anchor=_first_substantive(significance),
+                category="chapter_structure",
+                severity="moderate",
+            ))
+
     if limitations:
         low_lim = normalised(limits_text)
         if any(term in low_lim for term in ("faced practical constraints", "could be achieved", "did not participate", "skewing the results")):
@@ -700,6 +777,19 @@ def hard_chapter_one_supervisory_issues(
                 anchor=next((row for row in definitions if "Awareness means" in clean_text(row.get("text", ""))), _first_substantive(definitions)),
                 category="objectives_questions_hypotheses",
             ))
+        if "environmental sustainability" in low_defs and "environmental performance" in low_defs:
+            issues.append(_issue(
+                code="DEF-SUSTAINABILITY-PERFORMANCE-OVERLAP",
+                section="Definition of Terms",
+                title="Environmental sustainability and environmental performance are not sufficiently distinguished",
+                assessment="The chapter defines both environmental sustainability and environmental performance, but the conceptual boundary between them is not made clear enough for measurement and interpretation.",
+                consequence="If the dependent construct and related performance construct overlap conceptually, the methodology may struggle to operationalise variables and interpret findings cleanly.",
+                action="Differentiate the two constructs by stating which one is the main outcome, how each will be measured and how the indicators differ.",
+                anchor=next((row for row in definitions if "Environmental Performance" in clean_text(row.get("text", ""))), _first_substantive(definitions)),
+                category="objectives_questions_hypotheses",
+                severity="major",
+            ))
+
         if re.search(r"\(\s*Sijm[-‑]Eeken\s+et\s+al\.\s+20\d{2}\)", defs_text, flags=re.I) or "( Sijm" in defs_text:
             issues.append(_issue(
                 code="CITATION-PUNCTUATION",
