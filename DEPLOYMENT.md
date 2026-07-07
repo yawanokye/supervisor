@@ -580,3 +580,18 @@ After deploying this version, do not wait indefinitely on an old browser spinner
 - Ensures the final degree-contract/checklist rescue stage always has a safe local summary object.
 - Prevents `UnboundLocalError: cannot access local variable 'summary'` in `academic_ai_engine.py`.
 - No database migration or environment change required.
+
+## v1.9.9.7 deployment note
+
+After deploying v1.9.9.7, restart both Web Service and Worker. Use **Recover once** on a stuck v1.9.9.6 job only after the new code and environment variables have been deployed to both services.
+
+Recommended recovery-safe settings:
+
+```env
+AI_STRUCTURED_OUTPUT_RETRIES=1
+AI_FAST_REQUEST_TIMEOUT_SECONDS=240
+AI_SECTION_BATCH_SIZE=2
+AI_LIGHT_SECTION_BATCH_SIZE=3
+AI_CHAPTER_PACKET_MAX_CHARS=80000
+AI_STANDARD_MAX_OUTPUT_TOKENS=9000
+```

@@ -434,3 +434,15 @@ Set `VPROF_COMBINED_APP_PIPELINE=true` to use three OpenAI model roles:
 Use the fallback variables where preview model access is not available.
 
 This mode keeps live reviews synchronous. Batch API pricing can be added as a separate queued review mode because Batch jobs are asynchronous and may complete later rather than during the user's active review session.
+
+
+## v1.9.9.6 – Combined Pipeline Summary Scope Fix
+
+- Fixes a background review crash after a successful OpenAI Responses API call.
+- Ensures the final degree-contract/checklist rescue stage always has a safe local summary object.
+- Prevents `UnboundLocalError: cannot access local variable 'summary'` in `academic_ai_engine.py`.
+- No database migration or environment change required.
+
+### v1.9.9.7 structured-output recovery
+
+This version improves reliability of the combined OpenAI route. If OpenAI returns a successful HTTP response but the payload is too sparse, slightly malformed, or missing optional internal fields, the app now normalises the nested review objects before validation and shows a provider-specific error if validation still fails.

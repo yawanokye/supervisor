@@ -638,3 +638,11 @@
 - Ensures the final degree-contract/checklist rescue stage always has a safe local summary object.
 - Prevents `UnboundLocalError: cannot access local variable 'summary'` in `academic_ai_engine.py`.
 - No database migration or environment change required.
+
+## v1.9.9.7 — Structured Output Recovery and Provider Error Clarity
+
+- Fixed misleading first-pass failure message that still referred to DeepSeek when the active route was OpenAI.
+- Added nested normalisation for `AcademicReviewBatch` section items before strict schema validation.
+- Improved provider error messages to include model, purpose, and the underlying structured-output problem.
+- Enabled one structured-output retry by default for the combined OpenAI pipeline.
+- Reduced default live section batch size and packet size to reduce truncation/schema failures.
