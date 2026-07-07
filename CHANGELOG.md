@@ -621,3 +621,12 @@
 - Stops automatic resume once the configured recovery window or retry budget is exhausted.
 - Keeps saved checkpoints available for one manual Recover action from Review History.
 - Ensures the Review History "Recover stalled stage" action has a functioning endpoint.
+
+## v1.9.9.5 - Combined OpenAI thesis pipeline
+
+- Added optional three-role OpenAI routing for thesis review.
+- Routes cleaning, formatting, language scan and JSON repair to `OPENAI_CLEANING_MODEL`.
+- Routes section-level/domain-specific review to `OPENAI_SECTION_ANALYSIS_MODEL` with fallback.
+- Routes final audit, full-thesis synthesis and external examination to `OPENAI_FINAL_SYNTHESIS_MODEL` with fallback.
+- Keeps DeepSeek disabled for this mode to avoid provider-mixing instability during tests.
+- Does not enable Batch API for live reviews; Batch remains suitable for asynchronous queued/offline reviews.

@@ -565,3 +565,10 @@ Deploy as a full replacement and start new review jobs. Do not resume old v1.9.9
 ## v1.9.9.4 deployment note
 
 After deploying this version, do not wait indefinitely on an old browser spinner. Refresh the page and open Review History. Jobs whose automatic recovery budget is exhausted will show a Recover action if the saved upload is still available. Start new tests as fresh reviews rather than relying on an already looping browser session.
+
+## Deploying v1.9.9.5 combined pipeline
+
+1. Import `supervisor-v1.9.9.5-COMPLETE.env` or add the variables from `ENVIRONMENT_CHANGES_v1.9.9.5.md`.
+2. Confirm that your OpenAI organisation has access to the selected models. GPT-5.6 Luna is preview/limited-access; keep the fallback model configured.
+3. Restart both Render Web Service and Worker.
+4. Run a fresh review. Do not resume old jobs created under previous provider routing.

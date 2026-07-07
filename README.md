@@ -413,3 +413,24 @@ The deterministic stage does not rewrite the thesis and does not depend on model
 ### v1.9.9.1 hard supervisory checklist
 
 Version 1.9.9.1 strengthens v1.9.9.0 by adding a hard Chapter One MPhil contract. The deterministic checklist now produces specific, evidence-anchored findings for obvious supervisory failures rather than relying on generic checklist wording. It also prevents native DOCX fallback comments from being attached to title-page text such as the university name.
+
+### v1.9.9.3 all-level strengthened review
+
+The review engine now applies a final degree-contract coverage rescue after public comment cleaning. This ensures that Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD reviews retain evidence-anchored comments across the mandatory categories appropriate to the declared level. The rescue does not invent weaknesses; it re-tests deterministic checklist findings against the uploaded document and only exports comments with valid evidence anchors.
+
+
+## v1.9.9.4 recovery behaviour
+
+Automatic checkpoint recovery now has a hard stop. If a review cannot progress after repeated recovery attempts, the app stops the spinner, keeps completed checkpoints and directs the user to Review History for a manual Recover action. This prevents the interface from being trapped at "Recovering the interrupted stage".
+
+## v1.9.9.5 combined OpenAI thesis pipeline
+
+Set `VPROF_COMBINED_APP_PIPELINE=true` to use three OpenAI model roles:
+
+1. `OPENAI_CLEANING_MODEL` handles cheap cleaning, formatting checks, structure mapping, language scan and JSON repair.
+2. `OPENAI_SECTION_ANALYSIS_MODEL` handles section-level and domain-specific supervisory review.
+3. `OPENAI_FINAL_SYNTHESIS_MODEL` handles final synthesis, whole-thesis argument checking and external-style final audit.
+
+Use the fallback variables where preview model access is not available.
+
+This mode keeps live reviews synchronous. Batch API pricing can be added as a separate queued review mode because Batch jobs are asynchronous and may complete later rather than during the user's active review session.
