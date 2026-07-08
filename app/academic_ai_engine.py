@@ -31,6 +31,12 @@ from .ai_schemas import (
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
+from .ucc_section_contract import (
+    missing_section_labels_in_output,
+    present_relevant_sections,
+    ucc_comment_floor,
+    ucc_section_contract_issues,
+)
 from .supervisory_accuracy_guard import (
     apply_accuracy_gate,
     build_factual_index,
@@ -1392,11 +1398,29 @@ def _valid_issue(
     allowed_ids: Optional[set[str]] = None,
     canonical_section: str = "",
 ) -> Optional[Dict[str, Any]]:
+    # v1.9.9.8: deterministic UCC/checklist findings carry internal metadata
+    # such as checklist_code and verification_status. The strict public AI schema
+    # must validate only the actual AcademicIssue fields; otherwise these
+    # evidence-backed deterministic findings are silently discarded before they
+    # can reach the DOCX comments. Preserve the metadata after validation.
+    metadata_keys = {
+        "checklist_code",
+        "checklist_item",
+        "verification_status",
+        "manual_confirmation_required",
+    }
+    metadata = {key: issue.get(key) for key in metadata_keys if key in issue}
+    schema_fields = set(AcademicIssue.model_fields.keys())
+    candidate = {key: value for key, value in dict(issue).items() if key in schema_fields}
+    if candidate.get("guidance_type") not in {"direct_correction", "structural_guidance", "conditional_guidance", "source_verification", "language_pattern"}:
+        candidate["guidance_type"] = "structural_guidance"
     try:
-        parsed = AcademicIssue.model_validate(issue).model_dump()
+        parsed = AcademicIssue.model_validate(candidate).model_dump()
     except Exception:
         return None
+    parsed.update(metadata)
     parsed = sanitise_issue(parsed, context_lock)
+    parsed.update(metadata)
     evidence_ids = [
         pid for pid in parsed["evidence_paragraph_ids"]
         if pid in paragraph_index and (allowed_ids is None or pid in allowed_ids)
@@ -2527,6 +2551,19 @@ async def enrich_review_with_academic_ai(
         if valid:
             raw_issues.append(valid)
 
+    # v1.9.9.8: UCC section-coverage contract. This deterministic layer
+    # ensures every relevant UCC thesis/dissertation section in the uploaded
+    # chapter is assessed at the selected academic level. It is added before
+    # the evidence gate so it cannot bypass factual placement controls.
+    for ucc_issue in ucc_section_contract_issues(
+        current,
+        academic_level=academic_level,
+        depth=depth,
+    ):
+        valid = _valid_issue(ucc_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
     raw_issues, accuracy_gate_stats = apply_accuracy_gate(
         raw_issues, paragraph_index, current
     )
@@ -2644,7 +2681,10 @@ async def enrich_review_with_academic_ai(
     # to the degree/depth floor. This protects the expected ordering: Light <
     # Standard Non-Research Master's < Standard MPhil/doctorate for the same
     # weak document, without inventing comments or making extra paid calls.
-    floor = _degree_comment_floor(academic_level, depth, config)
+    floor = max(
+        _degree_comment_floor(academic_level, depth, config),
+        ucc_comment_floor(current, academic_level, depth),
+    )
     if floor and len(all_issues) < floor and len(current) >= 12:
         existing_signatures = {_issue_signature(issue) for issue in all_issues}
         severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
@@ -2749,8 +2789,16 @@ async def enrich_review_with_academic_ai(
     # levels visibly cover their mandatory supervisory categories. This prevents
     # Bachelor's, Non-Research Master's, MPhil, Professional Doctorate and PhD
     # reviews from collapsing into a small proofreading-style comment set.
+    current_chapters = {
+        int(row.get("chapter_number"))
+        for row in current
+        if isinstance(row.get("chapter_number"), int)
+    }
+    derived_selected_chapter = summary.get("selected_chapter")
+    if not derived_selected_chapter and len(current_chapters) == 1:
+        derived_selected_chapter = next(iter(current_chapters))
     required_categories = _degree_required_public_categories(
-        academic_level, summary.get("selected_chapter"), depth
+        academic_level, derived_selected_chapter, depth
     )
     present_categories = {str(issue.get("category") or "") for issue in all_issues}
     if required_categories - present_categories or (floor and len(all_issues) < floor):
@@ -2803,6 +2851,68 @@ async def enrich_review_with_academic_ai(
             working, _working_stats = prepare_public_issues(list(all_issues) + additions)
             if len(working) > len(all_issues):
                 public_quality_stats["final_degree_contract_added"] = len(working) - len(all_issues)
+                public_quality_stats["kept"] = len(working)
+                all_issues = working
+
+    # v1.9.9.8: final UCC section preservation. The public de-duplication
+    # stage can still over-compress a weak chapter into a small set of comments.
+    # Re-test UCC section-contract findings after public cleaning and preserve
+    # evidence-backed comments until relevant sections and the level floor are
+    # adequately represented.
+    missing_ucc_sections = missing_section_labels_in_output(current, all_issues)
+    if missing_ucc_sections or (floor and len(all_issues) < floor):
+        ucc_pool: List[Dict[str, Any]] = []
+        for item in ucc_section_contract_issues(
+            current,
+            academic_level=academic_level,
+            depth=depth,
+            max_issues=max(96, floor * 4 if floor else 96),
+        ):
+            valid = _valid_issue(dict(item), paragraph_index, context_lock)
+            if valid:
+                valid["verification_status"] = "final_ucc_section_contract"
+                valid["manual_confirmation_required"] = False
+                ucc_pool.append(valid)
+        ucc_pool, _ucc_accuracy_stats = apply_accuracy_gate(ucc_pool, paragraph_index, current)
+        ucc_public, _ucc_public_stats = prepare_public_issues(ucc_pool)
+        existing_signatures = {_issue_signature(issue) for issue in all_issues}
+        existing_sections = {normalised(issue.get("section", "")) for issue in all_issues}
+        additions: List[Dict[str, Any]] = []
+
+        # First, guarantee that every present relevant UCC section with a
+        # supported issue receives at least one visible comment.
+        for candidate in ucc_public:
+            section_key = normalised(candidate.get("section", ""))
+            sig = _issue_signature(candidate)
+            if section_key in existing_sections or sig in existing_signatures:
+                continue
+            if clean_text(candidate.get("section", "")) not in missing_ucc_sections:
+                continue
+            additions.append(candidate)
+            existing_sections.add(section_key)
+            existing_signatures.add(sig)
+
+        # Then, fill the selected-level floor with remaining evidence-backed
+        # UCC contract comments. Distinct material issues in the same section
+        # should not be collapsed into one proofreading-style note.
+        if floor and len(all_issues) + len(additions) < floor:
+            for candidate in ucc_public:
+                sig = _issue_signature(candidate)
+                if sig in existing_signatures:
+                    continue
+                if str(candidate.get("severity") or "minor").lower() == "minor" and depth != "advanced":
+                    continue
+                additions.append(candidate)
+                existing_signatures.add(sig)
+                if len(all_issues) + len(additions) >= floor:
+                    break
+
+        if additions:
+            # prepare_public_issues is run again so all comments receive the
+            # same grammar, placeholder and internal-leak protections.
+            working, _ucc_working_stats = prepare_public_issues(list(all_issues) + additions)
+            if len(working) > len(all_issues):
+                public_quality_stats["final_ucc_section_contract_added"] = len(working) - len(all_issues)
                 public_quality_stats["kept"] = len(working)
                 all_issues = working
 

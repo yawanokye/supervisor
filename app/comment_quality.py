@@ -133,6 +133,20 @@ def suppress_internal_notices() -> bool:
     return _env_bool("VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES", True)
 
 
+def preserve_ucc_section_comments() -> bool:
+    return _env_bool("VPROF_PRESERVE_UCC_SECTION_COMMENTS", True)
+
+
+def _is_section_contract_issue(issue: Dict[str, Any]) -> bool:
+    status = str(issue.get("verification_status") or "")
+    code = str(issue.get("checklist_code") or issue.get("finding_id") or "")
+    return (
+        status in {"ucc_section_contract", "final_ucc_section_contract", "hard_deterministic_supervisory_checklist", "final_degree_contract_rescue"}
+        or code.startswith("UCC-")
+        or code.startswith("DSC-HARD-")
+    )
+
+
 def contains_placeholder(value: Any) -> bool:
     text = clean_text(value)
     if not text:
@@ -409,6 +423,18 @@ def deduplicate_public_issues(issues: Sequence[Dict[str, Any]], *, threshold: Op
                 str(issue.get("category") or ""), str(existing.get("category") or "")
             } <= {"cross_section_coherence", "objectives_questions_hypotheses", "conceptual_clarity", "other"}
             if not (same_category or flexible_category):
+                continue
+            if (
+                preserve_ucc_section_comments()
+                and _is_section_contract_issue(issue)
+                and _is_section_contract_issue(existing)
+                and normalised(issue.get("section", "")) != normalised(existing.get("section", ""))
+            ):
+                # UCC section-coverage findings must not be merged across
+                # different sections. Otherwise a Chapter One review can lose
+                # separate comments on purpose, questions, significance,
+                # delimitations and definitions simply because they share words
+                # such as objective, contribution or citation.
                 continue
             if _similarity(issue, existing) >= threshold:
                 kept[index] = _merge_issue(existing, issue)
