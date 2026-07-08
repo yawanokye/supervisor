@@ -595,3 +595,7 @@ AI_LIGHT_SECTION_BATCH_SIZE=3
 AI_CHAPTER_PACKET_MAX_CHARS=80000
 AI_STANDARD_MAX_OUTPUT_TOKENS=9000
 ```
+
+## v1.9.9.8 deployment note
+
+After deploying this version, restart both the Web Service and Worker. Run a fresh review for quality testing. Recovered jobs may still carry old checkpoints created before the UCC section-coverage contract was added.

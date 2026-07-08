@@ -646,3 +646,11 @@
 - Improved provider error messages to include model, purpose, and the underlying structured-output problem.
 - Enabled one structured-output retry by default for the combined OpenAI pipeline.
 - Reduced default live section batch size and packet size to reduce truncation/schema failures.
+
+## v1.9.9.8 — UCC section-level coverage contract
+
+- Added deterministic UCC thesis/dissertation section contract for Chapters One to Five.
+- Ensured relevant sections are reviewed at the selected academic level, including Bachelor’s, Non-Research Master’s, MPhil, Professional Doctorate and PhD.
+- Added final UCC section preservation after public comment cleaning so the DOCX output does not collapse into a small number of generic comments.
+- Fixed strict-schema validation so deterministic checklist metadata no longer causes valid findings to be silently discarded.
+- Preserved section-distinct UCC comments during public de-duplication.
