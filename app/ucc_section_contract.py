@@ -179,12 +179,12 @@ UCC_EXPECTED: Dict[int, List[Tuple[str, List[str], str, str]]] = {
     1: [
         ("Background to the Study", ["background to the study", "background of the study"], "research_gap_and_problem", "critical"),
         ("Statement of the Problem", ["statement of the problem", "problem statement"], "research_gap_and_problem", "critical"),
-        ("Purpose of the study", ["purpose of the study", "aim of the study"], "objectives_questions_hypotheses", "critical"),
+        ("Purpose of the study", ["purpose of the study", "aim of the study", "general objective", "general objectives", "general aim", "primary objective"], "objectives_questions_hypotheses", "critical"),
         ("Research Objectives", ["research objectives", "objectives of the study"], "objectives_questions_hypotheses", "critical"),
         ("Research Questions", ["research questions", "research question"], "objectives_questions_hypotheses", "critical"),
         ("Significance of the Study", ["significance of the study"], "critical_analysis", "major"),
         ("Limitations of the Study", ["limitations of the study", "limitation of the study"], "chapter_structure", "major"),
-        ("Delimitation of the Study", ["delimitation of the study", "delimitations of the study", "scope of the study"], "chapter_structure", "major"),
+        ("Scope / Delimitation of the Study", ["delimitation of the study", "delimitations of the study", "scope of the study", "scope"], "chapter_structure", "major"),
         ("Definition of Terms", ["definition of terms", "operational definition of terms"], "objectives_questions_hypotheses", "major"),
         ("Organisation of the Study", ["organisation of the study", "organization of the study"], "chapter_structure", "moderate"),
     ],
@@ -338,6 +338,32 @@ def _reference_author_tokens(text: str) -> Set[str]:
     return tokens
 
 
+def _first_citation_anchor(paragraphs: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    pattern = re.compile(r"\([^)]*(?:19|20)\d{2}[^)]*\)")
+    for row in _current_rows(paragraphs):
+        if pattern.search(clean_text(row.get("text", ""))):
+            return row
+    return _first_chapter_anchor(paragraphs, 1)
+
+
+def _has_references_heading(grouped: Dict[str, List[Dict[str, Any]]]) -> bool:
+    return bool(_find_rows(grouped, ["references", "reference list", "bibliography"]))
+
+
+def _citation_count(text: str) -> int:
+    return len(re.findall(r"\([^)]*(?:19|20)\d{2}[^)]*\)", text))
+
+
+def _duplicated_parenthetical_citations(text: str) -> List[str]:
+    raw = re.findall(r"\(([^)]*(?:19|20)\d{2}[^)]*)\)", text)
+    counts: Dict[str, int] = {}
+    for item in raw:
+        key = normalised(item)
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return [k for k, v in counts.items() if v > 1]
+
+
 def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[str, List[Dict[str, Any]]], degree: str) -> List[Dict[str, Any]]:
     issues: List[Optional[Dict[str, Any]]] = []
     background = _find_rows(grouped, ["background to the study", "background of the study"])
@@ -370,8 +396,8 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 code="CH1-TITLE-SCOPE",
                 section="Title",
                 title="The title does not cover all substantive constructs in the objectives",
-                assessment="The title foregrounds green procurement practices and environmental sustainability, but the objectives also examine awareness and operational performance.",
-                action="Align the title, purpose and objectives by either adding the omitted constructs to the title or narrowing the objectives to the constructs named in the title.",
+                assessment="The title does not fully reflect all substantive constructs, population boundaries or case-setting elements introduced in the objectives.",
+                action="Align the title, purpose and objectives by either adding the omitted constructs, population and case setting to the title or narrowing the objectives to match the title.",
                 anchor=title,
                 category="cross_section_coherence",
                 degree=degree,
@@ -386,8 +412,8 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 code="CH1-BACKGROUND-THEORY",
                 section="Background to the Study",
                 title="The background does not establish a level-appropriate theoretical or conceptual anchor",
-                assessment="The background introduces several constructs but does not make the theory or conceptual logic binding them explicit.",
-                action="Add a concise theoretical or conceptual anchor and show how it explains the expected link among green procurement, environmental sustainability, awareness and operational performance.",
+                assessment="The background introduces several central constructs but does not make the theoretical or conceptual logic binding them explicit.",
+                action="Add a concise theoretical or conceptual anchor and show how it explains the expected relationship among the main independent variables, outcome variables and contextual factors in the study.",
                 anchor=_first_substantive(background),
                 category="theoretical_grounding",
                 degree=degree,
@@ -443,7 +469,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 code="CH1-PROBLEM-EVIDENCE",
                 section="Statement of the Problem",
                 title="The problem statement lacks concrete local empirical or policy evidence",
-                assessment="The problem is argued mainly through general and foreign-context literature rather than direct evidence of the problem in the Central Region manufacturing context.",
+                assessment="The problem is argued mainly through broad statements and literature rather than direct empirical, institutional or policy evidence from the specific study context.",
                 action="Insert credible local evidence showing the existence, scale or consequence of the problem, then connect that evidence to the study variables and context.",
                 anchor=_first_substantive(problem),
                 category="research_gap_and_problem",
@@ -703,6 +729,93 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 confidence=0.82,
             ))
 
+
+    # Topic-safe generic Chapter One checks. These must not depend on a previous
+    # sample thesis topic. They protect UCC section coverage across disciplines.
+    full_low = normalised(full_text)
+    if not _has_references_heading(grouped) and _citation_count(full_text) >= 5:
+        issues.append(_issue(
+            code="CH1-MISSING-REFERENCES",
+            section="References",
+            title="The reference list is missing despite visible in-text citations",
+            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the uploaded document.",
+            action="Add a complete reference list in the required style and verify that every in-text citation has a matching reference-list entry.",
+            anchor=_first_citation_anchor(paragraphs),
+            category="citations_and_sources",
+            degree=degree,
+            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
+        ))
+
+    if re.search(r"\w\(", full_text) or re.search(r"\)\s*,\s*\(", full_text):
+        issues.append(_issue(
+            code="CH1-CITATION-SPACING-DUPLICATION",
+            section="Chapter One",
+            title="Citation spacing and grouping need editorial correction",
+            assessment="Several citations are attached to preceding words without a space or are placed as repeated separate parenthetical citations instead of being cleanly grouped.",
+            action="Insert required spaces before citations, remove duplicate citations and group multiple sources according to the selected referencing style.",
+            anchor=_first_citation_anchor(paragraphs),
+            category="citations_and_sources",
+            degree=degree,
+            severity="moderate",
+        ))
+
+    if ("commercial bank" in full_low and "rural bank" in full_low) or ("assinman" in full_low and "commercial bank" in full_low):
+        anchor = _first_substantive(problem) or _first_substantive(background) or _first_chapter_anchor(paragraphs, 1)
+        issues.append(_issue(
+            code="CH1-POPULATION-SCOPE-DRIFT",
+            section=source_section(anchor) if anchor else "Chapter One",
+            title="The study population and case setting are not consistently stated",
+            assessment="The chapter alternates between commercial banks, rural banks and the Assinman Rural Bank PLC case setting without consistently explaining the population boundary.",
+            action="State the target population and case setting consistently across the title, background, problem statement, objectives, questions, scope and significance.",
+            anchor=anchor,
+            category="cross_section_coherence",
+            degree=degree,
+            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
+        ))
+
+    fraud_terms = any(term in full_low for term in ("fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation"))
+    if fraud_terms and degree in {"research_masters", "professional_doctorate", "phd"}:
+        bg_prob = normalised(bg + " " + prob)
+        if "fraud triangle" not in bg_prob and "pressure" not in bg_prob and "opportunity" not in bg_prob:
+            anchor = _first_substantive(background) or _first_substantive(problem) or _first_chapter_anchor(paragraphs, 1)
+            issues.append(_issue(
+                code="CH1-THEORY-NOT-INTEGRATED",
+                section=source_section(anchor) if anchor else "Chapter One",
+                title="The theoretical basis is mentioned in the objectives but not integrated into the chapter argument",
+                assessment="Fraud-triangle factors appear in the objectives or questions, but the background and problem statement do not yet explain how that theory frames the study.",
+                action="Introduce the relevant theory or conceptual framework in the background/problem discussion and explain how it supports the variables, objectives and expected analysis.",
+                anchor=anchor,
+                category="theoretical_grounding",
+                degree=degree,
+                severity="major",
+            ))
+
+    if significance and "research gap" in normalised(sig):
+        issues.append(_issue(
+            code="CH1-GAP-MISPLACED-IN-SIGNIFICANCE",
+            section="Significance of the Study",
+            title="The research gap is placed inside the significance section rather than being fully developed in the problem logic",
+            assessment="The significance section names a research gap, but the gap should be established earlier through the background and problem statement before the study's beneficiaries are discussed.",
+            action="Move or restate the research gap in the background/problem sequence, then reserve the significance section for theoretical, empirical, policy and practical contributions.",
+            anchor=_first_substantive(significance),
+            category="research_gap_and_problem",
+            degree=degree,
+            severity="major",
+        ))
+
+    if limitations and any(term in normalised(lim) for term in ("generalization", "generalisation")) and ("case study" in full_low or "assinman" in full_low):
+        issues.append(_issue(
+            code="CH1-LIMITATION-GENERALISATION",
+            section="Limitations of the Study",
+            title="The limitations section overstates generalisation from a case study",
+            assessment="The chapter suggests that findings will be sufficient for generalisation even though the scope is confined to a single case setting.",
+            action="Qualify the claim as analytical or contextual transferability unless the sampling design supports statistical generalisation beyond the case.",
+            anchor=_first_substantive(limitations),
+            category="methodological_rigour",
+            degree=degree,
+            severity="major",
+        ))
+
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()
     for item in issues:
@@ -801,6 +914,7 @@ def ucc_section_contract_issues(
         issues.extend(_chapter_one_specific(current, grouped, degree))
     for chapter in sorted(chapters - {1}):
         issues.extend(_generic_chapter_specific(current, grouped, degree, chapter))
+
 
     out: List[Dict[str, Any]] = []
     seen: Set[str] = set()

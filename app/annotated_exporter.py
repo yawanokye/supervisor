@@ -289,7 +289,7 @@ def _section_comment_template(heading: str) -> str:
     if "statement" in low and "problem" in low:
         return (
             "This part should establish a defensible research problem, not only a general topic of interest. "
-            "It should separate the practical problem, empirical gap, contextual gap and methodological gap, then show why the Central Region manufacturing setting requires investigation. "
+            "It should separate the practical problem, empirical gap, contextual gap and methodological gap, then show why the selected study setting requires investigation. "
             "Revise it so the gap directly leads to the purpose, objectives and questions."
         )
     if "purpose" in low:

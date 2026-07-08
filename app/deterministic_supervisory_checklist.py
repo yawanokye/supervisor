@@ -516,6 +516,22 @@ def _reference_author_tokens(text: str) -> Set[str]:
     return tokens
 
 
+
+
+def _important_objective_terms(objectives_text: str) -> List[str]:
+    text = normalised(objectives_text)
+    stop = {"study", "effect", "impact", "relationship", "assess", "examine", "determine", "evaluate", "among", "within", "ghana", "bank", "banks", "firms", "company", "companies"}
+    candidates: List[str] = []
+    phrases = re.findall(r"(?:effectiveness of|impact of|relationship between|level of|extent of|role of)\s+([a-z][a-z0-9\s\-]{4,70})", text)
+    for phrase in phrases:
+        phrase = re.split(r"\s+(?:among|within|in|on|for)\s+", phrase)[0].strip()
+        if phrase and phrase not in candidates:
+            candidates.append(phrase)
+    for phrase in ("fraud detection", "fraud prevention", "internal controls", "fraud incidence", "fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation", "awareness", "operational performance", "green procurement practices"):
+        if phrase in text and phrase not in candidates:
+            candidates.append(phrase)
+    return [c for c in candidates if c and c not in stop][:6]
+
 def hard_chapter_one_supervisory_issues(
     paragraphs: Sequence[Dict[str, Any]],
     *,
@@ -537,7 +553,7 @@ def hard_chapter_one_supervisory_issues(
     grouped = _group_by_section(current)
     background = _find_section_rows(grouped, "background to the study", "background of the study")
     problem = _find_section_rows(grouped, "statement of the problem", "problem statement")
-    purpose = _find_section_rows(grouped, "purpose of the study", "purpose of the study")
+    purpose = _find_section_rows(grouped, "purpose of the study", "aim of the study", "general objective", "general objectives", "general aim", "primary objective")
     objectives = _find_section_rows(grouped, "research objectives", "objectives of the study")
     questions = _find_section_rows(grouped, "research questions", "research question")
     significance = _find_section_rows(grouped, "significance of the study")
@@ -579,7 +595,7 @@ def hard_chapter_one_supervisory_issues(
                 code="TITLE-SCOPE-MISMATCH",
                 section="Title",
                 title="The title does not reflect all substantive constructs in the objectives",
-                assessment="The title focuses on green procurement practices and environmental sustainability, but the objectives also introduce awareness and operational performance as substantive areas of inquiry.",
+                assessment="The title does not fully reflect all substantive constructs, population boundaries or case-setting elements introduced in the objectives.",
                 consequence="At the declared level, title-scope mismatch weakens the reader's expectation of what the study actually investigates and contributes to the broader purpose-objective misalignment.",
                 action="Revise the title to reflect the full construct scope of the study, or remove the constructs that are not central enough to appear in the title and purpose.",
                 anchor=title_anchor,
@@ -594,21 +610,21 @@ def hard_chapter_one_supervisory_issues(
         if not has_named_theory:
             if degree == "bachelors":
                 title = "The background needs a clearer conceptual anchor for the key variables"
-                action = "Add a short explanation of how green procurement, environmental sustainability, awareness and operational performance relate conceptually, without imposing a full postgraduate theoretical framework."
+                action = "Add a short explanation of how the main variables and context of the study relate conceptually, without imposing a full postgraduate theoretical framework."
                 severity = "moderate"
             elif degree == "non_research_masters":
                 title = "The background needs a clearer applied or professional logic"
-                action = "Add a concise applied framework showing how the professional problem, green procurement practices, environmental outcomes and operational performance connect in the study context."
+                action = "Add a concise applied framework showing how the professional problem, the main independent variables, outcomes and setting connect in the study context."
                 severity = "major"
             else:
                 title = "The background does not establish an explicit theoretical or conceptual anchor"
-                action = "Add a concise theoretical or conceptual anchor and show how it explains the expected relationship among green procurement, environmental sustainability, awareness and operational performance."
+                action = "Add a concise theoretical or conceptual anchor and show how it explains the expected relationship among the main variables and contextual factors in the study."
                 severity = "major"
             issues.append(_issue(
                 code="B1.2-LEVEL-CONCEPTUAL-ANCHOR",
                 section="Background to the Study",
                 title=title,
-                assessment="The background introduces green procurement, environmental sustainability, awareness and operational performance, but it does not clearly identify the level-appropriate logic that binds these constructs together.",
+                assessment="The background introduces several central constructs, but it does not clearly identify the level-appropriate logic that binds these constructs together.",
                 consequence=_degree_theory_requirement(degree),
                 action=action,
                 anchor=_first_substantive(background),
@@ -621,9 +637,9 @@ def hard_chapter_one_supervisory_issues(
                 code="B1.3-LOCAL-EVIDENCE",
                 section="Background to the Study",
                 title="The local contextual justification is not sufficiently evidenced",
-                assessment="The background mentions Ghana and the Central Region, but it does not provide strong local empirical, policy or industry evidence showing the scale or seriousness of the green procurement problem in that setting.",
+                assessment="The background mentions the study context, but it does not provide strong local empirical, policy or institutional evidence showing the scale or seriousness of the problem in that setting.",
                 consequence="A regional study needs more than a final sentence naming the context; the reader must see why this location and sector require investigation at the declared academic level.",
-                action="Insert traceable Ghanaian or Central Region evidence, such as manufacturing-sector data, policy/regulatory evidence or recent empirical studies, and use it to justify the selected context.",
+                action="Insert traceable Ghanaian evidence, such as regulator reports, institutional records, sector data, policy evidence or recent empirical studies, and use it to justify the selected context.",
                 anchor=_first_substantive(background),
                 category="research_gap_and_problem",
             ))
@@ -661,7 +677,7 @@ def hard_chapter_one_supervisory_issues(
                 code="B2.2-EVIDENCE",
                 section="Statement of the Problem",
                 title="The problem statement is not supported by concrete empirical or policy evidence",
-                assessment="The problem statement discusses manufacturing and green procurement generally but does not provide concrete local statistics, policy evidence or documented institutional evidence showing the problem in the Central Region manufacturing context.",
+                assessment="The problem statement discusses the topic generally but does not provide concrete local statistics, policy evidence or documented institutional evidence showing the problem in the specific study context.",
                 consequence="Without visible evidence of the problem, the study risks reading as topic justification rather than a researchable problem.",
                 action="Add specific, cited evidence showing the existence, magnitude or consequences of the problem in Ghana or the Central Region, then link that evidence directly to the research focus.",
                 anchor=_first_substantive(problem),
@@ -683,7 +699,7 @@ def hard_chapter_one_supervisory_issues(
         low_purpose = normalised(purpose_text)
         low_obj = normalised(objectives_text)
         missing_constructs = []
-        for term in ("awareness", "operational performance", "current green procurement practices"):
+        for term in _important_objective_terms(objectives_text):
             if term in low_obj and term not in low_purpose:
                 missing_constructs.append(term)
         if missing_constructs:
@@ -691,7 +707,7 @@ def hard_chapter_one_supervisory_issues(
                 code="B3.1-PURPOSE-OBJECTIVES",
                 section="Purpose of the study",
                 title="The purpose statement is narrower than the objectives",
-                assessment=f"The purpose focuses on green procurement practices and environmental sustainability, but the objectives also introduce {', '.join(missing_constructs)}.",
+                assessment=f"The purpose does not fully cover all substantive constructs introduced in the objectives, including {', '.join(missing_constructs)}.",
                 consequence="This breaks the traceability required from problem to purpose, objectives, questions, methodology and conclusions.",
                 action="Either broaden the purpose to include all principal constructs and outcomes or remove the objectives that fall outside the stated purpose.",
                 anchor=_first_substantive(purpose),
@@ -919,6 +935,67 @@ def hard_chapter_one_supervisory_issues(
                 category="citations_and_sources",
                 severity="moderate",
                 confidence=0.82,
+            ))
+
+
+    # Topic-safe citation/reference and scope checks for any Chapter One topic.
+    full_low = normalised(full_text)
+    if not references and len(re.findall(r"\([^)]*(?:19|20)\d{2}[^)]*\)", full_text)) >= 5:
+        cite_anchor = next((row for row in current if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", clean_text(row.get("text", "")))), _first_substantive(background) or _first_substantive(problem))
+        issues.append(_issue(
+            code="REF-MISSING-LIST",
+            section="References",
+            title="The reference list is missing despite visible in-text citations",
+            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the uploaded document.",
+            consequence="A thesis chapter with citations but no reference list fails the basic traceability requirement for scholarly sources.",
+            action="Add a complete reference list in the required style and verify that every in-text citation has a matching reference-list entry.",
+            anchor=cite_anchor,
+            category="citations_and_sources",
+            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
+        ))
+
+    if re.search(r"\w\(", full_text) or re.search(r"\)\s*,\s*\(", full_text):
+        cite_anchor = next((row for row in current if re.search(r"\w\(", clean_text(row.get("text", ""))) or re.search(r"\)\s*,\s*\(", clean_text(row.get("text", "")))), _first_substantive(background) or _first_substantive(problem))
+        issues.append(_issue(
+            code="CITATION-SPACING-DUPLICATION",
+            section=source_section(cite_anchor) if cite_anchor else "Chapter One",
+            title="Citation spacing and grouping need editorial correction",
+            assessment="Several citations are attached to preceding words without a space or are placed as repeated separate parenthetical citations instead of being cleanly grouped.",
+            consequence="Citation formatting errors reduce readability and make the source system look unedited.",
+            action="Insert required spaces before citations, remove duplicate citations and group multiple sources according to the selected referencing style.",
+            anchor=cite_anchor,
+            category="citations_and_sources",
+            severity="moderate",
+        ))
+
+    if ("commercial bank" in full_low and "rural bank" in full_low) or ("assinman" in full_low and "commercial bank" in full_low):
+        anchor = _first_substantive(problem) or _first_substantive(background)
+        issues.append(_issue(
+            code="POPULATION-SCOPE-DRIFT",
+            section=source_section(anchor) if anchor else "Chapter One",
+            title="The study population and case setting are not consistently stated",
+            assessment="The chapter alternates between commercial banks, rural banks and the Assinman Rural Bank PLC case setting without consistently explaining the population boundary.",
+            consequence="Population drift weakens alignment among the title, problem, objectives, methodology and eventual findings.",
+            action="State the target population and case setting consistently across the title, background, problem statement, objectives, questions, scope and significance.",
+            anchor=anchor,
+            category="cross_section_coherence",
+            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
+        ))
+
+    if any(term in full_low for term in ("fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation")):
+        bg_prob = normalised(bg_text + " " + problem_text)
+        if degree in {"research_masters", "professional_doctorate", "phd"} and "fraud triangle" not in bg_prob and "pressure" not in bg_prob and "opportunity" not in bg_prob:
+            anchor = _first_substantive(background) or _first_substantive(problem)
+            issues.append(_issue(
+                code="THEORY-NOT-INTEGRATED",
+                section=source_section(anchor) if anchor else "Chapter One",
+                title="The theoretical basis is mentioned in the objectives but not integrated into the chapter argument",
+                assessment="Fraud-triangle factors appear in the objectives or questions, but the background and problem statement do not yet explain how that theory frames the study.",
+                consequence="At MPhil level and above, theory should guide the argument before it appears in the objectives, questions or analysis plan.",
+                action="Introduce the relevant theory or conceptual framework in the background/problem discussion and explain how it supports the variables, objectives and expected analysis.",
+                anchor=anchor,
+                category="theoretical_grounding",
+                severity="major",
             ))
 
     # Remove Nones and duplicate hard codes.
