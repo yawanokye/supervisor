@@ -158,10 +158,11 @@ class CostAwareAIProvider:
     def _combined_pipeline_plan(self, stage: ReviewStage, profile: RoutingProfile) -> RoutePlan:
         """Three-role OpenAI thesis pipeline.
 
-        Phase 1 routes cleaning/formatting and JSON repair to the cheap nano
-        model. Phase 2 routes section and domain checks to the section-analysis
-        model, normally GPT-5.6 Luna where access is available. Phase 3 routes
-        final synthesis and committee-style audits to GPT-5.5/GPT-5.4.
+        Phase 1 routes cleaning/formatting and JSON repair to the cheapest nano
+        model. Phase 2 routes section and domain checks to the configured mini
+        or chapter model. Phase 3 routes final synthesis and committee-style
+        audits to the bounded expert model. No unavailable preview model is used
+        by default.
 
         The Batch API is not used directly here because live reviews need a
         synchronous response. The role separation is compatible with a future
@@ -180,22 +181,22 @@ class CostAwareAIProvider:
         section = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_model,
-            self.config.openai_chapter_reasoning_effort or "high",
+            self.config.openai_chapter_reasoning_effort or "medium",
         )
         section_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_fallback_model,
-            self.config.openai_chapter_reasoning_effort or "high",
+            self.config.openai_chapter_reasoning_effort or "medium",
         )
         final = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_model,
-            self.config.openai_final_audit_reasoning_effort or "xhigh",
+            self.config.openai_final_audit_reasoning_effort or "high",
         )
         final_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_fallback_model,
-            self.config.openai_final_audit_reasoning_effort or "xhigh",
+            self.config.openai_final_audit_reasoning_effort or "high",
         )
 
         phase1 = {

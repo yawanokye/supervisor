@@ -60,9 +60,7 @@ class HybridAIConfig:
     external examination use GPT-5.4. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.8.6 calibrates provider strength, review coverage and audit capacity to every declared degree level. It routes inexpensive first-pass work through DeepSeek and
-    selectively escalates uncertain or high-risk findings to OpenAI. Existing
-    strict schemas, checkpoints and token accounting remain active.
+    VProfessor v1.9.9.10 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -278,7 +276,7 @@ class HybridAIConfig:
         ).strip()
 
         chapter_effort = _normalise_effort(
-            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "high")
+            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "medium")
         )
         expert_effort = _normalise_effort(
             os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "high")
@@ -291,9 +289,9 @@ class HybridAIConfig:
         )
         legacy_decision_effort = _normalise_effort(
             os.getenv(
-                "OPENAI_EXTERNAL_DECISION_REASONING_EFFORT", "xhigh"
+                "OPENAI_EXTERNAL_DECISION_REASONING_EFFORT", "high"
             ),
-            default="xhigh",
+            default="high",
         )
         external_domain_effort = _normalise_effort(
             os.getenv(
@@ -306,11 +304,11 @@ class HybridAIConfig:
                 "OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT",
                 legacy_decision_effort,
             ),
-            default="xhigh",
+            default="high",
         )
 
         standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 6500)
-        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 12000)
+        advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
 
         chapter_input_price = _env_float_alias(
             "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 0.75
@@ -340,14 +338,14 @@ class HybridAIConfig:
             "OPENAI_CLEANING_MODEL", "gpt-4.1-nano"
         ).strip() or "gpt-4.1-nano"
         section_model = os.getenv(
-            "OPENAI_SECTION_ANALYSIS_MODEL", "gpt-5.6-luna"
-        ).strip() or "gpt-5.6-luna"
+            "OPENAI_SECTION_ANALYSIS_MODEL", chapter_model
+        ).strip() or chapter_model
         section_fallback_model = os.getenv(
             "OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL", chapter_model
         ).strip() or chapter_model
         final_synthesis_model = os.getenv(
-            "OPENAI_FINAL_SYNTHESIS_MODEL", "gpt-5.5"
-        ).strip() or "gpt-5.5"
+            "OPENAI_FINAL_SYNTHESIS_MODEL", audit_model or expert_model
+        ).strip() or audit_model or expert_model
         final_synthesis_fallback_model = os.getenv(
             "OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL", audit_model or expert_model
         ).strip() or audit_model or expert_model
@@ -400,7 +398,7 @@ class HybridAIConfig:
                 "AI_MAX_CONTEXT_CHARS_PER_RULE", 9000
             ),
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
-            max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 12000),
+            max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 9000),
             light_max_output_tokens=_env_int(
                 "AI_LIGHT_MAX_OUTPUT_TOKENS", 4500
             ),
@@ -414,12 +412,12 @@ class HybridAIConfig:
             fast_request_max_retries=_env_int(
                 "AI_FAST_REQUEST_MAX_RETRIES", 0, 0
             ),
-            max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 4),
+            max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 2),
             chapter_review_concurrency=_env_int(
-                "AI_CHAPTER_REVIEW_CONCURRENCY", 4
+                "AI_CHAPTER_REVIEW_CONCURRENCY", 2
             ),
             chapter_packet_max_chars=_env_int(
-                "AI_CHAPTER_PACKET_MAX_CHARS", 120000
+                "AI_CHAPTER_PACKET_MAX_CHARS", 60000
             ),
             chapter_recovery_concurrency=_env_int(
                 "AI_CHAPTER_RECOVERY_CONCURRENCY", 2
@@ -476,7 +474,7 @@ class HybridAIConfig:
                 os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "medium")
             ),
             research_masters_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 9000
+                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
             ),
             research_masters_audit_max_output_tokens=_env_int(
                 "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 6500
@@ -488,7 +486,7 @@ class HybridAIConfig:
                 "VPROF_RESEARCH_MASTERS_DEEP_REVIEW", True
             ),
             professional_doctorate_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 11000
+                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 8500
             ),
             professional_doctorate_audit_max_output_tokens=_env_int(
                 "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 7500
@@ -497,13 +495,13 @@ class HybridAIConfig:
                 os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "high")
             ),
             phd_max_output_tokens=_env_int(
-                "AI_PHD_MAX_OUTPUT_TOKENS", 12000
+                "AI_PHD_MAX_OUTPUT_TOKENS", 9000
             ),
             phd_audit_max_output_tokens=_env_int(
                 "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 8000
             ),
             phd_audit_reasoning_effort=_normalise_effort(
-                os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "xhigh")
+                os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "high")
             ),
             all_levels_degree_calibrated=_env_bool(
                 "VPROF_ALL_LEVELS_DEGREE_CALIBRATED", True
@@ -541,13 +539,13 @@ class HybridAIConfig:
             ),
 
             routing_profile=(
-                os.getenv("VPROF_ROUTING_PROFILE", "balanced").strip().lower()
-                if os.getenv("VPROF_ROUTING_PROFILE", "balanced").strip().lower()
+                os.getenv("VPROF_ROUTING_PROFILE", "quality").strip().lower()
+                if os.getenv("VPROF_ROUTING_PROFILE", "quality").strip().lower()
                 in {"economy", "balanced", "quality"}
                 else "balanced"
             ),
             enable_openai_routing=_env_bool("VPROF_ENABLE_OPENAI", True),
-            enable_deepseek_routing=_env_bool("VPROF_ENABLE_DEEPSEEK", True),
+            enable_deepseek_routing=_env_bool("VPROF_ENABLE_DEEPSEEK", False),
             selective_escalation_enabled=_env_bool(
                 "VPROF_ENABLE_SELECTIVE_ESCALATION", True
             ),

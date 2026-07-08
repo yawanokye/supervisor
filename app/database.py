@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Generator, Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, func, inspect, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -117,6 +117,26 @@ class TokenLedger(Base):
     note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+
+
+class ReviewArtifact(Base):
+    __tablename__ = "review_artifacts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "artifact_key", name="uq_review_artifact_job_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    artifact_key: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream", nullable=False)
+    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class ReviewCheckpoint(Base):

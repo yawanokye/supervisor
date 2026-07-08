@@ -108,9 +108,20 @@ ALLOWED_EXTENSIONS = (".docx", ".pdf")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "development-only-change-this-secret")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+RUN_REVIEW_JOBS_IN_WEB = _env_bool("VPROF_RUN_JOBS_IN_WEB", True)
+WORKER_POLL_SECONDS = max(2, int(os.getenv("VPROF_WORKER_POLL_SECONDS", "8")))
+
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.9.4",
+    version="1.9.9.10",
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -148,7 +159,7 @@ async def startup() -> None:
                 os.getenv("ADMIN_USERNAME", "admin"),
                 generated,
             )
-    if AUTO_RESUME_JOBS:
+    if AUTO_RESUME_JOBS and RUN_REVIEW_JOBS_IN_WEB:
         await _resume_recoverable_jobs()
 
 
@@ -1193,7 +1204,17 @@ def _schedule_review_job(
     payload: Optional[Dict[str, Any]] = None,
     *,
     resumed: bool,
+    force: bool = False,
 ) -> bool:
+    if not force and not RUN_REVIEW_JOBS_IN_WEB:
+        _job_update(
+            job_id,
+            status="queued",
+            message="Review queued for the background worker",
+            recoverable=True,
+            payload_available=payload_available(job_id),
+        )
+        return False
     if job_id in RUNNING_JOB_IDS or job_id in SCHEDULED_JOB_IDS:
         return False
     if payload is None:
@@ -1350,7 +1371,8 @@ def _queue_automatic_retry(
             payload_available=True,
             resume_url=f"/api/review/jobs/{job_id}/resume",
         )
-        asyncio.create_task(_delayed_auto_resume(job_id))
+        if RUN_REVIEW_JOBS_IN_WEB:
+            asyncio.create_task(_delayed_auto_resume(job_id))
         return True
 
     _job_update(

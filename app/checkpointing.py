@@ -3,17 +3,89 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from .ai_schemas import AIUsageRecord
-from .database import ReviewCheckpoint, ReviewRecord, SessionLocal
+from .database import ReviewArtifact, ReviewCheckpoint, ReviewRecord, SessionLocal
 from .ai_providers import ProviderResult
 from .storage import storage_root
 
 logger = logging.getLogger(__name__)
+
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _db_artifact_storage_enabled() -> bool:
+    return _env_bool("VPROF_DB_ARTIFACT_STORAGE", False)
+
+
+def _save_db_artifact(
+    job_id: str,
+    artifact_key: str,
+    data: bytes,
+    *,
+    filename: str = "",
+    content_type: str = "application/octet-stream",
+) -> None:
+    if not _db_artifact_storage_enabled():
+        return
+    value = bytes(data or b"")
+    with SessionLocal() as db:
+        row = (
+            db.query(ReviewArtifact)
+            .filter(
+                ReviewArtifact.job_id == job_id,
+                ReviewArtifact.artifact_key == artifact_key,
+            )
+            .first()
+        )
+        if not row:
+            row = ReviewArtifact(job_id=job_id, artifact_key=artifact_key)
+            db.add(row)
+        row.filename = filename or row.filename or artifact_key
+        row.content_type = content_type
+        row.sha256 = bytes_hash(value)
+        row.size_bytes = len(value)
+        row.data = value
+        row.updated_at = utcnow()
+        db.commit()
+
+
+def _load_db_artifact(job_id: str, artifact_key: str) -> Optional[bytes]:
+    if not _db_artifact_storage_enabled():
+        return None
+    with SessionLocal() as db:
+        row = (
+            db.query(ReviewArtifact)
+            .filter(
+                ReviewArtifact.job_id == job_id,
+                ReviewArtifact.artifact_key == artifact_key,
+            )
+            .first()
+        )
+        return bytes(row.data) if row and row.data is not None else None
+
+
+def _load_json_from_db(job_id: str, artifact_key: str) -> Optional[Dict[str, Any]]:
+    data = _load_db_artifact(job_id, artifact_key)
+    if not data:
+        return None
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except Exception:
+        logger.exception("Could not load database artifact %s for job %s", artifact_key, job_id)
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def utcnow() -> datetime:
@@ -163,6 +235,43 @@ def save_job_payload(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         "original_hash": (original_info or {}).get("sha256"),
     })
     _atomic_json(root / "payload.json", manifest)
+    if _db_artifact_storage_enabled():
+        _save_db_artifact(
+            job_id,
+            "payload.json",
+            json.dumps(manifest, ensure_ascii=False, default=str).encode("utf-8"),
+            filename="payload.json",
+            content_type="application/json",
+        )
+        _save_db_artifact(
+            job_id,
+            source_info["path"],
+            source_data,
+            filename=source_info.get("filename") or "source.bin",
+        )
+        for index, info in enumerate(context_files, start=1):
+            original = (payload.get("context_documents") or [])[index - 1]
+            _save_db_artifact(
+                job_id,
+                info["path"],
+                bytes(original.get("data") or b""),
+                filename=info.get("filename") or f"context-{index}",
+            )
+        for index, info in enumerate(comment_files, start=1):
+            original = (payload.get("supervisor_comment_documents") or [])[index - 1]
+            _save_db_artifact(
+                job_id,
+                info["path"],
+                bytes(original.get("data") or b""),
+                filename=info.get("filename") or f"comments-{index}",
+            )
+        if original_info and isinstance(original, dict):
+            _save_db_artifact(
+                job_id,
+                original_info["path"],
+                bytes(original.get("data") or b""),
+                filename=original_info.get("filename") or "original-document",
+            )
     return manifest
 
 
@@ -171,7 +280,12 @@ def _read_manifest_blob(root: Path, info: Dict[str, Any]) -> bytes:
     if not path_value:
         raise FileNotFoundError("Stored review file path is missing.")
     path = root / path_value
-    data = path.read_bytes()
+    if path.exists():
+        data = path.read_bytes()
+    else:
+        data = _load_db_artifact(root.name, path_value)
+        if data is None:
+            raise FileNotFoundError(f"Stored review file is unavailable: {path_value}")
     expected = str(info.get("sha256") or "")
     if expected and bytes_hash(data) != expected:
         raise ValueError(f"Stored review file failed integrity checking: {path.name}")
@@ -180,7 +294,7 @@ def _read_manifest_blob(root: Path, info: Dict[str, Any]) -> bytes:
 
 def load_job_payload(job_id: str) -> Optional[Dict[str, Any]]:
     root = job_directory(job_id)
-    manifest = _load_json(root / "payload.json")
+    manifest = _load_json(root / "payload.json") or _load_json_from_db(job_id, "payload.json")
     if not manifest:
         return None
 
@@ -222,11 +336,14 @@ def load_job_payload(job_id: str) -> Optional[Dict[str, Any]]:
 def payload_available(job_id: str) -> bool:
     try:
         root = job_directory(job_id)
-        manifest = _load_json(root / "payload.json")
+        manifest = _load_json(root / "payload.json") or _load_json_from_db(job_id, "payload.json")
         if not manifest:
             return False
         source = manifest.get("source") or {}
-        return bool(source.get("path") and (root / str(source["path"])).exists())
+        key = str(source.get("path") or "")
+        if not key:
+            return False
+        return bool((root / key).exists() or _load_db_artifact(job_id, key) is not None)
     except Exception:
         return False
 
@@ -270,6 +387,8 @@ class CheckpointManager:
             path = Path(record.result_path) if record and record.result_path else self._path(stage_key)
 
         value = _load_json(path)
+        if not value:
+            value = _load_json_from_db(self.job_id, f"checkpoints/{_safe(stage_key)}.json")
         if not value:
             return None
         stored_hash = str(value.get("input_hash") or "")
@@ -332,14 +451,22 @@ class CheckpointManager:
     ) -> None:
         now = utcnow()
         path = self._path(stage_key)
-        _atomic_json(path, {
+        checkpoint_value = {
             "version": 1,
             "job_id": self.job_id,
             "stage_key": stage_key,
             "input_hash": input_hash,
             "saved_at": now.isoformat(),
             "data": data,
-        })
+        }
+        _atomic_json(path, checkpoint_value)
+        _save_db_artifact(
+            self.job_id,
+            f"checkpoints/{_safe(stage_key)}.json",
+            json.dumps(checkpoint_value, ensure_ascii=False, default=str).encode("utf-8"),
+            filename=f"{_safe(stage_key)}.json",
+            content_type="application/json",
+        )
 
         with SessionLocal() as db:
             record = (
