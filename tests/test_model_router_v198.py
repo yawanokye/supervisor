@@ -36,6 +36,8 @@ def _result(provider: str, model: str, confidence: float, severity: str = "moder
 def test_high_confidence_standard_review_uses_one_deepseek_call(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("VPROF_ENABLE_DEEPSEEK", "true")
+    monkeypatch.setenv("VPROF_ROUTING_PROFILE", "balanced")
     config = HybridAIConfig.from_env()
     router = CostAwareAIProvider(config)
     calls: list[str] = []
@@ -67,6 +69,8 @@ def test_high_confidence_standard_review_uses_one_deepseek_call(monkeypatch):
 def test_low_confidence_standard_review_escalates_once(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("VPROF_ENABLE_DEEPSEEK", "true")
+    monkeypatch.setenv("VPROF_ROUTING_PROFILE", "balanced")
     config = HybridAIConfig.from_env()
     router = CostAwareAIProvider(config)
     calls: list[str] = []
@@ -100,6 +104,8 @@ def test_low_confidence_standard_review_escalates_once(monkeypatch):
 def test_provider_failure_uses_low_cost_openai_fallback(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("VPROF_ENABLE_DEEPSEEK", "true")
+    monkeypatch.setenv("VPROF_ROUTING_PROFILE", "balanced")
     config = HybridAIConfig.from_env()
     router = CostAwareAIProvider(config)
     calls: list[str] = []

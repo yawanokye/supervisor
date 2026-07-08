@@ -36,7 +36,8 @@ def test_balanced_defaults_enable_cost_aware_routing(monkeypatch):
     assert config.resolve_mode("light") == "light"
     assert config.resolve_mode("standard") == "standard"
     assert config.resolve_mode("advanced") == "advanced"
-    assert config.routing_profile == "balanced"
+    assert config.routing_profile == "quality"
+    assert config.enable_deepseek_routing is False
     assert config.deepseek_fast_model == "deepseek-v4-flash"
     assert config.deepseek_quality_model == "deepseek-v4-pro"
     assert config.openai_chapter_model == "gpt-5.4-mini"
@@ -53,6 +54,7 @@ def test_deepseek_can_keep_normal_reviews_available_without_openai(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
     _clear_router_env(monkeypatch)
+    monkeypatch.setenv("VPROF_ENABLE_DEEPSEEK", "true")
     config = HybridAIConfig.from_env()
     for depth in ("light", "standard", "advanced"):
         assert config.resolve_mode(depth) == depth
@@ -84,7 +86,7 @@ def test_research_intensive_sections_keep_expert_route_hint(monkeypatch):
     )
     assert _batch_model_route(literature, "Research Masters (MPhil)", config) == (
         "gpt-5.4-mini",
-        "high",
+        "medium",
     )
 
 
@@ -96,10 +98,10 @@ def test_balanced_route_plans(monkeypatch):
     router = CostAwareAIProvider(config)
 
     standard = router.plan(stage=ReviewStage.STANDARD_REVIEW)
-    assert standard.primary.provider is ProviderName.DEEPSEEK
-    assert standard.primary.model == "deepseek-v4-flash"
+    assert standard.primary.provider is ProviderName.OPENAI
+    assert standard.primary.model == "gpt-5.4-mini"
     assert standard.escalation is not None
-    assert standard.escalation.model == "gpt-5.4-mini"
+    assert standard.escalation.model == "gpt-5.4"
 
     advanced = router.plan(
         stage=ReviewStage.ADVANCED_REVIEW,
@@ -107,9 +109,8 @@ def test_balanced_route_plans(monkeypatch):
         requested_effort=config.openai_expert_reasoning_effort,
     )
     assert advanced.primary.provider is ProviderName.OPENAI
-    assert advanced.primary.model == "gpt-5.4-mini"
-    assert advanced.escalation is not None
-    assert advanced.escalation.model == "gpt-5.4"
+    assert advanced.primary.model == "gpt-5.4"
+    assert advanced.escalation is None
 
     external = router.plan(
         stage=ReviewStage.EXTERNAL_EXAMINATION,
