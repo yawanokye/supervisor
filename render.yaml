@@ -1,40 +1,172 @@
+databases:
+  - name: vprofessor-db
+    plan: basic
+
 services:
   - type: web
-    name: projectready-supervisor
+    name: vprofessor-web
     runtime: python
-    plan: starter
+    plan: standard
     buildCommand: python -m pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    envVars:
+    envVars: &vprofessorEnv
       - key: PYTHON_VERSION
         value: 3.12.11
       - key: SESSION_SECRET
         generateValue: true
       - key: COOKIE_SECURE
         value: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vprofessor-db
+          property: connectionString
+      - key: REVIEW_STORAGE_DIR
+        value: /tmp/vprofessor/reviews
+      - key: REVIEW_STORAGE_FALLBACK_DIR
+        value: /tmp/vprofessor/reviews
+      - key: VPROF_DB_ARTIFACT_STORAGE
+        value: true
+      - key: VPROF_RUN_JOBS_IN_WEB
+        value: false
       - key: OPENAI_API_KEY
-        sync: false
-      - key: DEEPSEEK_API_KEY
         sync: false
       - key: OPENAI_BASE_URL
         value: https://api.openai.com/v1
-      - key: DEEPSEEK_BASE_URL
-        value: https://api.deepseek.com
-      - key: VPROF_ROUTING_PROFILE
-        value: balanced
+      - key: AI_REVIEW_ENABLED
+        value: true
       - key: VPROF_ENABLE_OPENAI
         value: true
       - key: VPROF_ENABLE_DEEPSEEK
-        value: true
+        value: false
       - key: VPROF_ENABLE_SELECTIVE_ESCALATION
         value: true
-      - key: VPROF_ESCALATE_CONFIDENCE_BELOW
-        value: 0.78
+      - key: VPROF_ROUTING_PROFILE
+        value: quality
+      - key: VPROF_COMBINED_APP_PIPELINE
+        value: true
+      - key: VPROF_EXPERT_PROVIDER_MODE
+        value: combined_openai_pipeline
       - key: VPROF_DEFAULT_CALL_BUDGET_USD
-        value: 0.25
+        value: 0.45
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
-        value: 2.00
+        value: 1.50
+      - key: OPENAI_FAST_MODEL
+        value: gpt-5.4-nano
+      - key: OPENAI_CLEANING_MODEL
+        value: gpt-5.4-nano
+      - key: OPENAI_CHAPTER_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_SECTION_ANALYSIS_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXPERT_MODEL
+        value: gpt-5.4
+      - key: OPENAI_FINAL_AUDIT_MODEL
+        value: gpt-5.4
+      - key: OPENAI_FINAL_SYNTHESIS_MODEL
+        value: gpt-5.4
+      - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXTERNAL_DOMAIN_MODEL
+        value: gpt-5.4
+      - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
+        value: gpt-5.4
+      - key: OPENAI_CHAPTER_REASONING_EFFORT
+        value: medium
+      - key: OPENAI_EXPERT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
+        value: medium
+      - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_PHD_AUDIT_REASONING_EFFORT
+        value: high
+      - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT
+        value: high
+      - key: OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT
+        value: high
+      - key: AI_MAX_PARALLEL_CALLS
+        value: 2
+      - key: AI_CHAPTER_REVIEW_CONCURRENCY
+        value: 2
+      - key: AI_CHAPTER_RECOVERY_CONCURRENCY
+        value: 1
+      - key: AI_CHAPTER_PACKET_MAX_CHARS
+        value: 60000
+      - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
+        value: 4500
+      - key: AI_LIGHT_MAX_OUTPUT_TOKENS
+        value: 3500
+      - key: AI_STANDARD_MAX_OUTPUT_TOKENS
+        value: 5500
+      - key: AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
+        value: 6500
+      - key: AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
+        value: 7500
+      - key: AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS
+        value: 8500
+      - key: AI_PHD_MAX_OUTPUT_TOKENS
+        value: 9000
+      - key: AI_ADVANCED_MAX_OUTPUT_TOKENS
+        value: 9000
+      - key: AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS
+        value: 2600
+      - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
+        value: 3200
+      - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
+        value: 4000
+      - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
+        value: 5000
+      - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
+        value: 5500
+      - key: AI_PHD_AUDIT_MAX_OUTPUT_TOKENS
+        value: 6000
+      - key: AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS
+        value: 5500
+      - key: AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS
+        value: 5500
+      - key: AI_EXTERNAL_ASSESSMENT_INTEGRITY_MAX_OUTPUT_TOKENS
+        value: 4500
+      - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
+        value: 7500
+      - key: AI_TIMEOUT_SECONDS
+        value: 300
+      - key: AI_FAST_REQUEST_TIMEOUT_SECONDS
+        value: 180
+      - key: AI_FAST_REQUEST_MAX_RETRIES
+        value: 0
+      - key: AI_MAX_RETRIES
+        value: 0
+      - key: AI_STRUCTURED_OUTPUT_RETRIES
+        value: 0
+      - key: AI_JOB_MAX_SECONDS
+        value: 5400
+      - key: AI_ADVANCED_SECOND_PASS
+        value: true
+      - key: AUTO_RESUME_JOBS
+        value: true
+      - key: MAX_AUTO_RESUMES
+        value: 2
+      - key: JOB_HEARTBEAT_SECONDS
+        value: 30
+      - key: JOB_LEASE_SECONDS
+        value: 180
+      - key: JOB_STALE_AFTER_SECONDS
+        value: 240
+      - key: RECOVERY_STALLED_AFTER_SECONDS
+        value: 600
+      - key: CLIENT_AUTO_RECOVERY_SECONDS
+        value: 600
+      - key: VPROF_WORKER_CONCURRENCY
+        value: 1
+      - key: VPROF_WORKER_POLL_SECONDS
+        value: 8
       - key: VPROF_ALL_LEVELS_DEGREE_CALIBRATED
         value: true
       - key: VPROF_RESEARCH_MASTERS_DEEP_REVIEW
@@ -59,145 +191,27 @@ services:
         value: 22
       - key: VPROF_STANDARD_PHD_MIN_FINDINGS
         value: 26
-      - key: DEEPSEEK_FAST_MODEL
-        value: deepseek-v4-flash
-      - key: DEEPSEEK_QUALITY_MODEL
-        value: deepseek-v4-pro
-      - key: DEEPSEEK_THINKING_ENABLED
+      - key: VPROF_DETERMINISTIC_SUPERVISORY_CHECKLIST
         value: true
-      - key: DEEPSEEK_REASONING_EFFORT
-        value: high
-      - key: DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT
-        value: high
-      - key: OPENAI_FAST_MODEL
-        value: gpt-5.4-nano
-      - key: DATABASE_URL
-        value: sqlite:////var/data/supervisor.db
-      - key: REVIEW_STORAGE_DIR
-        value: /var/data/reviews
-      - key: REVIEW_STORAGE_FALLBACK_DIR
-        value: /tmp/projectready-supervisor/reviews
-      - key: AUTO_RESUME_JOBS
+      - key: VPROF_HARD_SUPERVISORY_CHECKLIST
         value: true
-      - key: AI_CHAPTER_REVIEW_CONCURRENCY
-        value: 4
-      - key: AI_CHAPTER_PACKET_MAX_CHARS
-        value: 120000
-      - key: AI_CHAPTER_RECOVERY_CONCURRENCY
-        value: 2
-      - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
-        value: 7000
-      - key: AI_VERIFICATION_BATCH_SIZE
-        value: 12
-      - key: AI_FAST_AUDIT_BATCH_ISSUE_LIMIT
-        value: 100
-      - key: AI_FAST_AUDIT_MAX_BATCHES
-        value: 1
-      - key: AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS
-        value: 2600
-      - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 3800
-      - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
-        value: 4500
-      - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
-        value: 6500
-      - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
-        value: 7500
-      - key: AI_PHD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 8000
-      - key: MAX_AUTO_RESUMES
-        value: 3
-      - key: AUTOMATIC_RETRY_DELAY_SECONDS
-        value: 12
-      - key: AUTOMATIC_RETRY_MAX_DELAY_SECONDS
-        value: 90
-      - key: AI_TIMEOUT_SECONDS
-        value: 300
-      - key: AI_FAST_REQUEST_TIMEOUT_SECONDS
-        value: 120
-      - key: AI_FAST_REQUEST_MAX_RETRIES
-        value: 0
-      - key: AI_MAX_RETRIES
-        value: 0
-      - key: AI_STRUCTURED_OUTPUT_RETRIES
-        value: 0
-      - key: AI_LIGHT_MAX_OUTPUT_TOKENS
-        value: 4500
-      - key: AI_STANDARD_MAX_OUTPUT_TOKENS
-        value: 6500
-      - key: AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
-        value: 7500
-      - key: AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
-        value: 9000
-      - key: AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS
-        value: 11000
-      - key: AI_PHD_MAX_OUTPUT_TOKENS
-        value: 12000
-      - key: AI_JOB_MAX_SECONDS
-        value: 5400
-      - key: AI_ADVANCED_SECOND_PASS
+      - key: VPROF_EVIDENCE_SAFE_CHECKLIST
         value: true
-      - key: JOB_HEARTBEAT_SECONDS
-        value: 45
-      - key: JOB_LEASE_SECONDS
-        value: 240
-      - key: OPENAI_CHAPTER_MODEL
-        value: gpt-5.4-mini
-      - key: OPENAI_CHAPTER_REASONING_EFFORT
-        value: high
-      - key: OPENAI_EXPERT_MODEL
-        value: gpt-5.4
-      - key: OPENAI_EXPERT_REASONING_EFFORT
-        value: high
-      - key: OPENAI_FINAL_AUDIT_MODEL
-        value: gpt-5.4
-      - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
-        value: high
-      - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: medium
-      - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: high
-      - key: OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT
-        value: high
-      - key: OPENAI_PHD_AUDIT_REASONING_EFFORT
-        value: xhigh
-      - key: OPENAI_EXTERNAL_DOMAIN_MODEL
-        value: gpt-5.4
-      - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT
-        value: high
-      - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
-        value: gpt-5.4
-      - key: OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT
-        value: xhigh
-      - key: AI_MAX_PARALLEL_CALLS
-        value: 4
-      - key: AI_EXTERNAL_ASSESSMENT_STAGE_TIMEOUT_SECONDS
-        value: 900
-      - key: AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS
-        value: 360
-      - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
-        value: 0
-      - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
-        value: 11000
+      - key: VPROF_INLINE_ANNOTATED_EXPORT
+        value: true
+      - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT
+        value: true
+      - key: VPROF_PRESERVE_UCC_SECTION_COMMENTS
+        value: true
       - key: TOKEN_ACCOUNTING_ENABLED
         value: true
       - key: TOKEN_QUOTA_ENFORCEMENT
         value: false
-      - key: SUPERVISOR_DEFAULT_TOKEN_ALLOCATION
-        value: 0
-      - key: TOKEN_ESTIMATE_WORDS_PER_PAGE
-        value: 450
-      - key: TOKEN_RESERVE_MULTIPLIER
-        value: 1.15
-      - key: TOKENS_PER_PAGE_SUPERVISORY_LIGHT
-        value: 2500
-      - key: TOKENS_PER_PAGE_SUPERVISORY_STANDARD
-        value: 3500
-      - key: TOKENS_PER_PAGE_SUPERVISORY_ADVANCED
-        value: 5000
-      - key: TOKENS_PER_PAGE_EXTERNAL_ASSESSMENT
-        value: 6500
-    disk:
-      name: supervisor-review-checkpoints
-      mountPath: /var/data
-      sizeGB: 10
+
+  - type: worker
+    name: vprofessor-worker
+    runtime: python
+    plan: standard
+    buildCommand: python -m pip install -r requirements.txt
+    startCommand: python -m app.worker
+    envVars: *vprofessorEnv
