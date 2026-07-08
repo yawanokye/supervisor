@@ -654,3 +654,9 @@
 - Added final UCC section preservation after public comment cleaning so the DOCX output does not collapse into a small number of generic comments.
 - Fixed strict-schema validation so deterministic checklist metadata no longer causes valid findings to be silently discarded.
 - Preserved section-distinct UCC comments during public de-duplication.
+
+## v1.9.9.9 - Topic-safe UCC section review
+- Removed sample-specific green-procurement language from generic UCC section coverage comments.
+- Added topic-safe Chapter One checks for population/scope drift, missing reference list, citation spacing/grouping, theory integration, misplaced research gap, and over-generalisation from case-study scope.
+- Treated General Objective / primary objective as an acceptable Purpose-equivalent where a programme uses that heading.
+- Renamed Scope/Delimitation handling to avoid confusing Scope of the Study with Limitations.
