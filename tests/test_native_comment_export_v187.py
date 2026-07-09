@@ -79,16 +79,18 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.10-one-finding-one-comment"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.11-numbered-merged-native-comments"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
-    assert len(list(after.comments)) == 2
+    assert len(list(after.comments)) == 1
     comments = list(after.comments)
     comment_text = "\n".join(comment.text for comment in comments)
     assert all(comment.author == "Anokye Mohammed Adam" for comment in comments)
     assert all(comment.initials == "AMA" for comment in comments)
+    assert "1. " in comment_text
+    assert "2. " in comment_text
     assert "Remove the claim" in comment_text
-    assert "Table 4.1: Regression estimates" in comment_text
+    assert "Interpret the coefficient" in comment_text
     assert all("Supervisor comment" not in paragraph.text for paragraph in after.paragraphs)
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(paragraph.text for paragraph in after.paragraphs)
     assert 'w:val="C00000"' not in after.element.xml
@@ -161,3 +163,48 @@ def test_explicit_comment_author_overrides_review_metadata():
     assert len(comments) == 1
     assert comments[0].author == "Anokye Mohammed Adam"
     assert comments[0].initials == "AMA"
+
+
+def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_example():
+    document = Document()
+    document.add_heading("1.3 Problem Statement", level=2)
+    document.add_paragraph("Commercial banks and rural banks are both discussed without a clear boundary.")
+    source = _docx_bytes(document)
+    rows = extract_docx(source)
+    evidence = next(row for row in rows if "Commercial banks" in row.get("text", ""))
+    review = {
+        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong"},
+        "academic_findings": [
+            {
+                "status": "does_not_meet_requirement",
+                "section": "Problem Statement",
+                "section_reference": "1.3 Problem Statement",
+                "item": "The study population and case setting are not consistently stated",
+                "comment": "The chapter alternates between commercial banks, rural banks and Assinman Rural Bank PLC.",
+                "required_action": "State the target population and case setting consistently across the title, problem, objectives, questions, scope and significance.",
+                "illustrative_guidance": "state whether the study is a case study of Assinman Rural Bank PLC within Ghana's rural banking sector",
+                "evidence": [{**evidence, "document_role": "current"}],
+                "headings": ["1.3 Problem Statement"],
+                "annotation_eligible": True,
+            },
+            {
+                "status": "partly_meets_requirement",
+                "section": "Problem Statement",
+                "section_reference": "1.3 Problem Statement",
+                "item": "The problem statement lacks local evidence",
+                "comment": "The problem is argued generally without concrete Ghana rural banking evidence.",
+                "required_action": "Support the problem with verifiable sector, policy or institutional evidence.",
+                "illustrative_guidance": "use Bank of Ghana, ARB Apex Bank or permitted institutional records as evidence types without inventing figures",
+                "evidence": [{**evidence, "document_role": "current"}],
+                "headings": ["1.3 Problem Statement"],
+                "annotation_eligible": True,
+            },
+        ],
+    }
+    output = Document(io.BytesIO(build_annotated_docx(source, review)))
+    comments = list(output.comments)
+    assert len(comments) == 1
+    text = comments[0].text
+    assert "1. " in text and "2. " in text
+    assert "Context example:" in text
+    assert text.count("Context example:") == 1
