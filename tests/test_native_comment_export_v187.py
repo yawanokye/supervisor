@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.8.8-supervisory-comment-quality"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.10-one-finding-one-comment"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     assert len(list(after.comments)) == 2
@@ -131,7 +131,7 @@ def test_unplaced_feedback_uses_document_level_native_comment_not_inserted_notes
     assert len(comments) == 1
     assert comments[0].author == "Dr Priscilla Boafowaa Oppong"
     assert comments[0].initials == "DPBO"
-    assert "Document-level review note" in comments[0].text
+    assert "Add the required section" in comments[0].text
     assert "Add the required section" in comments[0].text
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(p.text for p in after.paragraphs)
 
