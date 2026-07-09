@@ -25,7 +25,7 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.10-one-finding-one-comment"
+ANNOTATION_EXPORT_VERSION = "1.9.9.11-numbered-merged-native-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -58,12 +58,53 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _native_comment_style() -> str:
+    return (os.getenv("VPROF_NATIVE_COMMENT_STYLE") or "numbered_grouped").strip().lower()
+
+
+def _merge_comments_by_section() -> bool:
+    """Return True when native Word comments should be grouped professionally.
+
+    Version 1.9.9.10 forced one Word comment per finding. That exposed every
+    internal finding but made the document look over-commented and repetitive.
+    The professional default is now to keep the full findings in the report but
+    merge closely related findings into one numbered native comment box per
+    section/anchor. The new style flag deliberately takes precedence over the
+    older VPROF_EXPORT_ONE_COMMENT_PER_FINDING variable so deployments can move
+    back to grouped comments with a single new env setting.
+    """
+    style = _native_comment_style()
+    if style in {"numbered_grouped", "grouped", "section_grouped", "professional"}:
+        return True
+    if style in {"one_per_finding", "separate", "individual"}:
+        return False
+    return _env_bool("VPROF_COMMENT_MERGE_BY_SECTION", True)
+
+
 def _export_one_comment_per_finding() -> bool:
-    return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", True)
+    if _merge_comments_by_section():
+        return False
+    return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", False)
 
 
 def _split_related_concerns() -> bool:
-    return _env_bool("VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS", True)
+    # Related concerns are kept together in numbered grouped comments unless a
+    # deployment explicitly switches back to one-comment-per-finding mode.
+    if _merge_comments_by_section():
+        return False
+    return _env_bool("VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS", False)
+
+
+def _include_section_review_comments() -> bool:
+    return _env_bool("VPROF_INCLUDE_SECTION_REVIEW_COMMENTS", False)
+
+
+def _max_items_per_native_comment() -> int:
+    raw = os.getenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT") or "4"
+    try:
+        return max(2, min(6, int(raw)))
+    except ValueError:
+        return 4
 
 
 def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
@@ -129,7 +170,16 @@ def expected_native_comment_count(review: Dict[str, Any]) -> int:
         row for row in rows
         if row.get("status") in ACTIONABLE_STATUSES and row.get("annotation_eligible") is not False
     ]
-    return len(actionable)
+    if not _merge_comments_by_section():
+        return len(actionable)
+    groups = set()
+    for row in actionable:
+        evidence = [
+            item for item in (row.get("evidence") or [])
+            if item.get("document_role", "current") == "current"
+        ]
+        groups.add(_row_group_key(row, evidence))
+    return len(groups)
 
 
 def _set_run_colour(run_element, colour: str) -> None:
@@ -277,6 +327,9 @@ def _comment_body(row: Dict[str, Any]) -> str:
             reference = f"{reference}, {table_reference}" if reference else table_reference
 
     issue = _sanitise_guidance(row.get("item", ""))
+    section_label = clean_text(row.get("section_reference") or row.get("section") or "")
+    if (reference and normalised(issue) == normalised(reference)) or (section_label and normalised(issue) == normalised(section_label)):
+        issue = ""
     assessment = _sanitise_guidance(row.get("comment", ""))
     action = _sanitise_guidance(row.get("required_action", ""))
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
@@ -293,7 +346,7 @@ def _comment_body(row: Dict[str, Any]) -> str:
         parts.append(assessment.rstrip(" .") + ".")
     if action:
         action_text = _normalise_action_start(action)
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix)\b", action_text, flags=re.I):
+        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix|interpret|qualify|separate|clean)\b", action_text, flags=re.I):
             parts.append(action_text + ".")
         else:
             parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
@@ -313,36 +366,91 @@ def _comment_body(row: Dict[str, Any]) -> str:
     return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
 
+_LEVEL_PHRASE_RE = re.compile(
+    r"\s*At MPhil level,? the section should show independent research judgement, conceptual clarity, methodological defensibility and traceable scholarly contribution\.?:?",
+    flags=re.I,
+)
+
+
+def _remove_level_repetition(value: str) -> str:
+    text = _LEVEL_PHRASE_RE.sub(" ", clean_text(value))
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
+def _split_example(value: str) -> Tuple[str, str]:
+    parts = re.split(r"\bFor example,\s*", value, maxsplit=1, flags=re.I)
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip(" .")
+    return value.strip(), ""
+
+
+def _compact_group_item(value: str) -> Tuple[str, str]:
+    text = _strip_visible_labels(
+        public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+    ).strip("[] ").rstrip(" ;.")
+    text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
+    text = _remove_level_repetition(text)
+    core, example = _split_example(text)
+    # When a grouped comment is anchored on a section heading, repeating
+    # "Problem Statement:" or "Introduction:" inside every numbered item looks
+    # mechanical. Remove only short heading prefixes; the section location is
+    # already provided by the Word anchor and the report.
+    core = re.sub(
+        r"^.{2,180}:\s*(?=(?:Add|Align|Ask|Avoid|Check|Clarify|Clean|Correct|Define|Develop|Ensure|Explain|Expand|Formulate|Interpret|Insert|Link|Provide|Qualify|Remove|Replace|Revise|Rewrite|Separate|Show|State|Support|Use|Verify)\b)",
+        "",
+        core,
+        flags=re.I,
+    ).strip()
+    core = re.sub(r"^(?:\d+(?:\.\d+){0,4}\s*)?[A-Za-z][A-Za-z0-9/&() \-]{2,90}:\s*", "", core).strip()
+    # Keep only the most useful revision content. Long copied assessments make
+    # native comments noisy, while the full detail remains in the downloadable
+    # report.
+    sentences = _sentence_spans(core)
+    if len(sentences) >= 2:
+        core = (sentences[0][2].strip() + " " + sentences[1][2].strip()).strip()
+    core = _shorten_comment(core, 330).rstrip(" .")
+    example = _shorten_comment(example, 260).rstrip(" .") if example else ""
+    return core, example
+
+
 def _format_comment_group(comments: Iterable[str]) -> str:
-    """Format text for the Word Review comment pane, not the document body."""
+    """Format grouped text for the Word Review comment pane.
+
+    The report can list every finding, but the native Word file should read like
+    a professional supervisor's margin note: one comment box with numbered
+    actions, not many repetitive comment bubbles.
+    """
     unique: List[str] = []
+    examples: List[str] = []
     seen = set()
     for value in comments:
-        text = _strip_visible_labels(
-            public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
-        ).strip("[] ").rstrip(" ;.")
-        text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
-        key = normalised(text)
-        if not text or not key:
+        item, example = _compact_group_item(value)
+        key = normalised(item)
+        if not item or not key:
             continue
         if key in seen:
             continue
-        # Avoid exporting several variants of the same guidance as a bundled comment.
-        if any(_comment_similarity(key, existing_key) >= 0.50 for existing_key in seen):
+        if any(_comment_similarity(key, existing_key) >= 0.74 for existing_key in seen):
             continue
         seen.add(key)
-        shortened = _shorten_comment(text, comment_max_chars() if not unique else 360)
-        if not shortened:
-            continue
-        unique.append(shortened.rstrip(" .") + ".")
-        if len(unique) >= 2:
+        unique.append(item.rstrip(" .") + ".")
+        if example and all(_comment_similarity(normalised(example), normalised(existing)) < 0.60 for existing in examples):
+            examples.append(example.rstrip(" .") + ".")
+        if len(unique) >= _max_items_per_native_comment():
             break
     if not unique:
         return ""
     if len(unique) == 1:
-        return unique[0]
-    combined = unique[0] + " A related concern is that " + unique[1][0].lower() + unique[1][1:]
-    return _shorten_comment(combined, comment_max_chars())
+        body = unique[0]
+    else:
+        body = " ".join(f"{idx}. {item}" for idx, item in enumerate(unique, start=1))
+    if examples:
+        # Use one concrete example per comment box to avoid the repetition that
+        # prompted this patch.
+        example = examples[0]
+        body = body.rstrip() + " Context example: " + example[0].lower() + example[1:]
+    return _shorten_comment(body, comment_max_chars())
 
 
 def _is_synthetic_section_heading(value: str) -> bool:
@@ -889,7 +997,10 @@ def _comment_on_paragraph(
             if _add_native_comment(document, runs, comment, author=author, initials=initials):
                 added = True
         return added
-    grouped = _format_comment_group(comments)
+    if len(comments) == 1 and re.match(r"^\s*1\.\s+", comments[0]) and re.search(r"\b2\.\s+", comments[0]):
+        grouped = comments[0]
+    else:
+        grouped = _format_comment_group(comments)
     return bool(
         grouped
         and _add_native_comment(
@@ -1020,7 +1131,7 @@ def _attach_document_level_comments(
     unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
-    anchor = _first_academic_anchor(document)
+    anchor = _first_academic_anchor(document) or _first_native_anchor(document)
     if anchor is None:
         raise RuntimeError(
             "The source document has no text that can anchor native Word comments."
@@ -1136,6 +1247,145 @@ def native_comment_count(docx_bytes: bytes) -> int:
         return 0
 
 
+def _canonical_group_label(row: Dict[str, Any]) -> str:
+    raw = clean_text(
+        row.get("reference_label")
+        or row.get("section_reference")
+        or row.get("section")
+        or ((row.get("headings") or [""])[-1] if isinstance(row.get("headings"), list) else "")
+        or "Chapter-level review"
+    )
+    low = normalised(raw)
+    if "general objective" in low or "specific objective" in low or "research objectives" in low:
+        return "Research Objectives"
+    if "research question" in low or "hypoth" in low:
+        return "Research Questions"
+    if "background" in low:
+        return "Background of the Study"
+    if "problem" in low:
+        return "Problem Statement"
+    if "scope" in low or "delimitation" in low:
+        return "Scope of the Study"
+    if "significance" in low or "contribution" in low:
+        return "Significance of the Study"
+    if "limitation" in low:
+        return "Limitations of the Study"
+    if "organisation" in low or "organization" in low:
+        return "Organization of the Study"
+    if "definition" in low or "terms" in low or "construct" in low:
+        return "Definition of Terms"
+    if "citation" in low or "source" in low or "reference" in low:
+        # Keep citation-only issues close to the location that supplied the evidence
+        # where possible. If the row does not specify a section, it remains a
+        # chapter-level source note.
+        section = clean_text(row.get("section_reference") or row.get("section") or "")
+        return section if section and not re.search(r"citation|source|reference", section, flags=re.I) else "Source and Reference Integrity"
+    return raw or "Chapter-level review"
+
+
+def _group_headings_for_row(row: Dict[str, Any], label: str) -> Tuple[str, ...]:
+    headings = [clean_text(value) for value in (row.get("headings") or []) if clean_text(value)]
+    # Prefer an actual document heading over an issue category.
+    if headings:
+        last = headings[-1]
+        if normalised(last) not in {"citations and sources", "cross section coherence", "conceptual clarity", "critical analysis"}:
+            if label and normalised(label) not in normalised(last):
+                return tuple(headings + [label])
+            return tuple(headings)
+    if label == "Source and Reference Integrity":
+        return ("CHAPTER ONE",)
+    return (label,)
+
+
+def _row_group_key(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> Tuple[Optional[int], Tuple[str, ...], int]:
+    label = _canonical_group_label(row)
+    headings = _group_headings_for_row(row, label)
+    chapter_number = row.get("chapter_number")
+    if chapter_number is None:
+        chapter_number = next((item.get("chapter_number") for item in evidence if item.get("chapter_number") is not None), None)
+    try:
+        chapter_number = int(chapter_number) if chapter_number is not None else None
+    except (TypeError, ValueError):
+        chapter_number = None
+    paragraph_number = 0
+    if not headings or headings == ("Chapter-level review",):
+        paragraph_number = next((int(item.get("paragraph")) for item in evidence if str(item.get("paragraph") or "").isdigit()), 0)
+    return chapter_number, headings, paragraph_number
+
+
+def _build_grouped_annotated_docx(
+    document,
+    source_map: Dict[int, Dict[str, Any]],
+    table_map: Dict[int, Dict[str, Any]],
+    review_rows: Sequence[Dict[str, Any]],
+    review: Dict[str, Any],
+    *,
+    author: str,
+    initials: str,
+) -> bytes:
+    grouped: Dict[Tuple[Optional[int], Tuple[str, ...], int], List[str]] = defaultdict(list)
+    fallback_comments: List[str] = []
+
+    for row in review_rows:
+        if row.get("status") not in ACTIONABLE_STATUSES:
+            continue
+        if row.get("annotation_eligible") is False:
+            continue
+        comment = _comment_body(row)
+        if not comment:
+            continue
+        evidence = [
+            item for item in (row.get("evidence") or [])
+            if item.get("document_role", "current") == "current"
+        ]
+        evidence = _preferred_evidence(row, evidence)
+        key = _row_group_key(row, evidence)
+        grouped[key].append(comment)
+
+    for (chapter_number, headings, paragraph_number), comments in grouped.items():
+        unique_comments = list(dict.fromkeys(comments))
+        placed = False
+        heading = _find_heading(document, headings, chapter_number=chapter_number) if headings else None
+        if heading is not None:
+            placed = _comment_on_paragraph(document, heading, unique_comments, author=author, initials=initials)
+        if not placed and paragraph_number:
+            locator = source_map.get(paragraph_number) or {}
+            paragraph = locator.get("paragraph")
+            if paragraph is not None:
+                placed = _comment_on_paragraph(document, paragraph, unique_comments, author=author, initials=initials)
+            elif locator.get("kind") in {"table_row", "table_caption"}:
+                table_index = int(locator.get("table_index") or 0)
+                table_info = table_map.get(table_index) or {}
+                table = table_info.get("table")
+                if table is not None:
+                    placed = _comment_on_table(
+                        document, table, unique_comments,
+                        caption=table_info.get("caption_paragraph"),
+                        author=author, initials=initials,
+                    )
+        if not placed:
+            fallback_comments.append(_format_comment_group(unique_comments) or "\n".join(unique_comments))
+
+    if _include_section_review_comments():
+        _add_section_review_comments(
+            document,
+            review,
+            author=author,
+            initials=initials,
+            fallback_comments=fallback_comments,
+        )
+
+    _attach_document_level_comments(
+        document,
+        list(dict.fromkeys([comment for comment in fallback_comments if comment])),
+        author=author,
+        initials=initials,
+    )
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
 def build_annotated_docx(
     source_bytes: bytes,
     review: Dict[str, Any],
@@ -1162,6 +1412,17 @@ def build_annotated_docx(
     review_rows = _sanitise_rows_for_export(
         supplied_rows + _placeholder_finding_rows(source_map, supplied_rows)
     )
+    if _merge_comments_by_section():
+        return _build_grouped_annotated_docx(
+            document,
+            source_map,
+            table_map,
+            review_rows,
+            review,
+            author=author,
+            initials=initials,
+        )
+
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
