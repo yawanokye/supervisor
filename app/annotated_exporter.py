@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 from collections import defaultdict
 from copy import deepcopy
@@ -22,8 +23,9 @@ from .comment_quality import (
     sentence_safe_trim,
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
+from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.2-evidence-safe-inline"
+ANNOTATION_EXPORT_VERSION = "1.9.9.10-one-finding-one-comment"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -45,6 +47,89 @@ _NATURAL_LABEL_RE = re.compile(
 
 def _strip_visible_labels(value: str) -> str:
     return re.sub(r"\s{2,}", " ", _NATURAL_LABEL_RE.sub("", clean_text(value))).strip()
+
+
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _export_one_comment_per_finding() -> bool:
+    return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", True)
+
+
+def _split_related_concerns() -> bool:
+    return _env_bool("VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS", True)
+
+
+def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
+    unique: List[str] = []
+    seen = set()
+    for value in comments:
+        text = _strip_visible_labels(
+            public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+        ).strip("[] ").rstrip(" ;.")
+        text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
+        if not text:
+            continue
+        if _split_related_concerns() and " A related concern is that " in text:
+            first, second = text.split(" A related concern is that ", 1)
+            candidates = [first, second[:1].upper() + second[1:]]
+        else:
+            candidates = [text]
+        for candidate in candidates:
+            candidate = clean_text(candidate).strip(" ;.")
+            key = normalised(candidate)
+            if not candidate or key in seen:
+                continue
+            seen.add(key)
+            unique.append(_shorten_comment(candidate, comment_max_chars()).rstrip(" .") + ".")
+    return unique
+
+
+
+
+def _sanitise_rows_for_export(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not _export_one_comment_per_finding():
+        return sanitise_finding_rows(rows)
+    output: List[Dict[str, Any]] = []
+    seen_exact = set()
+    for row in rows:
+        cleaned = sanitise_finding_row(row)
+        if cleaned is None:
+            continue
+        exact_key = (
+            normalised(cleaned.get("section", "")),
+            normalised(cleaned.get("item", "")),
+            normalised(cleaned.get("comment", "")),
+            normalised(cleaned.get("required_action", "")),
+            tuple(
+                str(item.get("paragraph") or item.get("paragraph_id") or "")
+                for item in cleaned.get("evidence") or []
+            ),
+        )
+        if exact_key in seen_exact:
+            continue
+        seen_exact.add(exact_key)
+        output.append(cleaned)
+    return output
+
+
+def expected_native_comment_count(review: Dict[str, Any]) -> int:
+    rows = _sanitise_rows_for_export(
+        list(review.get("academic_findings", []))
+        + list(review.get("alignment_results", []))
+        + list(review.get("revision_results", []))
+    )
+    actionable = [
+        row for row in rows
+        if row.get("status") in ACTIONABLE_STATUSES and row.get("annotation_eligible") is not False
+    ]
+    return len(actionable)
 
 
 def _set_run_colour(run_element, colour: str) -> None:
@@ -195,6 +280,8 @@ def _comment_body(row: Dict[str, Any]) -> str:
     assessment = _sanitise_guidance(row.get("comment", ""))
     action = _sanitise_guidance(row.get("required_action", ""))
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
+    if not example:
+        example = _sanitise_guidance(context_specific_example(row))
     example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
 
     heading = reference or "Supervisor review"
@@ -206,7 +293,7 @@ def _comment_body(row: Dict[str, Any]) -> str:
         parts.append(assessment.rstrip(" .") + ".")
     if action:
         action_text = _normalise_action_start(action)
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply)\b", action_text, flags=re.I):
+        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix)\b", action_text, flags=re.I):
             parts.append(action_text + ".")
         else:
             parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
@@ -491,11 +578,10 @@ def _add_section_review_comments(
             document, target, [comment], author=author, initials=initials
         ):
             continue
-        # Do not downgrade a section-level comment into a document-level
-        # fallback. Earlier versions placed unresolved section comments on the
-        # first paragraph, which could wrongly annotate the title page. If the
-        # exact heading cannot be located, skip the section coverage note and
-        # let exact issue comments carry the feedback.
+        # If the exact heading cannot be located, keep the section assessment
+        # as a whole-chapter native comment rather than silently losing it.
+        # The document-level anchor deliberately avoids title-page boilerplate.
+        fallback_comments.append(comment)
         continue
 
 
@@ -794,11 +880,18 @@ def _comment_on_paragraph(
     author: str,
     initials: str,
 ) -> bool:
-    grouped = _format_comment_group(comments)
     runs = [run for run in paragraph.runs if clean_text(run.text)]
+    if not runs:
+        return False
+    if _export_one_comment_per_finding():
+        added = False
+        for comment in _prepare_comment_list(comments):
+            if _add_native_comment(document, runs, comment, author=author, initials=initials):
+                added = True
+        return added
+    grouped = _format_comment_group(comments)
     return bool(
         grouped
-        and runs
         and _add_native_comment(
             document, runs, grouped, author=author, initials=initials
         )
@@ -814,26 +907,36 @@ def _comment_on_table(
     author: str,
     initials: str,
 ) -> bool:
-    grouped = _format_comment_group(comments)
-    if not grouped:
+    prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments)]
+    prepared = [comment for comment in prepared if comment]
+    if not prepared:
         return False
     if caption is not None:
         runs = [run for run in caption.runs if clean_text(run.text)]
-        if runs and _add_native_comment(
-            document, runs, grouped, author=author, initials=initials
-        ):
-            return True
+        if runs:
+            added = False
+            for comment in prepared:
+                if _add_native_comment(document, runs, comment, author=author, initials=initials):
+                    added = True
+            if added:
+                return True
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
                 runs = [run for run in paragraph.runs if clean_text(run.text)]
-                if runs and _add_native_comment(
-                    document,
-                    runs,
-                    grouped,
-                    author=author,
-                    initials=initials,
-                ):
+                if not runs:
+                    continue
+                added = False
+                for comment in prepared:
+                    if _add_native_comment(
+                        document,
+                        runs,
+                        comment,
+                        author=author,
+                        initials=initials,
+                    ):
+                        added = True
+                if added:
                     return True
     return False
 
@@ -922,8 +1025,8 @@ def _attach_document_level_comments(
         raise RuntimeError(
             "The source document has no text that can anchor native Word comments."
         )
-    for start in range(0, len(unique), 4):
-        batch = unique[start:start + 4]
+    batches = [[comment] for comment in unique] if _export_one_comment_per_finding() else [unique[start:start + 4] for start in range(0, len(unique), 4)]
+    for batch in batches:
         if not _comment_on_paragraph(
             document, anchor, batch, author=author, initials=initials
         ):
@@ -1056,7 +1159,7 @@ def build_annotated_docx(
         + list(review.get("alignment_results", []))
         + list(review.get("revision_results", []))
     )
-    review_rows = sanitise_finding_rows(
+    review_rows = _sanitise_rows_for_export(
         supplied_rows + _placeholder_finding_rows(source_map, supplied_rows)
     )
     for row in review_rows:
@@ -1122,6 +1225,19 @@ def build_annotated_docx(
             continue
         merged_groups = _merge_nearby_span_groups(span_groups)
         for (start, end), comments in reversed(merged_groups):
+            if _export_one_comment_per_finding():
+                placed_any = False
+                for comment in _prepare_comment_list(comments):
+                    if _mark_span_and_insert_comment(
+                        document, paragraph, start, end, comment,
+                        author=author, initials=initials,
+                    ):
+                        placed_any = True
+                    else:
+                        after_paragraph[paragraph_number].append(comment)
+                if not placed_any and comments:
+                    after_paragraph[paragraph_number].extend(comments)
+                continue
             combined = _format_comment_group(comments)
             if not _mark_span_and_insert_comment(
                 document, paragraph, start, end, combined,

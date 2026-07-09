@@ -30,6 +30,7 @@ from .ai_schemas import (
 )
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
+from .review_enrichment import enrich_finding_row
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .ucc_section_contract import (
     missing_section_labels_in_output,
@@ -1590,7 +1591,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
     if table_reference:
         reference_label = f"{section}, {table_reference}"
 
-    return {
+    row = {
         "review_type": "academic_finding",
         "finding_id": issue.get("finding_id", ""),
         "category": issue.get("category", "other"),
@@ -1618,6 +1619,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "verification_status": issue.get("verification_status", "deterministic_or_primary"),
         "manual_confirmation_required": bool(issue.get("manual_confirmation_required")),
     }
+    return enrich_finding_row(row)
 
 
 
@@ -2917,7 +2919,9 @@ async def enrich_review_with_academic_ai(
                 all_issues = working
 
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
-    incomplete = verification_failed or len(section_reviews) < len(sections)
+    unresolved_sections_blocking = len(section_reviews) < len(sections)
+    verification_blocking = bool(verification_failed and config.strict_failure and not finding_rows)
+    incomplete = unresolved_sections_blocking or verification_blocking
     score = _academic_score(section_reviews, all_issues)
     readiness_label, readiness_meaning = (
         _light_readiness(score, all_issues, academic_level)
@@ -2984,6 +2988,9 @@ async def enrich_review_with_academic_ai(
         "academic_review_score": score, "overall_score": overall,
         "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
         "academic_review_complete": not incomplete,
+        "verification_fallback_applied": bool(verification_failed),
+        "verification_blocking": bool(verification_blocking),
+        "unresolved_sections_blocking": bool(unresolved_sections_blocking),
         "academic_sections_reviewed": len(actual_section_names),
         "academic_review_units_completed": len(section_reviews),
         "critical_issues": counts["critical"], "major_issues": counts["major"],
@@ -3034,7 +3041,7 @@ async def enrich_review_with_academic_ai(
         "academic_review_complete": not incomplete,
         "active_provider": "cost_aware_router",
         "comment_accuracy_second_pass": bool(all_primary),
-        "comment_accuracy_audit_mode": "single_compact_evidence_audit" if all_primary else "not_required",
+        "comment_accuracy_audit_mode": "deterministic_evidence_fallback" if verification_failed else ("single_compact_evidence_audit" if all_primary else "not_required"),
         "advanced_second_pass": bool(depth == "advanced" and all_primary),
         "advanced_audit_mode": "single_compact_evidence_audit" if depth == "advanced" and all_primary else "not_applicable",
         "api_call_count": len(usage_records),

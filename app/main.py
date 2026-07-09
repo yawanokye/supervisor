@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .academic_ai_engine import ReviewOutputValidationError, enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_providers import AIProviderError
-from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, native_comment_count
+from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, expected_native_comment_count, native_comment_count
 from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_inline_annotated_docx
 from .auth import (
     authenticate,
@@ -1757,7 +1757,9 @@ async def _run_review_job(
                         review,
                         reviewer_name or None,
                     )
-                    if native_comment_count(annotated_data) < 1:
+                    actual_comments = native_comment_count(annotated_data)
+                    expected_comments = expected_native_comment_count(review)
+                    if actual_comments < 1:
                         raise RuntimeError(
                             "The annotated DOCX was generated without native Word comments."
                         )
@@ -1766,6 +1768,9 @@ async def _run_review_job(
                     review["summary"].update({
                         "annotation_export_version": ANNOTATION_EXPORT_VERSION,
                         "annotation_mode": "native_word_comments",
+                        "native_docx_comment_count": actual_comments,
+                        "expected_native_docx_comment_count": expected_comments,
+                        "native_comment_reconciliation_passed": actual_comments >= max(1, min(expected_comments, expected_comments)),
                     })
                     review["summary"].pop("annotation_warning", None)
                 except Exception:
@@ -2699,12 +2704,17 @@ async def export_annotated_document(review_id: str, request: Request, db: Sessio
                 review,
                 comment_author or None,
             )
+            actual_comments = native_comment_count(data)
+            expected_comments = expected_native_comment_count(review)
             ANNOTATED_CACHE[review_id] = data
             await asyncio.to_thread(save_annotated, review_id, data)
             summary.update({
                 "annotated_document_available": True,
                 "annotation_export_version": ANNOTATION_EXPORT_VERSION,
                 "annotation_mode": "native_word_comments",
+                "native_docx_comment_count": actual_comments,
+                "expected_native_docx_comment_count": expected_comments,
+                "native_comment_reconciliation_passed": actual_comments >= max(1, min(expected_comments, expected_comments)),
             })
             summary.pop("annotation_warning", None)
             REVIEW_CACHE[review_id] = review
