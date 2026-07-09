@@ -1,6 +1,6 @@
 databases:
   - name: vprofessor-db
-    plan: basic
+    plan: basic-256mb
 
 services:
   - type: web
@@ -196,6 +196,22 @@ services:
       - key: VPROF_HARD_SUPERVISORY_CHECKLIST
         value: true
       - key: VPROF_EVIDENCE_SAFE_CHECKLIST
+        value: true
+      - key: VPROF_NATIVE_COMMENT_STYLE
+        value: numbered_grouped
+      - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
+        value: false
+      - key: VPROF_COMMENT_MERGE_BY_SECTION
+        value: true
+      - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
+        value: 4
+      - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS
+        value: false
+      - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS
+        value: false
+      - key: VPROF_VERIFY_DOCX_COMMENT_COUNT
+        value: true
+      - key: VPROF_SHOW_FINDING_COMMENT_RECONCILIATION
         value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
