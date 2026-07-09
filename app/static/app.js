@@ -520,6 +520,7 @@ function renderReview(review) {
     metric("Major issues", s.major_issues || 0),
     metric("Moderate issues", s.moderate_issues || 0),
     metric("Strengths", s.strengths_identified || 0),
+    metric("DOCX comment boxes", s.native_docx_comment_count == null ? "Pending" : `${s.native_docx_comment_count}/${s.expected_native_docx_comment_count || s.native_docx_comment_count}`),
   ];
   if (s.revised_mode) {
     metricRows.splice(2, 0, metric("Comment compliance", s.revision_score == null ? "Manual" : `${s.revision_score}%`));
