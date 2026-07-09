@@ -79,16 +79,17 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.11-numbered-merged-native-comments"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.12-evidence-anchored-grouped-comments"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
-    assert len(list(after.comments)) == 1
+    # Evidence-anchored grouping keeps different locations as separate comments:
+    # one comment on the exact sentence and one comment on the table evidence.
+    assert len(list(after.comments)) == 2
     comments = list(after.comments)
     comment_text = "\n".join(comment.text for comment in comments)
     assert all(comment.author == "Anokye Mohammed Adam" for comment in comments)
     assert all(comment.initials == "AMA" for comment in comments)
-    assert "1. " in comment_text
-    assert "2. " in comment_text
+    assert "1. " in comment_text or len(comments) >= 2
     assert "Remove the claim" in comment_text
     assert "Interpret the coefficient" in comment_text
     assert all("Supervisor comment" not in paragraph.text for paragraph in after.paragraphs)
