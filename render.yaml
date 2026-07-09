@@ -198,13 +198,13 @@ services:
       - key: VPROF_EVIDENCE_SAFE_CHECKLIST
         value: true
       - key: VPROF_NATIVE_COMMENT_STYLE
-        value: numbered_grouped
+        value: anchored_grouped
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
         value: false
       - key: VPROF_COMMENT_MERGE_BY_SECTION
         value: true
       - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
-        value: 4
+        value: 3
       - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS
         value: false
       - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS
