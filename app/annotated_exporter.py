@@ -26,7 +26,7 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.13-anchored-grouped-inline-missing-section-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.9.14-anchored-grouped-numbered-text-markers"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -200,7 +200,7 @@ def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, 
         except Exception:
             pass
     heading = _insert_blue_paragraph_after(anchor)
-    lead = heading.add_run("Supervisor inline note on missing section(s):")
+    lead = heading.add_run("Additional comment(s):")
     lead.bold = True
     lead.font.color.rgb = INLINE_BLUE
     lead.font.italic = True
@@ -609,8 +609,8 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
     The report can list every finding, but the native Word file should read like
     a professional supervisor's margin note: one comment box with numbered
     actions, not many repetitive comment bubbles. When more than one issue is
-    grouped, each item receives a red, numbered location cue so students can
-    identify which point applies to the highlighted passage.
+    grouped, the red numbering in the comment box corresponds to red reference
+    numbers inserted beside the exact sentence or paragraph in the document body.
     """
     unique: List[str] = []
     examples: List[str] = []
@@ -638,14 +638,14 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
     else:
         parts = []
         for idx, item in enumerate(unique, start=1):
-            prefix = f"{idx}. Applies to {anchor}: " if _native_group_location_markers_enabled() else f"{idx}. "
+            prefix = f"{idx}. "
             parts.append(_red_marker(prefix) + item)
         body = " ".join(parts)
     if examples:
         # Use one concrete example per comment box to avoid repetition while
         # still giving the student context-specific revision guidance.
         example = examples[0]
-        body = body.rstrip() + " Context example: " + example[0].lower() + example[1:]
+        body = body.rstrip() + " For example, " + example[0].lower() + example[1:]
     return _shorten_comment(body, comment_max_chars())
 
 
@@ -1015,6 +1015,48 @@ def _add_native_comment(
     return True
 
 
+def _group_reference_numbers_from_comment(comment: str) -> List[int]:
+    """Extract grouped comment item numbers that need visible body references."""
+    numbers = []
+    for match in re.finditer(r"\[\[VPROF_RED:(\d+)\.\s*", comment or ""):
+        try:
+            numbers.append(int(match.group(1)))
+        except (TypeError, ValueError):
+            continue
+    # Only insert body markers for grouped comments. A single native comment is
+    # already clear from the highlighted text and does not need an extra marker.
+    unique = []
+    for number in numbers:
+        if number not in unique:
+            unique.append(number)
+    return unique if len(unique) >= 2 else []
+
+
+def _insert_red_reference_markers_after_span(
+    paragraph: Paragraph,
+    trailing_element,
+    reference_numbers: Sequence[int],
+    source_run: Optional[Run],
+) -> None:
+    """Insert red [1] [2] markers in the document body beside the anchor text.
+
+    The numbered markers correspond to the numbered items in the native Word
+    comment box. This gives the student an immediate visual map from the text to
+    the grouped comment without using vague phrases such as "applies to the
+    marked passage".
+    """
+    if not reference_numbers:
+        return
+    marker_text = " " + " ".join(f"[{number}]" for number in reference_numbers)
+    marker = _run_element(marker_text, source_run=source_run, colour="C00000")
+    parent = trailing_element.getparent() if trailing_element is not None else paragraph._p
+    if trailing_element is not None and trailing_element.getparent() is not None:
+        index = parent.index(trailing_element) + 1
+        parent.insert(index, marker)
+    else:
+        paragraph._p.append(marker)
+
+
 def _mark_span_and_insert_comment(
     document,
     paragraph: Paragraph,
@@ -1035,6 +1077,8 @@ def _mark_span_and_insert_comment(
     runs = list(paragraph.runs)
     cursor = 0
     marked_elements = []
+    trailing_element = None
+    trailing_source_run = None
 
     for run in runs:
         text = run.text or ""
@@ -1051,9 +1095,16 @@ def _mark_span_and_insert_comment(
         created = _replace_run_with_parts(run, before, marked, after)
         if created[1] is not None:
             marked_elements.append(created[1])
+            trailing_element = created[1]
+            trailing_source_run = run
 
     if not marked_elements:
         return False
+    reference_numbers = _group_reference_numbers_from_comment(comment)
+    if _native_group_location_markers_enabled() and reference_numbers:
+        _insert_red_reference_markers_after_span(
+            paragraph, trailing_element, reference_numbers, trailing_source_run
+        )
     anchor_runs = [Run(element, paragraph) for element in marked_elements]
     return _add_native_comment(
         document, anchor_runs, comment, author=author, initials=initials

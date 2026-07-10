@@ -24,11 +24,13 @@ from .annotated_exporter import (
     _source_locator_map,
     _add_missing_section_inline_bottom_notes,
     _is_missing_section_finding,
+    _RICH_RED_RE,
+    COMMENT_RED,
 )
 from .comment_quality import public_text, sanitise_finding_rows
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.3-inline-blue-red-missing-section-reconciliation"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.4-inline-additional-comments-and-example-label"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -77,19 +79,41 @@ def _mark_span_red(paragraph: Paragraph, start: int, end: int) -> bool:
     return changed
 
 
+def _write_inline_comment_body(note: Paragraph, body: str) -> None:
+    """Write grouped inline comments without exposing internal rich-text tokens."""
+    pos = 0
+    for match in _RICH_RED_RE.finditer(body):
+        before = body[pos:match.start()]
+        if before:
+            run = note.add_run(before)
+            run.font.color.rgb = COMMENT_BLUE
+            run.font.italic = True
+        marker = match.group(1)
+        if marker:
+            run = note.add_run(marker)
+            run.font.color.rgb = COMMENT_RED
+            run.bold = True
+            run.font.italic = True
+        pos = match.end()
+    tail = body[pos:]
+    if tail:
+        run = note.add_run(tail)
+        run.font.color.rgb = COMMENT_BLUE
+        run.font.italic = True
+
+
 def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
     body = _format_comment_group(comments, anchor_context=paragraph.text)
-    body = public_text(body, limit=1200, reject_placeholders=True, reject_incomplete=True)
-    if not body or _PROHIBITED_PUBLIC_RE.search(body):
+    plain_body = _RICH_RED_RE.sub(lambda match: match.group(1), body)
+    plain_body = public_text(plain_body, limit=1200, reject_placeholders=True, reject_incomplete=True)
+    if not body or not plain_body or _PROHIBITED_PUBLIC_RE.search(plain_body):
         return
     note = _insert_paragraph_after(paragraph)
     lead = note.add_run("Supervisor comment: ")
     lead.bold = True
     lead.font.color.rgb = COMMENT_BLUE
     lead.font.italic = True
-    run = note.add_run(body)
-    run.font.color.rgb = COMMENT_BLUE
-    run.font.italic = True
+    _write_inline_comment_body(note, body)
     try:
         note.paragraph_format.space_before = paragraph.paragraph_format.space_after
         note.paragraph_format.space_after = paragraph.paragraph_format.space_after
