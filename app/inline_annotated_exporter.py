@@ -26,11 +26,15 @@ from .annotated_exporter import (
     _is_missing_section_finding,
     _RICH_RED_RE,
     COMMENT_RED,
+    _with_comment_reference,
+    _group_reference_numbers_from_comment,
+    _specific_corrections_required_enabled,
+    _add_specific_corrections_required,
 )
 from .comment_quality import public_text, sanitise_finding_rows
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.4-inline-additional-comments-and-example-label"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.5-inline-sequential-references-specific-corrections"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -51,12 +55,14 @@ def _red_run_element(text: str, source_run: Optional[Run] = None):
     return _run_element(text, source_run=source_run, colour=REVISION_RED)
 
 
-def _mark_span_red(paragraph: Paragraph, start: int, end: int) -> bool:
+def _mark_span_red(paragraph: Paragraph, start: int, end: int, reference_numbers: Sequence[int] = ()) -> bool:
     if start < 0 or end <= start:
         return False
     runs = list(paragraph.runs)
     cursor = 0
     changed = False
+    trailing_element = None
+    trailing_source_run = None
     for run in runs:
         text = run.text or ""
         run_start, run_end = cursor, cursor + len(text)
@@ -73,9 +79,18 @@ def _mark_span_red(paragraph: Paragraph, start: int, end: int) -> bool:
                 continue
             element = _red_run_element(value, run) if red else _run_element(value, source_run=run)
             parent.insert(index, element)
+            if red:
+                trailing_element = element
+                trailing_source_run = run
             index += 1
         parent.remove(run._r)
         changed = True
+    if changed and reference_numbers and trailing_element is not None:
+        marker_text = " " + " ".join(f"[{number}]" for number in reference_numbers)
+        marker = _red_run_element(marker_text, trailing_source_run)
+        parent = trailing_element.getparent()
+        if parent is not None:
+            parent.insert(parent.index(trailing_element) + 1, marker)
     return changed
 
 
@@ -160,17 +175,28 @@ def build_inline_annotated_docx(
 
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     missing_section_rows: List[Dict[str, Any]] = []
+    numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
+    next_reference_number = 1
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
         if row.get("annotation_eligible") is False:
             continue
         if _is_missing_section_finding(row):
+            raw_missing_comment = _row_comment(row)
+            if raw_missing_comment:
+                reference_number = next_reference_number
+                next_reference_number += 1
+                numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
             continue
-        comment = _row_comment(row)
-        if not comment:
+        raw_comment = _row_comment(row)
+        if not raw_comment:
             continue
+        reference_number = next_reference_number
+        next_reference_number += 1
+        numbered_rows.append((reference_number, row, raw_comment))
+        comment = _with_comment_reference(reference_number, raw_comment)
         evidence = [
             item for item in (row.get("evidence") or [])
             if item.get("document_role", "current") == "current"
@@ -195,10 +221,13 @@ def build_inline_annotated_docx(
         else:
             terms = [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")]
             start, end = _best_span(text, terms, quote)
-        _mark_span_red(paragraph, start, end)
+        _mark_span_red(paragraph, start, end, _group_reference_numbers_from_comment(_format_comment_group([comment], anchor_context=text[start:end])))
         after_paragraph[paragraph_number].append(comment)
 
-    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
+    if _specific_corrections_required_enabled():
+        _add_specific_corrections_required(document, numbered_rows)
+    else:
+        _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
     for paragraph_number in sorted(after_paragraph, reverse=True):
         locator = source_map.get(paragraph_number) or {}

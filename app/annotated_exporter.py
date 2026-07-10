@@ -26,12 +26,13 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.14-anchored-grouped-numbered-text-markers"
+ANNOTATION_EXPORT_VERSION = "1.9.9.15-sequential-references-specific-corrections"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
 INLINE_BLUE = RGBColor(0x00, 0x70, 0xC0)
 _RICH_RED_RE = re.compile(r"\[\[VPROF_RED:(.*?)\]\]")
+_REFNO_RE = re.compile(r"\[\[VPROF_REFNO:(\d+)\]\]")
 
 
 # Unresolved drafting placeholders inside the student's own document must always
@@ -69,6 +70,14 @@ def _missing_section_inline_bottom_enabled() -> bool:
 
 def _native_group_location_markers_enabled() -> bool:
     return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", True)
+
+
+def _sequential_reference_numbers_enabled() -> bool:
+    return _env_bool("VPROF_SEQUENTIAL_COMMENT_REFERENCES", True)
+
+
+def _specific_corrections_required_enabled() -> bool:
+    return _env_bool("VPROF_SPECIFIC_CORRECTIONS_REQUIRED_BOTTOM", True)
 
 
 def _missing_section_haystack(row: Dict[str, Any]) -> str:
@@ -560,6 +569,7 @@ def _split_example(value: str) -> Tuple[str, str]:
 
 
 def _compact_group_item(value: str) -> Tuple[str, str]:
+    value = _strip_comment_reference(value)
     text = _strip_visible_labels(
         public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
     ).strip("[] ").rstrip(" ;.")
@@ -603,19 +613,42 @@ def _red_marker(text: str) -> str:
     return "[[VPROF_RED:" + text.replace("]]", "") + "]]"
 
 
+def _with_comment_reference(number: int, comment: str) -> str:
+    if not _sequential_reference_numbers_enabled():
+        return comment
+    text = clean_text(comment)
+    if not text:
+        return ""
+    return f"[[VPROF_REFNO:{int(number)}]]" + text
+
+
+def _comment_reference_number(comment: str) -> Optional[int]:
+    match = _REFNO_RE.search(comment or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _strip_comment_reference(comment: str) -> str:
+    return _REFNO_RE.sub("", comment or "", count=1).strip()
+
+
 def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> str:
     """Format grouped text for the Word Review comment pane.
 
-    The report can list every finding, but the native Word file should read like
-    a professional supervisor's margin note: one comment box with numbered
-    actions, not many repetitive comment bubbles. When more than one issue is
-    grouped, the red numbering in the comment box corresponds to red reference
-    numbers inserted beside the exact sentence or paragraph in the document body.
+    Numbering is now global across the chapter. The same red number appears
+    beside the exact passage in the document body and beside the corresponding
+    item in the native Word comment box. This keeps grouped comments
+    professional without making students guess which point applies where.
     """
-    unique: List[str] = []
+    unique: List[Tuple[Optional[int], str]] = []
     examples: List[str] = []
     seen = set()
     for value in comments:
+        ref_no = _comment_reference_number(value)
         item, example = _compact_group_item(value)
         key = normalised(item)
         if not item or not key:
@@ -625,25 +658,19 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
         if any(_comment_similarity(key, existing_key) >= 0.74 for existing_key in seen):
             continue
         seen.add(key)
-        unique.append(item.rstrip(" .") + ".")
+        unique.append((ref_no, item.rstrip(" .") + "."))
         if example and all(_comment_similarity(normalised(example), normalised(existing)) < 0.60 for existing in examples):
             examples.append(example.rstrip(" .") + ".")
         if len(unique) >= _max_items_per_native_comment():
             break
     if not unique:
         return ""
-    anchor = _anchor_context_text(anchor_context)
-    if len(unique) == 1:
-        body = unique[0]
-    else:
-        parts = []
-        for idx, item in enumerate(unique, start=1):
-            prefix = f"{idx}. "
-            parts.append(_red_marker(prefix) + item)
-        body = " ".join(parts)
+    parts = []
+    for local_idx, (ref_no, item) in enumerate(unique, start=1):
+        number = ref_no if ref_no is not None else local_idx
+        parts.append(_red_marker(f"{number}. ") + item)
+    body = " ".join(parts)
     if examples:
-        # Use one concrete example per comment box to avoid repetition while
-        # still giving the student context-specific revision guidance.
         example = examples[0]
         body = body.rstrip() + " For example, " + example[0].lower() + example[1:]
     return _shorten_comment(body, comment_max_chars())
@@ -1029,7 +1056,7 @@ def _group_reference_numbers_from_comment(comment: str) -> List[int]:
     for number in numbers:
         if number not in unique:
             unique.append(number)
-    return unique if len(unique) >= 2 else []
+    return unique
 
 
 def _insert_red_reference_markers_after_span(
@@ -1282,6 +1309,12 @@ def _comment_on_paragraph(
         grouped = comments[0]
     else:
         grouped = _format_comment_group(comments, anchor_context=paragraph.text)
+    if grouped and _native_group_location_markers_enabled():
+        numbers = _group_reference_numbers_from_comment(grouped)
+        if numbers:
+            _insert_red_reference_markers_after_span(
+                paragraph, runs[-1]._r, numbers, runs[-1]
+            )
     return bool(
         grouped
         and _add_native_comment(
@@ -1726,6 +1759,72 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
     return _best_span(paragraph_text, terms, quote)
 
 
+
+
+def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
+    """Return concise blue end-of-chapter correction guidance."""
+    label = _canonical_group_label(row)
+    action = _sanitise_guidance(row.get("required_action", ""))
+    if not action:
+        action = _sanitise_guidance(row.get("comment", ""))
+    if not action:
+        action = _strip_comment_reference(comment)
+    action = _remove_level_repetition(_strip_visible_labels(action)).strip(" .")
+    if action:
+        action = _normalise_action_start(action).rstrip(" .") + "."
+    else:
+        action = "Revise the marked passage so the academic point is clear, evidence-supported and aligned with the chapter purpose."
+    example = _sanitise_guidance(row.get("illustrative_guidance", "")) or _sanitise_guidance(context_specific_example(row))
+    example = re.sub(r"^(?:for\s+)?(?:context\s+)?example[:,]?\s*", "", example, flags=re.I).strip(" .")
+    parts = []
+    if label:
+        parts.append(f"{label}: {action}")
+    else:
+        parts.append(action)
+    if example:
+        example = _normalise_action_start(example).rstrip(" .")
+        parts.append("For example, " + example[0].lower() + example[1:] + ".")
+    return public_text(_shorten_comment(" ".join(parts), 1200), reject_placeholders=True, reject_incomplete=True)
+
+
+def _add_specific_corrections_required(
+    document,
+    numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
+) -> None:
+    """Append a blue end-of-chapter checklist that matches red body numbers."""
+    if not _specific_corrections_required_enabled() or not numbered_rows:
+        return
+    anchor = _last_chapter_body_paragraph(document)
+    if anchor is None:
+        return
+    entries: List[Tuple[int, str]] = []
+    seen = set()
+    for number, row, comment in numbered_rows:
+        text = _specific_correction_text(row, comment)
+        key = (number, normalised(text))
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        entries.append((number, text))
+    if not entries:
+        return
+    for number, text in reversed(entries):
+        note = _insert_blue_paragraph_after(anchor)
+        run = note.add_run(f"{number}. {text}")
+        run.font.color.rgb = INLINE_BLUE
+        run.font.italic = True
+        try:
+            note.paragraph_format.left_indent = anchor.paragraph_format.left_indent
+            note.paragraph_format.space_before = anchor.paragraph_format.space_after
+            note.paragraph_format.space_after = anchor.paragraph_format.space_after
+        except Exception:
+            pass
+    heading = _insert_blue_paragraph_after(anchor)
+    lead = heading.add_run("Specific corrections required")
+    lead.bold = True
+    lead.font.color.rgb = INLINE_BLUE
+    lead.font.italic = True
+
 def _build_grouped_annotated_docx(
     document,
     source_map: Dict[int, Dict[str, Any]],
@@ -1751,6 +1850,8 @@ def _build_grouped_annotated_docx(
     by_table: Dict[int, List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
+    numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
+    next_reference_number = 1
 
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -1758,11 +1859,20 @@ def _build_grouped_annotated_docx(
         if row.get("annotation_eligible") is False:
             continue
         if _is_missing_section_finding(row):
+            raw_missing_comment = _missing_section_bottom_comment(row) or _comment_body(row)
+            if raw_missing_comment:
+                reference_number = next_reference_number
+                next_reference_number += 1
+                numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
             continue
-        comment = _comment_body(row)
-        if not comment:
+        raw_comment = _comment_body(row)
+        if not raw_comment:
             continue
+        reference_number = next_reference_number
+        next_reference_number += 1
+        numbered_rows.append((reference_number, row, raw_comment))
+        comment = _with_comment_reference(reference_number, raw_comment)
         evidence = [
             item for item in (row.get("evidence") or [])
             if item.get("document_role", "current") == "current"
@@ -1808,9 +1918,10 @@ def _build_grouped_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        # A slightly wider gap merges adjacent sentence-level issues in the same
-        # passage while still keeping comments close to the portion to revise.
-        merged_groups = _merge_nearby_span_groups(span_groups, max_gap=90)
+        # Keep sentence-level references precise. Only overlapping spans are
+        # grouped, so each red number remains attached to the exact sentence or
+        # phrase it refers to rather than drifting to the end of a broad passage.
+        merged_groups = _merge_nearby_span_groups(span_groups, max_gap=0)
         for (start, end), comments in reversed(merged_groups):
             combined = _format_comment_group(comments, anchor_context=(paragraph.text or "")[start:end])
             if not combined:
@@ -1860,7 +1971,10 @@ def _build_grouped_annotated_docx(
         author=author,
         initials=initials,
     )
-    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
+    if _specific_corrections_required_enabled():
+        _add_specific_corrections_required(document, numbered_rows)
+    else:
+        _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()
