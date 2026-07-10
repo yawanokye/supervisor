@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.13-anchored-grouped-inline-missing-section-comments"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.14-anchored-grouped-numbered-text-markers"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     # Evidence-anchored grouping keeps different locations as separate comments:
@@ -132,7 +132,7 @@ def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native
 
     paragraphs = [p.text for p in after.paragraphs]
     assert paragraphs[:2] == ["Original title", "Original body text remains unchanged."]
-    assert "Supervisor inline note on missing section(s):" in paragraphs
+    assert "Additional comment(s):" in paragraphs
     assert any("Missing section: Definition of Terms" in text for text in paragraphs)
     assert any("Add the required section" in text for text in paragraphs)
     comments = list(after.comments)
@@ -208,8 +208,10 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
     assert len(comments) == 1
     text = comments[0].text
     assert "1. " in text and "2. " in text
-    assert "Context example:" in text
-    assert text.count("Context example:") == 1
+    assert "Applies to" not in text
+    assert "For example," in text
+    assert text.count("For example,") == 1
+    assert "[1]" in output.paragraphs[1].text and "[2]" in output.paragraphs[1].text
     stream = io.BytesIO()
     output.save(stream)
     with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as package:
