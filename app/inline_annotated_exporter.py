@@ -15,17 +15,20 @@ from docx.text.run import Run
 from .annotated_exporter import (
     ACTIONABLE_STATUSES,
     _best_span,
+    _better_evidence_paragraph_number,
     _comment_body,
     _format_comment_group,
     _placeholder_finding_rows,
     _preferred_evidence,
     _run_element,
     _source_locator_map,
+    _add_missing_section_inline_bottom_notes,
+    _is_missing_section_finding,
 )
 from .comment_quality import public_text, sanitise_finding_rows
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.2-inline-blue-red"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.3-inline-blue-red-missing-section-reconciliation"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -75,7 +78,7 @@ def _mark_span_red(paragraph: Paragraph, start: int, end: int) -> bool:
 
 
 def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
-    body = _format_comment_group(comments)
+    body = _format_comment_group(comments, anchor_context=paragraph.text)
     body = public_text(body, limit=1200, reject_placeholders=True, reject_incomplete=True)
     if not body or _PROHIBITED_PUBLIC_RE.search(body):
         return
@@ -132,10 +135,14 @@ def build_inline_annotated_docx(
     review_rows = _rows_for_inline(review, source_map)
 
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
+    missing_section_rows: List[Dict[str, Any]] = []
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
         if row.get("annotation_eligible") is False:
+            continue
+        if _is_missing_section_finding(row):
+            missing_section_rows.append(row)
             continue
         comment = _row_comment(row)
         if not comment:
@@ -145,13 +152,12 @@ def build_inline_annotated_docx(
             if item.get("document_role", "current") == "current"
         ]
         evidence = _preferred_evidence(row, evidence)
-        if not evidence:
-            continue
-        best = evidence[0]
+        best = evidence[0] if evidence else {}
         try:
-            paragraph_number = int(best.get("paragraph"))
+            paragraph_number = int(best.get("paragraph")) if best else 0
         except (TypeError, ValueError):
-            continue
+            paragraph_number = 0
+        paragraph_number = _better_evidence_paragraph_number(row, source_map, paragraph_number)
         locator = source_map.get(paragraph_number)
         if not locator or locator.get("kind") not in {"paragraph", "table_caption"}:
             continue
@@ -167,6 +173,8 @@ def build_inline_annotated_docx(
             start, end = _best_span(text, terms, quote)
         _mark_span_red(paragraph, start, end)
         after_paragraph[paragraph_number].append(comment)
+
+    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
     for paragraph_number in sorted(after_paragraph, reverse=True):
         locator = source_map.get(paragraph_number) or {}

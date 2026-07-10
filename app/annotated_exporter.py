@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import RGBColor
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from docx.table import Table
@@ -25,9 +26,13 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.12-evidence-anchored-grouped-comments"
+ANNOTATION_EXPORT_VERSION = "1.9.9.13-anchored-grouped-inline-missing-section-comments"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
+INLINE_BLUE = RGBColor(0x00, 0x70, 0xC0)
+_RICH_RED_RE = re.compile(r"\[\[VPROF_RED:(.*?)\]\]")
+
 
 # Unresolved drafting placeholders inside the student's own document must always
 # receive a native comment, even if the AI reviewer or the independent audit
@@ -56,6 +61,149 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _missing_section_inline_bottom_enabled() -> bool:
+    return _env_bool("VPROF_MISSING_SECTION_INLINE_BOTTOM", True)
+
+
+def _native_group_location_markers_enabled() -> bool:
+    return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", True)
+
+
+def _missing_section_haystack(row: Dict[str, Any]) -> str:
+    return normalised(" ".join(
+        clean_text(str(row.get(field, "")))
+        for field in (
+            "item", "issue_title", "comment", "assessment", "required_action",
+            "section", "section_reference", "reference_label", "problematic_quote",
+        )
+    ))
+
+
+def _is_missing_section_finding(row: Dict[str, Any]) -> bool:
+    """Return True for findings about an absent chapter section.
+
+    These findings should not be attached to an unrelated existing section. A
+    missing section has no exact anchor in the document, so it is handled as a
+    blue inline note at the bottom of the reviewed chapter.
+    """
+    text = _missing_section_haystack(row)
+    if not text:
+        return False
+    missing_tokens = (
+        "missing", "not evident", "not present", "absent", "add or clearly label",
+        "expected ucc thesis section", "no references", "reference list is missing",
+        "bibliography section", "definition of terms",
+    )
+    section_tokens = (
+        "section", "definition of terms", "operational definition", "references",
+        "reference list", "bibliography", "glossary",
+    )
+    if "too thin" in text or "underdeveloped" in text or "not explicit" in text:
+        return False
+    return any(token in text for token in missing_tokens) and any(token in text for token in section_tokens)
+
+
+def _missing_section_name(row: Dict[str, Any]) -> str:
+    text = _missing_section_haystack(row)
+    for label, needles in (
+        ("Definition of Terms", ("definition of terms", "operational definition", "glossary")),
+        ("References", ("reference list", "references", "bibliography")),
+        ("Research Gap", ("research gap section", "separate research gap")),
+        ("Delimitation of the Study", ("delimitation", "scope/delimitation")),
+    ):
+        if any(needle in text for needle in needles):
+            return label
+    raw = clean_text(row.get("section_reference") or row.get("section") or row.get("reference_label") or "Required section")
+    raw = re.sub(r"^expected\s+ucc\s+thesis\s+section\s+is\s+not\s+evident\s*[:\-]?\s*", "", raw, flags=re.I)
+    return raw or "Required section"
+
+
+def _missing_section_bottom_comment(row: Dict[str, Any]) -> str:
+    section_name = _missing_section_name(row)
+    comment = _sanitise_guidance(row.get("comment", ""))
+    action = _sanitise_guidance(row.get("required_action", ""))
+    example = _sanitise_guidance(row.get("illustrative_guidance", "")) or _sanitise_guidance(context_specific_example(row))
+    if not comment:
+        comment = f"The chapter does not make the {section_name} section evident, so the reader cannot locate required material in the expected chapter structure."
+    if not action:
+        if normalised(section_name) == "definition of terms":
+            action = "Add a clearly labelled Definition of Terms section near the end of Chapter One and define the core study constructs in measurable terms."
+        elif normalised(section_name) == "references":
+            action = "Add a complete References section after the chapter text and match every in-text citation to a full reference-list entry."
+        else:
+            action = f"Add a clearly labelled {section_name} section at the appropriate point in the chapter and ensure the content matches the programme format."
+    if not example and normalised(section_name) == "definition of terms":
+        example = "For example, define internal controls, fraud detection, fraud prevention, fraud incidence, pressure, opportunity and rationalisation in terms that match the instrument and analysis plan."
+    elif not example and normalised(section_name) == "references":
+        example = "For example, check entries such as Alnaa and Matey, Meduri and Amanamah, remove duplicate citation clusters and provide complete author, year, title, source and DOI or URL details where required."
+    parts = [f"Missing section: {section_name}.", comment.rstrip(" .") + ".", _normalise_action_start(action).rstrip(" .") + "."]
+    if example:
+        example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I).strip(" .")
+        parts.append("For example, " + example[0].lower() + example[1:] + ".")
+    text = " ".join(part for part in parts if part)
+    return public_text(_shorten_comment(text, 1100), reject_placeholders=True, reject_incomplete=True)
+
+
+def _insert_blue_paragraph_after(paragraph: Paragraph) -> Paragraph:
+    new_p = OxmlElement("w:p")
+    paragraph._p.addnext(new_p)
+    return Paragraph(new_p, paragraph._parent)
+
+
+def _last_chapter_body_paragraph(document) -> Optional[Paragraph]:
+    for paragraph in reversed(document.paragraphs):
+        text = clean_text(paragraph.text)
+        if not text:
+            continue
+        low = normalised(text)
+        if "supervisor comment" in low or "missing section" in low:
+            continue
+        return paragraph
+    return _first_academic_anchor(document) or _first_native_anchor(document)
+
+
+def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, Any]]) -> None:
+    if not _missing_section_inline_bottom_enabled():
+        return
+    comments: List[str] = []
+    seen = set()
+    for row in rows:
+        if row.get("status") not in ACTIONABLE_STATUSES:
+            continue
+        if row.get("annotation_eligible") is False:
+            continue
+        if not _is_missing_section_finding(row):
+            continue
+        comment = _missing_section_bottom_comment(row)
+        key = normalised(comment)
+        if not comment or key in seen:
+            continue
+        seen.add(key)
+        comments.append(comment)
+    if not comments:
+        return
+    anchor = _last_chapter_body_paragraph(document)
+    if anchor is None:
+        return
+    # Insert in reverse so the final visible order is heading, then numbered notes.
+    for idx, comment in reversed(list(enumerate(comments, start=1))):
+        note = _insert_blue_paragraph_after(anchor)
+        run = note.add_run(f"{idx}. {comment}")
+        run.font.color.rgb = INLINE_BLUE
+        run.font.italic = True
+        try:
+            note.paragraph_format.left_indent = anchor.paragraph_format.left_indent
+            note.paragraph_format.space_before = anchor.paragraph_format.space_after
+            note.paragraph_format.space_after = anchor.paragraph_format.space_after
+        except Exception:
+            pass
+    heading = _insert_blue_paragraph_after(anchor)
+    lead = heading.add_run("Supervisor inline note on missing section(s):")
+    lead.bold = True
+    lead.font.color.rgb = INLINE_BLUE
+    lead.font.italic = True
 
 
 def _native_comment_style() -> str:
@@ -180,7 +328,9 @@ def expected_native_comment_count(review: Dict[str, Any]) -> int:
     )
     actionable = [
         row for row in rows
-        if row.get("status") in ACTIONABLE_STATUSES and row.get("annotation_eligible") is not False
+        if row.get("status") in ACTIONABLE_STATUSES
+        and row.get("annotation_eligible") is not False
+        and not _is_missing_section_finding(row)
     ]
     if not _merge_comments_by_section():
         return len(actionable)
@@ -436,12 +586,31 @@ def _compact_group_item(value: str) -> Tuple[str, str]:
     return core, example
 
 
-def _format_comment_group(comments: Iterable[str]) -> str:
+def _anchor_context_text(anchor_context: str) -> str:
+    text = clean_text(anchor_context)
+    if not text:
+        return "this marked passage"
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _shorten_comment(text, 150).strip(" .")
+    if len(text.split()) <= 3:
+        return f"the phrase '{text}'"
+    return f"the marked passage beginning '{text}'"
+
+
+def _red_marker(text: str) -> str:
+    if not text:
+        return ""
+    return "[[VPROF_RED:" + text.replace("]]", "") + "]]"
+
+
+def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> str:
     """Format grouped text for the Word Review comment pane.
 
     The report can list every finding, but the native Word file should read like
     a professional supervisor's margin note: one comment box with numbered
-    actions, not many repetitive comment bubbles.
+    actions, not many repetitive comment bubbles. When more than one issue is
+    grouped, each item receives a red, numbered location cue so students can
+    identify which point applies to the highlighted passage.
     """
     unique: List[str] = []
     examples: List[str] = []
@@ -463,13 +632,18 @@ def _format_comment_group(comments: Iterable[str]) -> str:
             break
     if not unique:
         return ""
+    anchor = _anchor_context_text(anchor_context)
     if len(unique) == 1:
         body = unique[0]
     else:
-        body = " ".join(f"{idx}. {item}" for idx, item in enumerate(unique, start=1))
+        parts = []
+        for idx, item in enumerate(unique, start=1):
+            prefix = f"{idx}. Applies to {anchor}: " if _native_group_location_markers_enabled() else f"{idx}. "
+            parts.append(_red_marker(prefix) + item)
+        body = " ".join(parts)
     if examples:
-        # Use one concrete example per comment box to avoid the repetition that
-        # prompted this patch.
+        # Use one concrete example per comment box to avoid repetition while
+        # still giving the student context-specific revision guidance.
         example = examples[0]
         body = body.rstrip() + " Context example: " + example[0].lower() + example[1:]
     return _shorten_comment(body, comment_max_chars())
@@ -783,6 +957,30 @@ def _comment_identity(
     return author, _reviewer_initials(author)
 
 
+def _write_rich_comment_text(comment_obj, text: str) -> None:
+    """Write comment text, colouring VPROF_RED marker segments red.
+
+    python-docx comments support rich runs, so grouped comments can show the
+    numbered location cue in red while keeping the explanatory guidance in the
+    normal comment text colour.
+    """
+    paragraph = comment_obj.paragraphs[0] if comment_obj.paragraphs else comment_obj.add_paragraph("")
+    pos = 0
+    for match in _RICH_RED_RE.finditer(text):
+        before = text[pos:match.start()]
+        if before:
+            paragraph.add_run(before)
+        red_text = match.group(1)
+        if red_text:
+            run = paragraph.add_run(red_text)
+            run.font.color.rgb = COMMENT_RED
+            run.bold = True
+        pos = match.end()
+    tail = text[pos:]
+    if tail:
+        paragraph.add_run(tail)
+
+
 def _add_native_comment(
     document,
     runs: Sequence[Run],
@@ -798,12 +996,22 @@ def _add_native_comment(
         raise RuntimeError(
             "Native Word comments require python-docx 1.2.0 or newer."
         )
-    document.add_comment(
-        runs=usable,
-        text=clean_text(comment),
-        author=author,
-        initials=initials,
-    )
+    text = clean_text(comment)
+    if _RICH_RED_RE.search(text):
+        comment_obj = document.add_comment(
+            runs=usable,
+            text="",
+            author=author,
+            initials=initials,
+        )
+        _write_rich_comment_text(comment_obj, text)
+    else:
+        document.add_comment(
+            runs=usable,
+            text=text,
+            author=author,
+            initials=initials,
+        )
     return True
 
 
@@ -1022,7 +1230,7 @@ def _comment_on_paragraph(
     if len(comments) == 1 and re.match(r"^\s*1\.\s+", comments[0]) and re.search(r"\b2\.\s+", comments[0]):
         grouped = comments[0]
     else:
-        grouped = _format_comment_group(comments)
+        grouped = _format_comment_group(comments, anchor_context=paragraph.text)
     return bool(
         grouped
         and _add_native_comment(
@@ -1040,7 +1248,7 @@ def _comment_on_table(
     author: str,
     initials: str,
 ) -> bool:
-    prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments)]
+    prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=(caption.text if caption is not None else "the table"))]
     prepared = [comment for comment in prepared if comment]
     if not prepared:
         return False
@@ -1491,11 +1699,15 @@ def _build_grouped_annotated_docx(
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     by_table: Dict[int, List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
+    missing_section_rows: List[Dict[str, Any]] = []
 
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
         if row.get("annotation_eligible") is False:
+            continue
+        if _is_missing_section_finding(row):
+            missing_section_rows.append(row)
             continue
         comment = _comment_body(row)
         if not comment:
@@ -1549,7 +1761,7 @@ def _build_grouped_annotated_docx(
         # passage while still keeping comments close to the portion to revise.
         merged_groups = _merge_nearby_span_groups(span_groups, max_gap=90)
         for (start, end), comments in reversed(merged_groups):
-            combined = _format_comment_group(comments)
+            combined = _format_comment_group(comments, anchor_context=(paragraph.text or "")[start:end])
             if not combined:
                 continue
             if not _mark_span_and_insert_comment(
@@ -1597,6 +1809,7 @@ def _build_grouped_annotated_docx(
         author=author,
         initials=initials,
     )
+    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()
@@ -1618,6 +1831,7 @@ def build_annotated_docx(
     by_table: Dict[int, List[str]] = defaultdict(list)
     missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
+    missing_section_rows: List[Dict[str, Any]] = []
 
     supplied_rows = (
         list(review.get("academic_findings", []))
@@ -1642,6 +1856,9 @@ def build_annotated_docx(
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
         if row.get("annotation_eligible") is False:
+            continue
+        if _is_missing_section_finding(row):
+            missing_section_rows.append(row)
             continue
 
         comment = _comment_body(row)
@@ -1714,7 +1931,7 @@ def build_annotated_docx(
                 if not placed_any and comments:
                     after_paragraph[paragraph_number].extend(comments)
                 continue
-            combined = _format_comment_group(comments)
+            combined = _format_comment_group(comments, anchor_context=(paragraph.text or "")[start:end])
             if not _mark_span_and_insert_comment(
                 document, paragraph, start, end, combined,
                 author=author, initials=initials,
@@ -1785,6 +2002,7 @@ def build_annotated_docx(
         author=author,
         initials=initials,
     )
+    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()
