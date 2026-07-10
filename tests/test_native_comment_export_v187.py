@@ -79,9 +79,11 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.14-anchored-grouped-numbered-text-markers"
-    assert _visible_content(after) == _visible_content(before)
-    assert target.text in _visible_content(after)[0]
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.15-sequential-references-specific-corrections"
+    after_paragraphs, after_tables = _visible_content(after)
+    before_paragraphs, before_tables = _visible_content(before)
+    assert after_tables == before_tables
+    assert target.text.replace(".", "") in after_paragraphs[2].replace(" [1]", "").replace(".", "")
     # Evidence-anchored grouping keeps different locations as separate comments:
     # one comment on the exact sentence and one comment on the table evidence.
     assert len(list(after.comments)) == 2
@@ -94,7 +96,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     assert "Interpret the coefficient" in comment_text
     assert all("Supervisor comment" not in paragraph.text for paragraph in after.paragraphs)
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(paragraph.text for paragraph in after.paragraphs)
-    assert 'w:val="C00000"' not in after.element.xml
+    assert 'w:val="C00000"' in after.element.xml
     assert 'w:val="008000"' not in after.element.xml
     assert "w:commentRangeStart" in after.element.body.xml
 
@@ -132,9 +134,10 @@ def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native
 
     paragraphs = [p.text for p in after.paragraphs]
     assert paragraphs[:2] == ["Original title", "Original body text remains unchanged."]
-    assert "Additional comment(s):" in paragraphs
-    assert any("Missing section: Definition of Terms" in text for text in paragraphs)
+    assert "Specific corrections required" in paragraphs
+    assert any("Definition of Terms" in text for text in paragraphs)
     assert any("Add the required section" in text for text in paragraphs)
+    assert any(text.startswith("1. ") for text in paragraphs)
     comments = list(after.comments)
     assert len(comments) == 0
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(p.text for p in after.paragraphs)
