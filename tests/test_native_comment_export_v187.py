@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.12-evidence-anchored-grouped-comments"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.13-anchored-grouped-inline-missing-section-comments"
     assert _visible_content(after) == _visible_content(before)
     assert target.text in _visible_content(after)[0]
     # Evidence-anchored grouping keeps different locations as separate comments:
@@ -104,7 +104,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
         assert "word/_rels/document.xml.rels" in names
 
 
-def test_unplaced_feedback_uses_document_level_native_comment_not_inserted_notes():
+def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native_comment():
     document = Document()
     document.add_paragraph("Original title")
     document.add_paragraph("Original body text remains unchanged.")
@@ -115,27 +115,28 @@ def test_unplaced_feedback_uses_document_level_native_comment_not_inserted_notes
         "academic_findings": [
             {
                 "status": "does_not_meet_requirement",
-                "section": "A section that is not present",
-                "section_reference": "A section that is not present",
+                "section": "Definition of Terms",
+                "section_reference": "Definition of Terms",
+                "item": "Expected UCC thesis section is not evident: Definition of Terms",
+                "comment": "The chapter does not make the Definition of Terms section evident.",
                 "required_action": "Add the required section and explain its purpose.",
                 "problematic_quote": "",
                 "evidence": [],
-                "headings": ["A section that is not present"],
+                "headings": ["Definition of Terms"],
                 "annotation_eligible": True,
             }
         ]
     }
 
-    before = Document(io.BytesIO(source))
     after = Document(io.BytesIO(build_annotated_docx(source, review)))
 
-    assert _visible_content(after) == _visible_content(before)
+    paragraphs = [p.text for p in after.paragraphs]
+    assert paragraphs[:2] == ["Original title", "Original body text remains unchanged."]
+    assert "Supervisor inline note on missing section(s):" in paragraphs
+    assert any("Missing section: Definition of Terms" in text for text in paragraphs)
+    assert any("Add the required section" in text for text in paragraphs)
     comments = list(after.comments)
-    assert len(comments) == 1
-    assert comments[0].author == "Dr Priscilla Boafowaa Oppong"
-    assert comments[0].initials == "DPBO"
-    assert "Add the required section" in comments[0].text
-    assert "Add the required section" in comments[0].text
+    assert len(comments) == 0
     assert "SUPERVISOR REVIEW NOTES" not in "\n".join(p.text for p in after.paragraphs)
 
 
@@ -209,3 +210,7 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
     assert "1. " in text and "2. " in text
     assert "Context example:" in text
     assert text.count("Context example:") == 1
+    stream = io.BytesIO()
+    output.save(stream)
+    with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as package:
+        assert 'w:val="C00000"' in package.read("word/comments.xml").decode("utf-8")
