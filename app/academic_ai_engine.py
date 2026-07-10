@@ -31,6 +31,7 @@ from .ai_schemas import (
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
 from .review_enrichment import enrich_finding_row
+from .thorough_review import thorough_review_deterministic_issues
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .ucc_section_contract import (
     missing_section_labels_in_output,
@@ -1136,7 +1137,7 @@ def _batch_prompt(
             "A section may have zero issues only after a substantive assessment. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
             + complete_structure_instruction
-            + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
+            + "For Chapters Three and Four, first identify the actual research design and analysis route from the submitted document, then apply only the diagnostics and reporting requirements appropriate to that route. Conduct a level-appropriate methods-results-discussion audit across quantitative, qualitative, mixed-methods, review, experimental, econometric, SEM, mediation, moderation or other designs as applicable. Verify design-sampling alignment, instrument or protocol quality, reliability/validity/trustworthiness, data screening, model choice, assumptions, diagnostic thresholds, statistical or qualitative table completeness, numerical consistency where enough evidence is present, hypothesis/research-question decisions and discussion claims. For PROCESS, mediation, moderation, SEM, regression, ANOVA, t-test, chi-square, panel/time-series, thematic analysis and mixed-methods integration, require the specific outputs only when that analysis is actually used. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
@@ -2550,6 +2551,20 @@ async def enrich_review_with_academic_ai(
         research_approach=(review.get("summary") or {}).get("research_approach"),
     ):
         valid = _valid_issue(checklist_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
+    # v1.9.9.16: thorough full-thesis statistical and methods-results accuracy layer.
+    # This preserves the style of a strong PhD supervisor review by adding
+    # evidence-anchored checks for PROCESS moderation, R²/F consistency,
+    # duplicated hypothesis numbering, model-language drift and incomplete
+    # results/discussion markers before public cleaning and DOCX export.
+    for thorough_issue in thorough_review_deterministic_issues(
+        current,
+        academic_level=academic_level,
+        research_approach=(review.get("summary") or {}).get("research_approach"),
+    ):
+        valid = _valid_issue(thorough_issue, paragraph_index, context_lock)
         if valid:
             raw_issues.append(valid)
 

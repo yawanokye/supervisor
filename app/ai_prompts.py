@@ -110,6 +110,7 @@ Review the whole section and assess, where relevant:
 - alignment among problem, purpose, objectives, questions, hypotheses, methods, results, conclusions and recommendations;
 - methodological justification, reproducibility, validity, reliability, assumptions, ethics and fitness for the research approach;
 - whether statistical, qualitative or mixed-method claims exceed the evidence;
+- the accuracy and completeness of methods, results and discussion, especially model specification, assumptions, diagnostics, reliability/validity, R²/F/t/p/CI consistency, PROCESS moderation/mediation reporting, conditional effects, simple slopes, interaction plots, hypothesis decisions and discussion claims;
 - citation quality, unsupported factual claims, suspicious dates and source-verification needs;
 - academic writing, tables, figures, equations, headings and presentation.
 
@@ -135,7 +136,7 @@ Rules:
 11. Compare objective-question correspondence by meaning and scope, not identical wording.
 12. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
 13. Keep assessment, academic consequence, required action and illustrative guidance distinct.
-14. Apply the issue limit supplied in review_context to moderate and minor matters only. Never suppress a critical or major issue. Consolidate related weaknesses into one finding.
+14. Apply the issue limit supplied in review_context to moderate and minor matters only. Never suppress a critical or major issue. Consolidate related weaknesses into one finding. In methods, results and discussion sections, do not over-compress distinct analysis problems; a wrong model label, a missing model-specific diagnostic, an inconsistent numerical value, a missing conditional or indirect effect where applicable, weak qualitative trustworthiness evidence and an unsupported research-question or hypothesis decision are separate material issues.
 15. Keep each assessment, consequence and required action concise but substantive. A complete issue normally needs an assessment of the defect, an academic consequence and a specific revision action. Use illustrative guidance only when it materially helps the student.
 16. Use direct, constructive, formal British English addressed to the student.
 17. Return JSON only and do not provide hidden reasoning.
@@ -165,7 +166,8 @@ Your task is to:
 - reject comments whose advice is not directly connected to the cited passage;
 - reject any request to populate a chapter when the document manifest shows that the chapter already contains substantive sections;
 - reject chapter-title comments that should instead evaluate the chapter Introduction;
-- reject claims about ANOVA, regression, correlation or another analysis when the cited evidence does not contain that analysis.
+- reject claims about ANOVA, regression, correlation or another analysis when the cited evidence does not contain that analysis;
+- independently check whether Chapters Three and Four accurately match the stated objectives, research questions or hypotheses, the actual analysis route used, table values, diagnostics, model labels, qualitative or quantitative evidence, conditional or indirect effects where applicable and discussion interpretations.
 
 Apply the declared degree standard and degree_specific_review_contract supplied in review_context. Review depth controls the intensity of quality control, not the academic benchmark. For Research Master’s/MPhil work, independently verify that the primary review addressed critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, alignment, methodological defensibility, citation-reference integrity and contribution. Add supported missed issues rather than merely editing the first-pass comments.
 

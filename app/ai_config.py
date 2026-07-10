@@ -516,13 +516,13 @@ class HybridAIConfig:
                 "VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS", 14, 0
             ),
             standard_research_masters_min_findings=_env_int(
-                "VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS", 18, 0
+                "VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS", 32, 0
             ),
             standard_professional_doctorate_min_findings=_env_int(
-                "VPROF_STANDARD_PROFESSIONAL_DOCTORATE_MIN_FINDINGS", 22, 0
+                "VPROF_STANDARD_PROFESSIONAL_DOCTORATE_MIN_FINDINGS", 42, 0
             ),
             standard_phd_min_findings=_env_int(
-                "VPROF_STANDARD_PHD_MIN_FINDINGS", 26, 0
+                "VPROF_STANDARD_PHD_MIN_FINDINGS", 58, 0
             ),
             fast_audit_batch_issue_limit=_env_int(
                 "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100
