@@ -21,9 +21,9 @@ def test_standard_depth_floor_orders_non_research_below_mphil(monkeypatch):
     config = HybridAIConfig.from_env()
 
     assert _degree_comment_floor("Non-Research Masters", "standard", config) == 18
-    assert _degree_comment_floor("Research Masters / MPhil", "standard", config) == 24
-    assert _degree_comment_floor("Professional Doctorate", "standard", config) == 28
-    assert _degree_comment_floor("PhD", "standard", config) == 32
+    assert _degree_comment_floor("Research Masters / MPhil", "standard", config) == 32
+    assert _degree_comment_floor("Professional Doctorate", "standard", config) == 42
+    assert _degree_comment_floor("PhD", "standard", config) == 58
     assert _degree_comment_floor("Non-Research Masters", "standard", config) < _degree_comment_floor("Research Masters / MPhil", "standard", config)
 
 
