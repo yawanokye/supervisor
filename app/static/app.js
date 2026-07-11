@@ -99,12 +99,12 @@ function updateDepthGuidance() {
         : "light";
     const depthInput = form.querySelector(`input[name="review_depth"][value="${targetDepth}"]`);
     if (depthInput) depthInput.checked = true;
-    reviewDepthHelp.textContent = "External Assessment automatically applies the examination standard appropriate to the selected academic level.";
+    reviewDepthHelp.textContent = "External Assessment automatically applies the examination standard appropriate to the academic level shown above.";
     lightReviewNote.classList.add("hidden");
     return;
   }
   const depth = form.querySelector('input[name="review_depth"]:checked')?.value || "standard";
-  const levelLabel = academicLevelSelect.options[academicLevelSelect.selectedIndex]?.text || "the selected academic level";
+  const levelLabel = academicLevelSelect.options[academicLevelSelect.selectedIndex]?.text || "the academic level shown above";
   const level = academicLevelSelect.value;
   lightReviewNote.classList.toggle("hidden", depth !== "light");
   const levelFocus = {
