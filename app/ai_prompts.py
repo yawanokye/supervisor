@@ -35,6 +35,19 @@ Context and factual accuracy rules:
 24. A cross-section finding must cite evidence from every section it compares, including the section named as the location of the comment."""
 
 
+
+ARTICLE_READY_REVISION_REVIEW_CONTRACT = """
+ArticleReady-style evidence-preserving review contract:
+- First identify the actual study type, research route, data structure, unit of analysis, analysis technique and evidence available in the document. Do not assume a regression, PROCESS, SEM, qualitative or mixed-method route unless the text shows it.
+- Preserve confirmed data, quotations, coefficients, tables, themes and findings. If stronger or additional analysis is needed, recommend it and name the evidence required rather than pretending it has been performed.
+- Review methods, results and discussion as an integrated chain: objective/question/hypothesis -> design -> data/instrument -> analysis -> results table -> interpretation -> discussion -> conclusion/recommendation.
+- The review report must be substantive. Native Word comments and inline annotations are delivery formats only, not the depth limit of the review.
+- For methods, assess design fit, sampling logic, instrument/source credibility, validity, reliability, ethics, reproducibility, assumptions and analysis-by-objective alignment.
+- For results, assess whether every research question or hypothesis is answered, whether tables/figures are numbered and interpreted correctly, whether statistics are internally consistent, and whether diagnostics, effect sizes, confidence intervals or qualitative evidence are reported where the method requires them.
+- For discussion, assess whether the author explains meaning, compares with theory and empirical literature, addresses unexpected or non-significant findings, recognises limitations and avoids overclaiming beyond the design.
+- Use revision guidance that tells the student what is wrong, why it matters, exactly what to revise and, where useful, a context-specific example. Use “For example” or “Example”, not “Context example”.
+"""
+
 INSTITUTIONAL_CHAPTER_STRENGTHENING = """
 Institutional thesis-structure strengthening:
 - Treat the following as additional supervisory expectations that strengthen, but do not replace, the existing academic review or legitimate disciplinary structures.
@@ -86,6 +99,8 @@ Review rules:
 10. Return JSON only and do not provide hidden reasoning.
 
 {COMMON_CONTEXT_RULES}
+
+{ARTICLE_READY_REVISION_REVIEW_CONTRACT}
 
 {INSTITUTIONAL_CHAPTER_STRENGTHENING}"""
 
@@ -143,6 +158,8 @@ Rules:
 
 {COMMON_CONTEXT_RULES}
 
+{ARTICLE_READY_REVISION_REVIEW_CONTRACT}
+
 {INSTITUTIONAL_CHAPTER_STRENGTHENING}"""
 
 
@@ -175,6 +192,8 @@ Return JSON only. Do not provide chain-of-thought or hidden reasoning.
 
 {COMMON_CONTEXT_RULES}
 
+{ARTICLE_READY_REVISION_REVIEW_CONTRACT}
+
 {INSTITUTIONAL_CHAPTER_STRENGTHENING}"""
 
 
@@ -193,6 +212,8 @@ Requirements:
 - Return JSON only and do not provide hidden reasoning.
 
 {COMMON_CONTEXT_RULES}
+
+{ARTICLE_READY_REVISION_REVIEW_CONTRACT}
 
 {INSTITUTIONAL_CHAPTER_STRENGTHENING}"""
 

@@ -32,6 +32,7 @@ from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
 from .review_enrichment import enrich_finding_row
 from .thorough_review import thorough_review_deterministic_issues
+from .articleready_review_bridge import attach_articleready_quality_audit
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .ucc_section_contract import (
     missing_section_labels_in_output,
@@ -3046,6 +3047,7 @@ async def enrich_review_with_academic_ai(
             + "The review reports the most material issues and provides context-aware guidance where revision is required."
         ).strip()
     review["priority_actions"] = priority
+    review = attach_articleready_quality_audit(review)
     review["ai_review"] = {
         "review_depth": depth,
         "review_benchmark": benchmark["degree_standard"],

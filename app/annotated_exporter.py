@@ -26,7 +26,7 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.15-sequential-references-specific-corrections"
+ANNOTATION_EXPORT_VERSION = "1.9.9.18-articleready-safe-anchors"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -401,16 +401,48 @@ def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
     return spans
 
 
+def _expand_to_safe_text_span(text: str, start: int, end: int) -> Tuple[int, int]:
+    """Avoid inserting reference markers inside a word.
+
+    When extracted evidence quotes are very short or align inside a word, the
+    previous exporter could create output such as "teache [6] r education".
+    Expand to a sentence where possible, otherwise at least expand to whole-word
+    boundaries before the native comment and red number are inserted.
+    """
+    if not text:
+        return (0, 0)
+    start = max(0, min(len(text), int(start)))
+    end = max(start, min(len(text), int(end)))
+    if start == end:
+        return (0, len(text))
+    # Short spans are usually weak anchors. Use the containing sentence instead.
+    if end - start < 24:
+        for s, e, _sentence in _sentence_spans(text):
+            if s <= start and end <= e and e > s:
+                return (s, e)
+    while start > 0 and text[start - 1].isalnum() and text[start:start + 1].isalnum():
+        start -= 1
+    while end < len(text) and text[end - 1:end].isalnum() and text[end:end + 1].isalnum():
+        end += 1
+    # Prefer the full sentence when the adjusted span is still fragmentary.
+    fragment = text[start:end].strip()
+    if len(fragment.split()) < 6:
+        for s, e, _sentence in _sentence_spans(text):
+            if s <= start and end <= e and e > s:
+                return (s, e)
+    return start, end
+
+
 def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str = "") -> Tuple[int, int]:
     quote = clean_text(problematic_quote)
     if quote:
         exact_start = text.find(quote)
         if exact_start >= 0:
-            return exact_start, exact_start + len(quote)
+            return _expand_to_safe_text_span(paragraph_text, exact_start, exact_start + len(quote))
         normalised_quote = normalised(quote)
         for start, end, sentence in _sentence_spans(text):
             if normalised_quote and normalised_quote in normalised(sentence):
-                return start, end
+                return _expand_to_safe_text_span(text, start, end)
     terms = [normalised(term) for term in matched_terms if normalised(term)]
     spans = _sentence_spans(text)
     if not spans:
@@ -422,7 +454,7 @@ def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str =
         ranked.append((hits, len(sentence.strip()), start, end))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
     _, _, start, end = ranked[0]
-    return start, end
+    return _expand_to_safe_text_span(text, start, end)
 
 
 def _sanitise_guidance(value: str) -> str:
@@ -1750,7 +1782,7 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
     if quote:
         exact_start = paragraph_text.find(quote)
         if exact_start >= 0:
-            return exact_start, exact_start + len(quote)
+            return _expand_to_safe_text_span(paragraph_text, exact_start, exact_start + len(quote))
     terms = [
         row.get("issue_title", ""), row.get("item", ""), row.get("required_action", ""),
         row.get("comment", ""), row.get("assessment", ""), row.get("section", ""),

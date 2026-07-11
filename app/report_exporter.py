@@ -13,6 +13,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_trim
+from .articleready_review_bridge import build_articleready_quality_audit
 
 INK = "1F2937"
 MUTED = "667085"
@@ -662,6 +663,56 @@ def _add_cell_list(
         run.font.color.rgb = RGBColor.from_string(colour)
 
 
+
+
+def _add_articleready_quality_audit_section(doc: Document, review: Dict[str, Any], number: int) -> bool:
+    """Add a substantive ArticleReady-style audit section to the supervisor report."""
+    audit = review.get("articleready_quality_audit") or build_articleready_quality_audit(review)
+    rows = audit.get("audit_rows") or []
+    routes = audit.get("detected_review_routes") or []
+    if not rows and not routes:
+        return False
+    doc.add_heading(f"{number}. Method, Results and Discussion Quality Audit", level=1)
+    lead = doc.add_paragraph()
+    lead.paragraph_format.space_after = Pt(5)
+    lead.add_run("Review approach: ").bold = True
+    lead.add_run(_clean(audit.get("principle_summary") or "The review is evidence-preserving and method-sensitive."))
+    if routes:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(4)
+        p.add_run("Detected review route(s): ").bold = True
+        p.add_run(", ".join(_unique(routes)))
+    if not rows:
+        doc.add_paragraph(
+            "No separate methods, results or discussion audit finding was available from the evidence-gated review output. "
+            "The annotated document should still be checked for passage-level comments."
+        )
+        return True
+    table = doc.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    table.autofit = False
+    header = table.rows[0]
+    _set_repeat_table_header(header)
+    for cell, width in zip(header.cells, (1.45, 1.65, 2.7, 2.7)):
+        _set_cell_width(cell, width)
+        _set_cell_shading(cell, BRAND)
+    _set_cell_text(header.cells[0], "Audit area", True, "FFFFFF", 8.7)
+    _set_cell_text(header.cells[1], "Location", True, "FFFFFF", 8.7)
+    _set_cell_text(header.cells[2], "Supervisor evaluation", True, "FFFFFF", 8.7)
+    _set_cell_text(header.cells[3], "Required correction", True, "FFFFFF", 8.7)
+    for idx, row_data in enumerate(rows[:18]):
+        row = table.add_row()
+        _prevent_row_split(row)
+        for cell, width in zip(row.cells, (1.45, 1.65, 2.7, 2.7)):
+            _set_cell_width(cell, width)
+            if idx % 2:
+                _set_cell_shading(cell, "F8FAFC")
+        _set_cell_text(row.cells[0], row_data.get("area", "Review"), True, BRAND, 8.2)
+        _set_cell_text(row.cells[1], row_data.get("location", "section-level evidence"), False, MUTED, 8.0)
+        _set_cell_text(row.cells[2], _compact_sentence(row_data.get("finding", ""), 360), False, INK, 8.0)
+        _set_cell_text(row.cells[3], _compact_sentence(row_data.get("required_action", ""), 360), False, INK, 8.0)
+    return True
+
 def _add_compact_follow_up(
     doc: Document,
     title: str,
@@ -818,7 +869,9 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         9.3,
     )
 
-    doc.add_heading("2. Main Strengths", level=1)
+    _add_articleready_quality_audit_section(doc, review, 2)
+
+    doc.add_heading("3. Main Strengths", level=1)
     strengths = review.get("academic_strengths") or []
     strength_values = _unique(
         (
@@ -840,7 +893,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             "corrections have been addressed."
         )
 
-    doc.add_heading("3. Strengths and Key Corrections by Chapter or Section", level=1)
+    doc.add_heading("4. Strengths and Key Corrections by Chapter or Section", level=1)
     intro = doc.add_paragraph(
         "All material corrections identified by the review are summarised below in "
         "concise action form. Detailed explanations, examples and exact locations remain "
@@ -904,7 +957,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
                 size=8.5,
             )
 
-    next_number = 4
+    next_number = 5
     if _add_compact_follow_up(
         doc,
         f"{next_number}. Cross-Chapter Alignment",

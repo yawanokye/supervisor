@@ -189,7 +189,7 @@ def _add_r2_f_inconsistency(rows: Sequence[Dict[str, Any]], out: List[Dict[str, 
         target = row
         out.append(_make_issue(
             finding_id=f"THOROUGH-R2-F-CONSISTENCY-{len(seen)}",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             section=source_section(target),
             title="The reported R² and F-statistic do not appear internally consistent",
             severity="critical",
@@ -228,7 +228,7 @@ def _table_number_issues(rows: Sequence[Dict[str, Any]], out: List[Dict[str, Any
         target = items[0]
         out.append(_make_issue(
             finding_id=f"THOROUGH-TABLE-NUMBER-DUPLICATE-{num}",
-            category="presentation_and_traceability",
+            category="tables_figures_and_presentation",
             section=source_section(target),
             title="Table numbering appears inconsistent or duplicated",
             severity="major",
@@ -378,7 +378,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("normality", "linearity", "homoscedasticity", "heteroscedasticity", "multicollinearity", "vif", "residual", "durbin", "odds ratio", "model fit", "classification"),
             title="The regression analysis needs model-appropriate diagnostics and reporting checks",
             severity="major",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="The methods or results chapter signals regression-type analysis, but the surrounding methods/results do not clearly show the diagnostics and reporting elements required for the specific model used.",
             consequence="Without model-appropriate checks, the reader cannot judge whether the estimator, assumptions, coefficients, p-values and conclusions are defensible.",
             action="State the exact regression model, outcome type, predictors, coding, assumption checks, diagnostic thresholds, remedies for violations and the full reporting elements used for interpretation.",
@@ -393,7 +393,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             target = causal_rows[0]
             output.append(_make_issue(
                 finding_id="GENERIC-CORRELATION-CAUSAL-LANGUAGE",
-                category="statistical_reporting_accuracy",
+                category="results_and_interpretation",
                 section=source_section(target),
                 title="Causal or predictive language may exceed a correlational analysis",
                 severity="major",
@@ -416,7 +416,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("homogeneity", "levene", "post hoc", "effect size", "eta", "partial eta", "pairwise", "assumption"),
             title="The group-comparison analysis needs assumption, post-hoc and effect-size reporting where applicable",
             severity="major",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="ANOVA/ANCOVA/MANOVA-type analysis is signalled, but the thesis does not clearly show the required assumption checks and interpretation details for the group comparison.",
             consequence="Without homogeneity/assumption checks, post-hoc logic and effect sizes where applicable, a significant F-test may be statistically under-interpreted.",
             action="Report the exact group-comparison model, assumption checks, degrees of freedom, F-value, p-value, effect size and any post-hoc or adjusted comparisons required by the design.",
@@ -432,7 +432,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("normality", "levene", "effect size", "cohen", "confidence interval", "mean difference"),
             title="The t-test reporting should show assumptions, mean difference and effect size",
             severity="moderate",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="A t-test is signalled, but the thesis does not clearly show enough assumption and effect-size information to support the interpretation.",
             consequence="The result may be treated as merely significant or non-significant without showing magnitude, direction and confidence in the estimated difference.",
             action="Report the test type, group or paired means, mean difference, t-value, degrees of freedom, p-value, confidence interval, assumption decision and effect size.",
@@ -448,7 +448,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("expected count", "cramer", "phi", "effect size", "cross-tab", "crosstab", "association"),
             title="The chi-square analysis should report cell adequacy and association strength",
             severity="moderate",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="Chi-square analysis is signalled, but expected-cell conditions and association strength are not clearly reported in the surrounding results.",
             consequence="A chi-square p-value alone does not show whether the test assumptions are acceptable or whether the association is practically meaningful.",
             action="Report the contingency table, expected count conditions, chi-square value, degrees of freedom, p-value and an association measure such as Phi or Cramer’s V where appropriate.",
@@ -465,7 +465,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("loading", "ave", "composite reliability", "cronbach", "htmt", "fornell", "rmsea", "srmr", "cfi", "tli", "model fit", "path coefficient", "bootstrapping"),
             title="SEM/PLS-SEM reporting should separate measurement and structural-model evidence",
             severity="critical",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="SEM or PLS-SEM is signalled, but the thesis does not clearly present the full measurement and structural-model evidence expected for that analysis route.",
             consequence="The reader cannot judge construct validity, reliability, discriminant validity, model fit, path estimates or the credibility of the hypothesised relationships.",
             action="Report the measurement model and structural model separately, using criteria appropriate to CB-SEM or PLS-SEM rather than mixing the two without justification.",
@@ -481,7 +481,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("kmo", "bartlett", "loading", "cross-loading", "eigenvalue", "variance explained", "fit", "ave", "composite reliability"),
             title="Factor-analysis reporting needs adequacy, loading and validity evidence",
             severity="major",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="Factor analysis is signalled, but the chapter does not clearly provide the adequacy, loading and validity evidence needed to support the scale structure.",
             consequence="Weak or incomplete factor evidence makes it difficult to defend the measurement of constructs used in the results.",
             action="Report the extraction approach, rotation or estimation method, retention criteria, item loadings, problematic items, explained variance or model fit and reliability/validity decisions.",
@@ -498,7 +498,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("indirect effect", "bootstrap", "bootstrapped", "confidence interval", "sobel", "total effect", "direct effect"),
             title="Mediation analysis should report indirect effects and confidence intervals",
             severity="critical",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="Mediation is signalled, but the surrounding results do not clearly show the indirect-effect evidence needed to establish mediation.",
             consequence="Without the indirect effect and its confidence interval, the thesis cannot support a mediation claim even if individual regression paths are significant.",
             action="Report the direct effect, indirect effect, total effect, bootstrap confidence interval and the decision rule for mediation, then align the discussion with the tested causal pathway and study design limits.",
@@ -514,7 +514,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("conditional effect", "simple slope", "johnson", "interaction plot", "r2 change", "r² change", "change in r", "interaction term"),
             title="Moderation analysis should explain the interaction pattern, not only the interaction p-value",
             severity="critical",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="Moderation is signalled, but the results do not clearly report conditional effects, simple slopes, Johnson-Neyman output, R² change or an interaction plot that explains how the relationship changes across moderator levels.",
             consequence="A significant interaction coefficient alone does not show the direction, strength or practical meaning of the moderation effect.",
             action="Report the interaction coefficient, change in explained variance where applicable, conditional effects at meaningful moderator values, confidence intervals and an interaction plot or equivalent simple-slope interpretation.",
@@ -527,7 +527,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             target = process_rows[0]
             output.append(_make_issue(
                 finding_id="GENERIC-PROCESS-SPECIFICATION-UNCLEAR",
-                category="statistical_reporting_accuracy",
+                category="results_and_interpretation",
                 section=source_section(target),
                 title="PROCESS Macro reporting should identify the exact model and required output",
                 severity="major",
@@ -581,7 +581,7 @@ def _add_generic_method_specific_issues(rows: Sequence[Dict[str, Any]], output: 
             required_terms=("unit root", "stationarity", "cointegration", "serial correlation", "autocorrelation", "heteroscedasticity", "cross-sectional dependence", "hausman", "fixed effects", "random effects", "lag", "robust"),
             title="Panel or time-series analysis requires design-specific diagnostics",
             severity="critical",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             assessment="Panel or time-series analysis is signalled, but the thesis does not clearly show the diagnostic sequence required for the data structure and estimator.",
             consequence="Ignoring time dependence, stationarity, serial correlation, heteroscedasticity, cross-sectional dependence or estimator selection can invalidate standard errors and model interpretation.",
             action="Report the data structure, estimator choice and diagnostics appropriate to the model, then show how any violations were handled before interpreting coefficients.",
@@ -639,7 +639,7 @@ def _add_analysis_method_drift_issue(rows: Sequence[Dict[str, Any]], output: Lis
     if target:
         output.append(_make_issue(
             finding_id=f"GENERIC-METHOD-RESULTS-ANALYSIS-DRIFT-{target_method.upper()}",
-            category="methods_results_alignment",
+            category="cross_section_coherence",
             section=source_section(target),
             title="The results chapter introduces an analysis route not clearly planned in the methodology",
             severity="major",
@@ -670,7 +670,7 @@ def _add_duplicate_hypothesis_issue(rows: Sequence[Dict[str, Any]], output: List
         target = unique_items[1]
         output.append(_make_issue(
             finding_id=f"GENERIC-DUPLICATE-HYPOTHESIS-{number}",
-            category="methods_results_alignment",
+            category="cross_section_coherence",
             section=source_section(target),
             title=f"Hypothesis {number} appears to be duplicated or difficult to trace",
             severity="major",
@@ -684,6 +684,116 @@ def _add_duplicate_hypothesis_issue(rows: Sequence[Dict[str, Any]], output: List
         ))
         break
 
+
+
+def _add_articleready_style_generic_audit(rows: Sequence[Dict[str, Any]], output: List[Dict[str, Any]]) -> None:
+    """Add report-first, ArticleReady-style method/results/discussion safeguards.
+
+    These checks are deliberately generic. They do not assume a particular
+    example study; they ask whether the thesis gives a traceable chain from
+    objectives to methods, analysis, results, discussion and recommendations.
+    """
+    ch3_text = _doc_text(rows, {3})
+    ch4_text = _doc_text(rows, {4})
+    ch5_text = _doc_text(rows, {5})
+    methods = _detected_methods(rows, {3, 4})
+    if not (ch3_text or ch4_text):
+        return
+
+    has_objective_terms = bool(re.search(r"\b(?:objective|research question|hypothes(?:is|es))\b", _doc_text(rows, {1, 3, 4}), flags=re.I))
+    has_analysis_terms = bool(methods) or bool(re.search(r"\b(?:analysis|analysed|analyzed|result|finding|table|model|test|theme|coefficient|p[- ]?value|significant)\b", ch3_text + "\n" + ch4_text, flags=re.I))
+    if has_objective_terms and has_analysis_terms:
+        matrix_terms = ("analysis plan", "data analysis matrix", "objective", "hypothesis", "research question", "procedure", "test", "model", "theme")
+        # The presence of the words alone is not enough. This rule fires only when the methods chapter lacks an explicit matrix/register wording.
+        if not _has_any(ch3_text, ("analysis matrix", "data analysis plan", "objective-by-objective", "hypothesis-by-hypothesis", "analysis-by-objective", "variable register", "model specification")):
+            target = _find_rows(rows, r"\b(?:data analysis|methodology|methods|analysis)\b", chapters={3})[:1]
+            if target:
+                row = target[0]
+                output.append(_make_issue(
+                    finding_id="AR-REVIEW-METHOD-ANALYSIS-TRACEABILITY-MATRIX",
+                    category="methodological_rigour",
+                    section=source_section(row),
+                    title="The methodology needs a clearer objective-to-analysis traceability plan",
+                    severity="major",
+                    confidence=0.84,
+                    evidence_ids=[paragraph_id(row)],
+                    quote=clean_text(row.get("text", ""))[:300],
+                    assessment="The methods chapter signals data analysis, but it does not clearly present an objective-by-objective or hypothesis-by-hypothesis map showing which data, variables and analytic procedure answer each research task.",
+                    consequence="Without this traceability plan, the results chapter can appear as a set of statistical or thematic outputs rather than a controlled response to the study objectives.",
+                    action="Add a compact analysis plan or matrix that links each objective, research question or hypothesis to the data source, variables or themes, analytic technique, assumptions or diagnostics and expected result table.",
+                    example="For example, a quantitative thesis can use columns for objective, variables, scale/composite, statistical test or model, assumption checks and result table; a qualitative thesis can use columns for objective, data source, coding procedure, theme evidence and trustworthiness check.",
+                ))
+
+    if ch4_text and has_analysis_terms:
+        # This check does not claim a result is wrong. It forces the report to preserve enough analysis evidence for examiner verification.
+        quantitative_methods = methods & {"correlation", "linear_regression", "logistic_regression", "anova", "t_test", "chi_square", "sem", "factor_analysis", "moderation", "mediation", "panel_time_series", "experimental"}
+        qualitative_only = "qualitative" in methods and not quantitative_methods
+        required_result_terms = ("quotation", "theme", "coding", "trustworthiness", "credibility") if qualitative_only else ("confidence interval", "effect size", "diagnostic", "assumption", "model fit", "validity", "reliability", "robust", "standard error", "degrees of freedom", "df", "p-value", "p value")
+        if not _has_any(ch4_text, required_result_terms):
+            target = _find_rows(rows, r"\b(?:results|findings|table|analysis|model|test|theme)\b", chapters={4})[:1]
+            if target:
+                row = target[0]
+                example_text = (
+                    "For example, a qualitative results section should show themes with enough participant or documentary evidence to justify each interpretation."
+                    if qualitative_only
+                    else "For example, a statistical results table should allow the reader to check the model estimates, uncertainty measures, significance decisions and relevant diagnostics required by the method used."
+                )
+                output.append(_make_issue(
+                    finding_id="AR-REVIEW-RESULTS-EVIDENCE-VERIFIABILITY",
+                    category="results_and_interpretation",
+                    section=source_section(row),
+                    title="The results chapter needs stronger evidence for verifying the analysis",
+                    severity="major",
+                    confidence=0.82,
+                    evidence_ids=[paragraph_id(row)],
+                    quote=clean_text(row.get("text", ""))[:300],
+                    assessment="The results chapter appears to report findings, but the extracted evidence does not show enough method-appropriate verification detail.",
+                    consequence="A reader may accept the stated conclusions only on trust rather than being able to verify whether the analysis supports them.",
+                    action="Revise the results so every major finding is supported by the reporting elements required by the actual method used, then interpret direction, magnitude, uncertainty and practical meaning before making a decision on the objective or hypothesis.",
+                    example=example_text,
+                ))
+
+    if ch4_text and (ch5_text or re.search(r"\bdiscussion\b", ch4_text, flags=re.I)):
+        # Flag a discussion that reports results but lacks interpretive language.
+        discussion_rows = _find_rows(rows, r"\b(?:discussion|discuss|interpret|compared with|consistent with|contrary to|theory|literature|implies|meaning)\b", chapters={4, 5})
+        result_rows = _find_rows(rows, r"\b(?:result|finding|table|significant|not significant|hypothesis|theme|coefficient|mean)\b", chapters={4})
+        if result_rows and not discussion_rows:
+            row = result_rows[0]
+            output.append(_make_issue(
+                finding_id="AR-REVIEW-DISCUSSION-INTERPRETIVE-DEPTH",
+                category="discussion_and_integration",
+                section=source_section(row),
+                title="The discussion should interpret the findings rather than only restating results",
+                severity="major",
+                confidence=0.83,
+                evidence_ids=[paragraph_id(row)],
+                quote=clean_text(row.get("text", ""))[:300],
+                assessment="The results are presented, but the surrounding chapter does not clearly show a developed discussion that explains their meaning against theory, prior studies and the study context.",
+                consequence="Without interpretation, the chapter reads as output reporting rather than doctoral or graduate-level knowledge construction.",
+                action="For each objective or hypothesis, explain what the result means, how it compares with prior literature or theory, why the finding may have occurred in the study context, and what limitation affects the interpretation.",
+                example="For example, after reporting a significant or non-significant model result, discuss whether the direction and size of the relationship support the theoretical expectation and what that means for the population or setting studied.",
+            ))
+
+    # Overclaiming safeguard for non-experimental and cross-sectional designs.
+    doc = _doc_text(rows)
+    if re.search(r"\b(?:cross[- ]sectional|survey|questionnaire|correlational|descriptive)\b", doc, flags=re.I) and re.search(r"\b(?:causes?|causal|impact|effect of|influence of|led to|leads to)\b", ch4_text + "\n" + ch5_text, flags=re.I):
+        target = _find_rows(rows, r"\b(?:causes?|causal|impact|effect of|influence of|led to|leads to)\b", chapters={4, 5})[:1]
+        if target:
+            row = target[0]
+            output.append(_make_issue(
+                finding_id="AR-REVIEW-CLAIM-STRENGTH-DESIGN-FIT",
+                category="results_and_interpretation",
+                section=source_section(row),
+                title="The strength of the claim should match the research design",
+                severity="major",
+                confidence=0.86,
+                evidence_ids=[paragraph_id(row)],
+                quote=clean_text(row.get("text", ""))[:300],
+                assessment="The document signals a non-experimental or survey-type design but uses language that may imply causal effect or strong influence.",
+                consequence="Overstating causality can make otherwise useful results appear methodologically weak, especially during examiner review.",
+                action="Qualify causal or impact language unless the design, timing, control strategy and analysis support causal inference. Use wording such as predicts, is associated with, is linked to, or is a significant explanatory factor where appropriate.",
+                example="For example, in a cross-sectional survey, write that a variable significantly predicts or is associated with the outcome, rather than claiming that it causes the outcome unless the design justifies that claim.",
+            ))
 
 def thorough_review_deterministic_issues(
     paragraphs: Sequence[Dict[str, Any]],
@@ -707,6 +817,10 @@ def thorough_review_deterministic_issues(
 
     # Hypothesis/objective numbering and thesis-state checks are generic.
     _add_duplicate_hypothesis_issue(rows, output)
+
+    # ArticleReady-style report-first audit. This improves the depth of methods,
+    # results and discussion feedback without tying the review to one example study.
+    _add_articleready_style_generic_audit(rows, output)
 
     completed_signals = _find_rows(rows, r"\b(?:data\s+were\s+collected|respondents?\s+were|usable responses?|findings|results|analysed|analyzed)\b", chapters={3, 4, 5})
     future_methods = _find_rows(rows, r"\b(?:will\s+be\s+(?:collected|analysed|analyzed|used|computed|administered|obtained|selected|tested|coded)|will\s+(?:collect|analyse|analyze|administer|use|ensure|test|code))\b", chapters={3})
@@ -735,7 +849,7 @@ def thorough_review_deterministic_issues(
         target = undone_rows[0]
         output.append(_make_issue(
             finding_id="GENERIC-INCOMPLETE-RESULTS-DISCUSSION-MARKER",
-            category="discussion_quality",
+            category="discussion_and_integration",
             section=source_section(target),
             title="An unfinished results or discussion marker remains in the thesis",
             severity="critical",
@@ -754,7 +868,7 @@ def thorough_review_deterministic_issues(
         target = high_mean_rows[0]
         output.append(_make_issue(
             finding_id="GENERIC-DESCRIPTIVE-MEAN-INTERPRETATION",
-            category="statistical_reporting_accuracy",
+            category="results_and_interpretation",
             section=source_section(target),
             title="A descriptive mean interpretation may not match the stated scale category",
             severity="moderate",

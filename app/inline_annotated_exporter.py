@@ -15,6 +15,7 @@ from docx.text.run import Run
 from .annotated_exporter import (
     ACTIONABLE_STATUSES,
     _best_span,
+    _expand_to_safe_text_span,
     _better_evidence_paragraph_number,
     _comment_body,
     _format_comment_group,
@@ -34,7 +35,7 @@ from .annotated_exporter import (
 from .comment_quality import public_text, sanitise_finding_rows
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.5-inline-sequential-references-specific-corrections"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.18-inline-articleready-safe-anchors"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -56,6 +57,9 @@ def _red_run_element(text: str, source_run: Optional[Run] = None):
 
 
 def _mark_span_red(paragraph: Paragraph, start: int, end: int, reference_numbers: Sequence[int] = ()) -> bool:
+    if start < 0 or end <= start:
+        return False
+    start, end = _expand_to_safe_text_span(paragraph.text or "", start, end)
     if start < 0 or end <= start:
         return False
     runs = list(paragraph.runs)
