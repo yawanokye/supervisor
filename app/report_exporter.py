@@ -15,6 +15,7 @@ from docx.shared import Inches, Pt, RGBColor
 from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_trim
 from .articleready_review_bridge import build_articleready_quality_audit
 from .professional_review_pipeline import build_professional_review_package
+from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
 INK = "1F2937"
 MUTED = "667085"
@@ -451,7 +452,7 @@ def _compact_overall_assessment(review: Dict[str, Any]) -> str:
         or ""
     )
     if not raw:
-        return "The document has been reviewed at the selected academic benchmark."
+        return f"The work has been reviewed at {academic_level_label(summary.get('academic_level'))}."
     sentences = re.split(r"(?<=[.!?])\s+", raw)
     selected: List[str] = []
     total = 0
@@ -465,7 +466,7 @@ def _compact_overall_assessment(review: Dict[str, Any]) -> str:
         total += len(sentence)
         if len(selected) >= 4:
             break
-    return " ".join(selected)
+    return professionalise_reviewer_language(" ".join(selected), summary.get("academic_level"))
 
 
 def _section_strengths(
@@ -750,7 +751,7 @@ def _add_compact_follow_up(
 def _add_professional_finding_table(doc: Document, ledger: Sequence[Dict[str, Any]], title: str) -> None:
     doc.add_heading(title, level=1)
     if not ledger:
-        doc.add_paragraph("No material evidence-anchored correction was identified at the selected benchmark.")
+        doc.add_paragraph("No material evidence-anchored correction was identified at the applicable academic level.")
         return
     table = doc.add_table(rows=1, cols=4)
     table.style = "Table Grid"
@@ -905,7 +906,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle.paragraph_format.space_after = Pt(8)
-    run = subtitle.add_run(_clean(summary.get("filename", "Reviewed document")))
+    run = subtitle.add_run(_clean(summary.get("filename", "Reviewed work")))
     run.bold = True
     run.font.size = Pt(10.5)
     run.font.color.rgb = RGBColor.from_string(MUTED)
@@ -954,7 +955,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             q.add_run(f"Correction {item.get('number')} — {item.get('section')}: ").bold = True
             q.add_run(_compact_sentence(item.get("required_correction"), 420))
     else:
-        doc.add_paragraph("No critical blocker was identified. Major and moderate corrections may still prevent approval at the selected academic level.")
+        doc.add_paragraph(f"No critical blocker was identified. Major and moderate corrections may still prevent approval at {academic_level_label(summary.get('academic_level'))}.")
 
     _add_chapter_judgement_table(doc, package.get("chapter_judgements") or [], f"{section_number}. Chapter or Section Judgements")
     section_number += 1

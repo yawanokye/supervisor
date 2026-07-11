@@ -37,6 +37,16 @@ def _degree_phrase(degree: str) -> str:
     }.get(degree, "At the declared academic level, the section should meet the appropriate scholarly standard.")
 
 
+def _degree_label(degree: str) -> str:
+    return {
+        "bachelors": "Bachelor's level",
+        "non_research_masters": "non-research Master's level",
+        "research_masters": "MPhil level",
+        "professional_doctorate": "professional doctorate level",
+        "phd": "PhD level",
+    }.get(degree, "the applicable academic level")
+
+
 def _chapter_scope(paragraphs: Sequence[Dict[str, Any]]) -> Set[int]:
     chapters: Set[int] = set()
     for row in paragraphs:
@@ -285,7 +295,7 @@ def _missing_section_issue(paragraphs: Sequence[Dict[str, Any]], chapter: int, l
         code=f"CH{chapter}-MISSING-{normalised(label).replace(' ', '-').upper()}",
         section=f"Chapter {chapter}",
         title=f"Expected UCC thesis section is not evident: {label}",
-        assessment=f"The UCC thesis structure normally expects {label} in this chapter, but the uploaded chapter does not make that section evident.",
+        assessment=f"The UCC thesis structure normally expects {label} in this chapter, but the work does not make that section evident.",
         action=f"Add or clearly label the {label} section if it is required by the programme format; if the programme uses an equivalent heading, make the equivalence clear.",
         anchor=anchor,
         category=category,
@@ -303,8 +313,8 @@ def _thin_section_issue(label: str, rows: Sequence[Dict[str, Any]], category: st
     return _issue(
         code=f"THIN-{normalised(label).replace(' ', '-').upper()}",
         section=label,
-        title=f"The {label} section is too thin for the selected level",
-        assessment=f"The section is present, but it is not developed enough to satisfy the expected UCC thesis function for the selected academic level.",
+        title=f"The {label} section is too thin at {_degree_label(degree)}",
+        assessment=f"The section is present, but it is not developed enough to satisfy the expected thesis function at {_degree_label(degree)}.",
         action=f"Develop the {label} section with precise evidence, justification and links to the study problem, objectives or methods as appropriate.",
         anchor=anchor,
         category=category,
@@ -584,7 +594,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 section="Significance of the Study",
                 title="The significance section does not adequately separate theory, practice and policy contribution",
                 assessment="The section lists stakeholders but does not clearly organise the expected contribution across theory, practice and policy.",
-                action="Reorganise the section around theory, practice and policy, with a concise paragraph explaining each expected contribution at the selected level.",
+                action="Reorganise the section around theory, practice and policy, with a concise paragraph explaining each expected contribution at the actual academic level.",
                 anchor=_first_substantive(significance),
                 category="critical_analysis",
                 degree=degree,
@@ -616,7 +626,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 section="Significance of the Study",
                 title=title,
                 assessment="The section names beneficiaries but does not make the level-appropriate contribution explicit.",
-                action="Add a concise contribution statement that is proportionate to the selected level and distinguish it from ordinary stakeholder usefulness.",
+                action="Add a concise contribution statement that is proportionate to the actual academic level and distinguish it from ordinary stakeholder usefulness.",
                 anchor=_first_substantive(significance),
                 category="critical_analysis",
                 degree=degree,
@@ -741,7 +751,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
             code="CH1-MISSING-REFERENCES",
             section="References",
             title="The reference list is missing despite visible in-text citations",
-            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the uploaded document.",
+            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the work.",
             action="Add a complete reference list in the required style and verify that every in-text citation has a matching reference-list entry.",
             anchor=_first_citation_anchor(paragraphs),
             category="citations_and_sources",
@@ -842,7 +852,7 @@ def _generic_chapter_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dic
         if not any(t in text for t in ("based on the findings", "finding", "objective")):
             issues.append(_issue(code="CH5-FINDINGS-TRACE", section="Chapter Five: Summary, Conclusions and Recommendations", title="Conclusions and recommendations are not clearly traceable to findings", assessment="The final chapter should not introduce broad recommendations without showing which findings support them.", action="Summarise findings by objective, draw conclusions from those findings and link each recommendation to a specific finding and responsible stakeholder.", anchor=anchor, category="conclusions_and_recommendations", degree=degree, severity="critical"))
         if degree in {"professional_doctorate", "phd"} and not any(t in text for t in ("original contribution", "contribution to knowledge", "contribution to practice", "theoretical contribution")):
-            issues.append(_issue(code="CH5-CONTRIBUTION", section="Chapter Five: Summary, Conclusions and Recommendations", title="The final chapter does not make the level-appropriate contribution explicit", assessment="Doctoral work must state the original contribution clearly and show how the evidence supports it.", action="Add a contribution section explaining what is original, how the study established it and why it matters to knowledge, policy or practice at the selected level.", anchor=anchor, category="critical_analysis", degree=degree, severity="critical"))
+            issues.append(_issue(code="CH5-CONTRIBUTION", section="Chapter Five: Summary, Conclusions and Recommendations", title="The final chapter does not make the level-appropriate contribution explicit", assessment="Doctoral work must state the original contribution clearly and show how the evidence supports it.", action="Add a contribution section explaining what is original, how the study established it and why it matters to knowledge, policy or practice at the actual academic level.", anchor=anchor, category="critical_analysis", degree=degree, severity="critical"))
     return [x for x in issues if x]
 
 

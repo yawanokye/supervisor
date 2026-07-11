@@ -20,6 +20,7 @@ from .annotated_exporter import (
     _comment_body,
     _format_comment_group,
     _placeholder_finding_rows,
+    synchronise_export_fallback_findings,
     _preferred_evidence,
     _run_element,
     _source_locator_map,
@@ -31,11 +32,14 @@ from .annotated_exporter import (
     _group_reference_numbers_from_comment,
     _specific_corrections_required_enabled,
     _add_specific_corrections_required,
+    _specific_correction_text,
 )
 from .comment_quality import public_text, sanitise_finding_rows
+from .finding_order import order_and_number_rows
+from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.19-professional-scope-ledger"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.21-expert-sequential-detailed-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -122,13 +126,21 @@ def _write_inline_comment_body(note: Paragraph, body: str) -> None:
 
 
 def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
-    body = _format_comment_group(comments, anchor_context=paragraph.text)
+    if len(comments) == 1:
+        value = comments[0]
+        match = re.match(r"\[\[VPROF_REFNO:(\d+)\]\](.*)", value, flags=re.S)
+        if match:
+            body = f"[[VPROF_RED:{match.group(1)}. ]]" + match.group(2).strip()
+        else:
+            body = value
+    else:
+        body = _format_comment_group(comments, anchor_context=paragraph.text)
     plain_body = _RICH_RED_RE.sub(lambda match: match.group(1), body)
-    plain_body = public_text(plain_body, limit=1200, reject_placeholders=True, reject_incomplete=True)
+    plain_body = public_text(plain_body, limit=2200, reject_placeholders=True, reject_incomplete=True)
     if not body or not plain_body or _PROHIBITED_PUBLIC_RE.search(plain_body):
         return
     note = _insert_paragraph_after(paragraph)
-    lead = note.add_run("Supervisor comment: ")
+    lead = note.add_run("Detailed supervisor comment: ")
     lead.bold = True
     lead.font.color.rgb = COMMENT_BLUE
     lead.font.italic = True
@@ -142,14 +154,15 @@ def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
 
 
 def _clean_comment(value: str) -> str:
-    text = public_text(value, limit=980, reject_placeholders=True, reject_incomplete=True)
+    text = public_text(value, limit=2200, reject_placeholders=True, reject_incomplete=True)
     if not text or _PROHIBITED_PUBLIC_RE.search(text):
         return ""
     return text
 
 
 def _row_comment(row: Dict[str, Any]) -> str:
-    return _clean_comment(_comment_body(row))
+    base = _comment_body(row)
+    return _clean_comment(_specific_correction_text(row, base) or base)
 
 
 def _rows_for_inline(review: Dict[str, Any], source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -175,37 +188,20 @@ def build_inline_annotated_docx(
     """
     document = Document(io.BytesIO(source_bytes))
     source_map, _ = _source_locator_map(document)
-    review_rows = _rows_for_inline(review, source_map)
+    academic_level = (review.get("summary") or {}).get("academic_level")
+    synchronise_export_fallback_findings(review, source_map)
+    review_rows = order_and_number_rows([
+        {**row, "_academic_level": academic_level} for row in _rows_for_inline(review, source_map)
+    ])
 
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
-    existing_numbers = []
-    for candidate in review_rows:
-        try:
-            number = int(candidate.get("finding_number"))
-        except (TypeError, ValueError):
-            continue
-        if number > 0:
-            existing_numbers.append(number)
-    next_reference_number = max(existing_numbers, default=0) + 1
-    used_reference_numbers = set()
-
     def reference_number_for(row: Dict[str, Any]) -> int:
-        nonlocal next_reference_number
         try:
-            preferred = int(row.get("finding_number"))
+            return int(row.get("finding_number"))
         except (TypeError, ValueError):
-            preferred = 0
-        if preferred > 0 and preferred not in used_reference_numbers:
-            used_reference_numbers.add(preferred)
-            return preferred
-        while next_reference_number in used_reference_numbers:
-            next_reference_number += 1
-        value = next_reference_number
-        used_reference_numbers.add(value)
-        next_reference_number += 1
-        return value
+            return 0
 
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -245,7 +241,8 @@ def build_inline_annotated_docx(
         quote = clean_text(row.get("problematic_quote", ""))
         text = paragraph.text or ""
         if quote and quote in text:
-            start, end = text.find(quote), text.find(quote) + len(quote)
+            quote_start = text.find(quote)
+            start, end = _expand_to_safe_text_span(text, quote_start, quote_start + len(quote))
         else:
             terms = [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")]
             start, end = _best_span(text, terms, quote)
@@ -262,7 +259,11 @@ def build_inline_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is not None:
             comments = list(dict.fromkeys(after_paragraph[paragraph_number]))
-            _add_inline_comment(paragraph, comments)
+            # Keep each numbered correction as its own detailed blue annotation.
+            # This prevents several unrelated corrections from being compressed
+            # into one note merely because they occur in the same paragraph.
+            for comment in reversed(comments):
+                _add_inline_comment(paragraph, [comment])
 
     output = io.BytesIO()
     document.save(output)

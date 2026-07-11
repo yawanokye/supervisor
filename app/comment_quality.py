@@ -118,7 +118,7 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 def comment_max_chars() -> int:
     # Developmental Word comments need enough room to explain the issue, why it matters and the required correction.
-    return _env_int("VPROF_COMMENT_MAX_CHARS", 980, 420, 1600)
+    return _env_int("VPROF_COMMENT_MAX_CHARS", 1500, 600, 2400)
 
 
 def similarity_threshold() -> float:
@@ -165,6 +165,10 @@ def strip_internal_notices(value: Any) -> str:
         # paragraph-ID or recovery details. Drop the entire sentence because the
         # remaining fragment is usually not meaningful supervision.
         text = _INTERNAL_LEAK_SENTENCE_RE.sub(" ", text)
+    text = re.sub(r"\bthe uploaded documents\b", "the submitted work", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded document\b", "the study", text, flags=re.I)
+    text = re.sub(r"\buploaded documents\b", "submitted work", text, flags=re.I)
+    text = re.sub(r"\buploaded document\b", "study", text, flags=re.I)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")
 
 

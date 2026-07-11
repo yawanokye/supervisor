@@ -252,18 +252,18 @@ def _issue_text(rule: Dict[str, Any], status: str, section: str, degree: str) ->
     item = clean_text(rule.get("item", ""))
     if status == STATUS_MISSING:
         title = f"Required thesis element is not evident: {item}"
-        assessment = f"The uploaded text does not provide sufficient evidence that {item.lower()}."
+        assessment = f"The study or work does not provide sufficient evidence that {item.lower()}."
         consequence = "This creates a supervisory risk because the thesis may appear complete in form while a required academic element remains absent or unverified."
         action = f"Add a clear, evidence-backed treatment of this requirement in {section}, and make the location traceable by page and paragraph before resubmission."
     elif status == STATUS_MANUAL:
         title = f"Required thesis element needs explicit traceability: {item}"
-        assessment = f"Related wording appears in the uploaded text, but the automated review cannot confirm that {item.lower()} without cross-checking other sections."
+        assessment = f"Related wording appears in the work, but the automated review cannot confirm that {item.lower()} without cross-checking other sections."
         consequence = "The thesis may contain the required content, but its traceability across chapters is not yet defensible enough for a supervisor or examiner to verify quickly."
         action = f"Make the linkage explicit in {section}, or add a cross-reference showing exactly where the supporting evidence appears."
     else:
         title = f"Required thesis element is only partly demonstrated: {item}"
-        assessment = f"The uploaded text touches on this requirement, but it does not fully demonstrate that {item.lower()}."
-        consequence = "A partial treatment may pass a surface checklist but still leave the argument, method or chapter logic underdeveloped at the declared level."
+        assessment = f"The work touches on this requirement, but it does not fully demonstrate that {item.lower()}."
+        consequence = "A partial treatment may pass a surface checklist but still leave the argument, method or chapter logic underdeveloped at the applicable academic level."
         action = f"Revise {section} so the requirement is not merely mentioned but explained, justified and linked to the study problem, objectives or methods as appropriate."
 
     consequence += " " + _degree_expectation_phrase(degree)
@@ -943,7 +943,7 @@ def hard_chapter_one_supervisory_issues(
             code="REF-MISSING-LIST",
             section="References",
             title="The reference list is missing despite visible in-text citations",
-            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the uploaded document.",
+            assessment="The chapter contains several in-text citations, but no References or Bibliography section is evident in the work.",
             consequence="A thesis chapter with citations but no reference list fails the basic traceability requirement for scholarly sources.",
             action="Add a complete reference list in the required style and verify that every in-text citation has a matching reference-list entry.",
             anchor=cite_anchor,

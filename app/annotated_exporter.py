@@ -25,8 +25,10 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
+from .finding_order import order_and_number_rows
+from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.19-professional-scope-ledger"
+ANNOTATION_EXPORT_VERSION = "1.9.9.21-expert-sequential-detailed-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -533,7 +535,12 @@ def _comment_body(row: Dict[str, Any]) -> str:
     section_label = clean_text(row.get("section_reference") or row.get("section") or "")
     if (reference and normalised(issue) == normalised(reference)) or (section_label and normalised(issue) == normalised(section_label)):
         issue = ""
-    assessment = _sanitise_guidance(row.get("comment", ""))
+    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
+    consequence = _sanitise_guidance(
+        row.get("academic_consequence", "")
+        or row.get("consequence", "")
+        or row.get("why_it_matters", "")
+    )
     action = _sanitise_guidance(row.get("required_action", ""))
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
     if not example:
@@ -547,6 +554,27 @@ def _comment_body(row: Dict[str, Any]) -> str:
         parts.append(issue.rstrip(" .") + ".")
     if assessment:
         parts.append(assessment.rstrip(" .") + ".")
+    if consequence and normalised(consequence) not in normalised(assessment):
+        parts.append(consequence.rstrip(" .") + ".")
+
+    level = academic_level_label(row.get("_academic_level") or row.get("academic_level"))
+    combined_so_far = " ".join(parts)
+    explicit_level_sentence = re.search(
+        r"(?:^|[.!?]\s+)At\s+(?:PhD|MPhil|professional doctorate|Master's|non-research Master's|Bachelor's)\s+level\b",
+        combined_so_far,
+    )
+    if level != "the applicable academic level" and not explicit_level_sentence:
+        category_text = normalised(" ".join(clean_text(row.get(field, "")) for field in ("category", "section", "item", "comment")))
+        if any(term in category_text for term in ("result", "statistic", "analysis", "regression", "anova", "sem", "mediation", "moderation", "table")):
+            expectation = "the analysis should be sufficiently complete and internally consistent for an examiner to trace each reported conclusion to the relevant table, model and diagnostic evidence"
+        elif any(term in category_text for term in ("method", "design", "sampling", "instrument", "validity", "reliability", "ethics")):
+            expectation = "the methodological choices should be justified, reproducible and explicitly aligned with the objectives, data and analysis"
+        elif any(term in category_text for term in ("discussion", "interpretation", "contribution", "theory")):
+            expectation = "the work should demonstrate independent scholarly interpretation, theoretical integration and defensible contribution"
+        else:
+            expectation = "the argument should demonstrate the precision, depth and independent scholarly judgement expected"
+        parts.append(f"At {level}, {expectation}.")
+
     if action:
         action_text = _normalise_action_start(action)
         if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix|interpret|qualify|separate|clean)\b", action_text, flags=re.I):
@@ -578,6 +606,7 @@ def _comment_body(row: Dict[str, Any]) -> str:
     # remain developmental but must read as natural supervision, not as a
     # labelled template.
     body = _strip_visible_labels(body)
+    body = professionalise_reviewer_language(body, row.get("_academic_level") or row.get("academic_level"))
     return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
 
@@ -588,9 +617,10 @@ _LEVEL_PHRASE_RE = re.compile(
 
 
 def _remove_level_repetition(value: str) -> str:
-    text = _LEVEL_PHRASE_RE.sub(" ", clean_text(value))
-    text = re.sub(r"\s{2,}", " ", text).strip()
-    return text
+    # Preserve a genuine level-specific expectation such as "At PhD level".
+    # Only collapse whitespace; old versions removed the level statement and
+    # made the comment sound generic.
+    return re.sub(r"\s{2,}", " ", clean_text(value)).strip()
 
 
 def _split_example(value: str) -> Tuple[str, str]:
@@ -727,9 +757,11 @@ _GENERIC_SECTION_ASSESSMENT_RE = re.compile(
 )
 
 
-def _section_comment_template(heading: str) -> str:
+def _section_comment_template(heading: str, academic_level: Any = None) -> str:
     """Return a section-specific supervisory note rather than a generic coverage stamp."""
     low = normalised(heading)
+    level = academic_level_label(academic_level)
+    level_phrase = f"At {level}" if level != "the applicable academic level" else "At the applicable academic level"
     if "background" in low:
         return (
             "This part should move logically from the broad sustainability debate to the specific Ghanaian and sectoral context of the study. "
@@ -763,7 +795,7 @@ def _section_comment_template(heading: str) -> str:
     if "significance" in low:
         return (
             "This part should explain the expected value of the study without reporting findings that have not yet been produced. "
-            "At MPhil level, the contribution should be tied to evidence, policy, practice and scholarship in a balanced way. "
+            f"{level_phrase}, the contribution should be tied to evidence, policy, practice and scholarship in a balanced way. "
             "Rewrite stakeholder benefits prospectively and avoid claims that imply the study has already demonstrated an effect."
         )
     if "limitation" in low:
@@ -799,7 +831,7 @@ def _section_comment_template(heading: str) -> str:
     return (
         "This section should be assessed for its role in the chapter, the quality of evidence used, conceptual clarity and alignment with the study purpose. "
         "Revise any wording, citation or structural element that weakens the reader's ability to trace the argument from the problem to the methodology. "
-        "Keep the section focused on the selected degree level and the approved thesis format."
+        f"{level_phrase}, keep the section focused on the depth, rigour and approved thesis format expected."
     )
 
 
@@ -830,7 +862,6 @@ def _polish_section_assessment(value: str) -> str:
     text = re.sub(r"\bThis section (?:has been|was) reviewed(?: against [^.]+)?\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bIt appears adequate\.?\s*", "", text, flags=re.I)
     text = re.sub(r"\bNo major issue(?:s)? (?:was|were) found\.?\s*", "", text, flags=re.I)
-    text = re.sub(r"\bselected academic level\b", "programme level", text, flags=re.I)
     text = re.sub(r"\s{2,}", " ", text).strip(" ;,.")
     if text:
         text = text[0].upper() + text[1:]
@@ -848,8 +879,13 @@ def _section_review_comment(row: Dict[str, Any]) -> str:
     if not heading or _is_synthetic_section_heading(heading):
         return ""
 
-    raw_assessment = _polish_section_assessment(clean_text(row.get("section_assessment", "")))
-    warning = _polish_section_assessment(clean_text(row.get("coverage_warning", "")))
+    level = row.get("_academic_level") or row.get("academic_level")
+    raw_assessment = professionalise_reviewer_language(
+        _polish_section_assessment(clean_text(row.get("section_assessment", ""))), level
+    )
+    warning = professionalise_reviewer_language(
+        _polish_section_assessment(clean_text(row.get("coverage_warning", ""))), level
+    )
 
     # Do not release false section-coverage claims such as "no terms are
     # defined" when the heading exists. Definition sections are frequently
@@ -863,13 +899,13 @@ def _section_review_comment(row: Dict[str, Any]) -> str:
         raw_assessment = ""
 
     if _is_weak_section_assessment(raw_assessment):
-        assessment = _section_comment_template(heading)
+        assessment = _section_comment_template(heading, level)
     else:
         assessment = raw_assessment
         # Add a section-specific supervisory focus when the model assessment is
         # useful but too narrow to stand alone as a section coverage comment.
         if len(assessment) < 260:
-            assessment = assessment.rstrip(" .") + ". " + _section_comment_template(heading)
+            assessment = assessment.rstrip(" .") + ". " + _section_comment_template(heading, level)
 
     assessment = public_text(
         assessment,
@@ -884,7 +920,7 @@ def _section_review_comment(row: Dict[str, Any]) -> str:
         reject_incomplete=True,
     )
 
-    body = assessment or _section_comment_template(heading)
+    body = assessment or _section_comment_template(heading, level)
     if warning and normalised(warning) not in normalised(body):
         body = (body.rstrip(" .") + ". " + warning.rstrip(" .") + ".").strip()
     body = re.sub(r"^this section\s*[:\-]\s*", "", body, flags=re.I).strip()
@@ -1207,6 +1243,11 @@ def _source_locator_map(document):
     paragraph_no = 0
     table_index = 0
     pending_caption: Optional[Dict[str, Any]] = None
+    active_chapter: Optional[int] = None
+    chapter_words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
 
     for block in _docx_blocks(document):
         if isinstance(block, Table):
@@ -1239,6 +1280,7 @@ def _source_locator_map(document):
                     )
                 output[paragraph_no] = {
                     "kind": "table_row",
+                    "chapter_number": active_chapter,
                     "table_index": table_index,
                     "table_row": row_index,
                     "table": block,
@@ -1251,9 +1293,17 @@ def _source_locator_map(document):
         text = clean_text(block.text)
         if not text:
             continue
+        chapter_match = re.fullmatch(
+            r"chapter\s+(one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)",
+            normalised(text),
+        )
+        if chapter_match:
+            token = chapter_match.group(1)
+            active_chapter = int(token) if token.isdigit() else chapter_words[token]
         paragraph_no += 1
         output[paragraph_no] = {
             "kind": "paragraph",
+            "chapter_number": active_chapter,
             "paragraph": block,
         }
         match = _TABLE_CAPTION_RE.match(text)
@@ -1397,6 +1447,35 @@ def _comment_on_table(
                     return True
     return False
 
+
+
+def _comment_on_table_row(
+    document,
+    table: Table,
+    row_index: int,
+    comments: List[str],
+    *,
+    author: str,
+    initials: str,
+) -> bool:
+    """Anchor a finding to the reported table row rather than the table title."""
+    if row_index <= 0 or row_index > len(table.rows):
+        return False
+    row = table.rows[row_index - 1]
+    for cell in row.cells:
+        for paragraph in cell.paragraphs:
+            runs = [run for run in paragraph.runs if clean_text(run.text)]
+            if not runs:
+                continue
+            grouped = _format_comment_group(comments, anchor_context=paragraph.text)
+            if grouped:
+                # Keep the student's table values unchanged. The native Word
+                # comment range itself identifies the affected row, while the
+                # sequential number remains visible in the comment pane.
+                return _add_native_comment(
+                    document, runs, grouped, author=author, initials=initials
+                )
+    return False
 
 def _first_native_anchor(document) -> Optional[Paragraph]:
     """Return a stable existing paragraph for document-level comments."""
@@ -1578,11 +1657,46 @@ def _placeholder_finding_rows(source_map: Dict[int, Dict[str, Any]], existing_ro
                 "problematic_quote": placeholder,
                 "evidence": [{
                     "document_role": "current",
+                    "chapter_number": locator.get("chapter_number"),
                     "paragraph": paragraph_number,
                     "text": text,
                 }],
             })
     return rows
+
+
+def synchronise_export_fallback_findings(
+    review: Dict[str, Any],
+    source_map: Dict[int, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Add deterministic export-time findings to the canonical review once.
+
+    The report is generated after the annotated DOCX during the normal job
+    workflow. Persisting any export-time placeholder finding in the review
+    therefore keeps the report, native comments, inline annotations and final
+    correction numbering on the same evidence ledger.
+    """
+    academic_rows = list(review.get("academic_findings") or [])
+    fallback_rows = _placeholder_finding_rows(source_map, academic_rows)
+    if fallback_rows:
+        for index, row in enumerate(fallback_rows, start=1):
+            evidence = (row.get("evidence") or [{}])[0]
+            row.setdefault(
+                "finding_id",
+                f"EXPORT-PLACEHOLDER-{evidence.get('chapter_number') or 0}-{evidence.get('paragraph') or index}-{index}",
+            )
+            academic_rows.append(row)
+        review["academic_findings"] = academic_rows
+        # A previously cached professional package was built before these
+        # deterministic findings existed. Force a rebuild when the report is
+        # exported so every output uses the same sequence.
+        review.pop("professional_review", None)
+    return (
+        list(review.get("academic_findings") or [])
+        + list(review.get("alignment_results") or [])
+        + list(review.get("revision_results") or [])
+    )
+
 
 def native_comment_count(docx_bytes: bytes) -> int:
     """Return the number of native Word comments in an exported DOCX."""
@@ -1801,29 +1915,49 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
 
 
 def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
-    """Return concise blue end-of-chapter correction guidance."""
+    """Return a detailed blue correction that mirrors the academic finding."""
     label = _canonical_group_label(row)
+    issue = _sanitise_guidance(row.get("item", "") or row.get("issue_title", ""))
+    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
+    consequence = _sanitise_guidance(
+        row.get("academic_consequence", "") or row.get("consequence", "") or row.get("why_it_matters", "")
+    )
     action = _sanitise_guidance(row.get("required_action", ""))
     if not action:
-        action = _sanitise_guidance(row.get("comment", ""))
-    if not action:
         action = _strip_comment_reference(comment)
-    action = _remove_level_repetition(_strip_visible_labels(action)).strip(" .")
-    if action:
-        action = _normalise_action_start(action).rstrip(" .") + "."
-    else:
-        action = "Revise the marked passage so the academic point is clear, evidence-supported and aligned with the chapter purpose."
     example = _sanitise_guidance(row.get("illustrative_guidance", "")) or _sanitise_guidance(context_specific_example(row))
     example = re.sub(r"^(?:for\s+)?(?:context\s+)?example[:,]?\s*", "", example, flags=re.I).strip(" .")
-    parts = []
-    if label:
-        parts.append(f"{label}: {action}")
+
+    parts: List[str] = []
+    if label and issue:
+        parts.append(f"{label}: {issue.rstrip(' .')}.")
+    elif issue:
+        parts.append(issue.rstrip(" .") + ".")
+    elif label:
+        parts.append(f"{label} requires revision.")
+    if assessment and normalised(assessment) not in normalised(" ".join(parts)):
+        parts.append(assessment.rstrip(" .") + ".")
+    if consequence and normalised(consequence) not in normalised(" ".join(parts)):
+        parts.append(consequence.rstrip(" .") + ".")
+
+    level = academic_level_label(row.get("_academic_level") or row.get("academic_level"))
+    explicit_level_sentence = re.search(
+        r"(?:^|[.!?]\s+)At\s+(?:PhD|MPhil|professional doctorate|Master's|non-research Master's|Bachelor's)\s+level\b",
+        " ".join(parts),
+    )
+    if level != "the applicable academic level" and not explicit_level_sentence:
+        parts.append(f"At {level}, the correction should demonstrate clear scholarly judgement, methodological or analytical defensibility, and traceable support from the study evidence.")
+
+    if action:
+        parts.append(_normalise_action_start(action).rstrip(" .") + ".")
     else:
-        parts.append(action)
+        parts.append("Revise the marked passage so that the claim is clear, evidence-supported and aligned with the chapter purpose.")
     if example:
         example = _normalise_action_start(example).rstrip(" .")
         parts.append("For example, " + example[0].lower() + example[1:] + ".")
-    return public_text(_shorten_comment(" ".join(parts), 1200), reject_placeholders=True, reject_incomplete=True)
+
+    text = professionalise_reviewer_language(" ".join(parts), row.get("_academic_level") or row.get("academic_level"))
+    return public_text(_shorten_comment(text, 2000), reject_placeholders=True, reject_incomplete=True)
 
 
 def _add_specific_corrections_required(
@@ -1885,38 +2019,25 @@ def _build_grouped_annotated_docx(
     findings are placed on the nearest insertion point rather than on a chapter
     heading.
     """
+    academic_level = (review.get("summary") or {}).get("academic_level")
+    prepared_rows = []
+    for source_row in review_rows:
+        row = dict(source_row)
+        row["_academic_level"] = academic_level
+        prepared_rows.append(row)
+    review_rows = order_and_number_rows(prepared_rows)
+
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
-    by_table: Dict[int, List[str]] = defaultdict(list)
+    by_table: Dict[Tuple[int, int], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
-    existing_numbers = []
-    for candidate in review_rows:
-        try:
-            number = int(candidate.get("finding_number"))
-        except (TypeError, ValueError):
-            continue
-        if number > 0:
-            existing_numbers.append(number)
-    next_reference_number = max(existing_numbers, default=0) + 1
-    used_reference_numbers = set()
-
     def reference_number_for(row: Dict[str, Any]) -> int:
-        nonlocal next_reference_number
         try:
-            preferred = int(row.get("finding_number"))
+            return int(row.get("finding_number"))
         except (TypeError, ValueError):
-            preferred = 0
-        if preferred > 0 and preferred not in used_reference_numbers:
-            used_reference_numbers.add(preferred)
-            return preferred
-        while next_reference_number in used_reference_numbers:
-            next_reference_number += 1
-        value = next_reference_number
-        used_reference_numbers.add(value)
-        next_reference_number += 1
-        return value
+            return 0
 
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -1958,10 +2079,14 @@ def _build_grouped_annotated_docx(
                 except (TypeError, ValueError):
                     table_index = 0
                 if table_index:
-                    by_table[table_index].append(comment)
+                    try:
+                        table_row = int(locator.get("table_row") or best.get("table_row") or 0)
+                    except (TypeError, ValueError):
+                        table_row = 0
+                    by_table[(table_index, table_row)].append(comment)
                     continue
             paragraph = locator.get("paragraph")
-            paragraph_text = clean_text(paragraph.text if paragraph is not None else "")
+            paragraph_text = paragraph.text if paragraph is not None else ""
             if paragraph is not None and paragraph_text:
                 start, end = _row_span_for_paragraph(row, paragraph_text)
                 if start < end:
@@ -2005,18 +2130,22 @@ def _build_grouped_annotated_docx(
         else:
             fallback_comments.extend(comments)
 
-    for table_index in sorted(by_table, reverse=True):
+    for table_key in sorted(by_table, reverse=True):
+        table_index, table_row = table_key
         table_info = table_map.get(table_index) or {}
         table = table_info.get("table")
-        comments = list(dict.fromkeys(by_table[table_index]))
+        comments = list(dict.fromkeys(by_table[table_key]))
         caption = table_info.get("caption_paragraph")
-        if table is not None:
-            if not _comment_on_table(document, table, comments, caption=caption, author=author, initials=initials):
-                fallback_comments.extend(comments)
-        elif caption is not None:
-            if not _comment_on_paragraph(document, caption, comments, author=author, initials=initials):
-                fallback_comments.extend(comments)
-        else:
+        added = False
+        if table is not None and table_row:
+            added = _comment_on_table_row(
+                document, table, table_row, comments, author=author, initials=initials
+            )
+        if not added and table is not None:
+            added = _comment_on_table(document, table, comments, caption=caption, author=author, initials=initials)
+        if not added and caption is not None:
+            added = _comment_on_paragraph(document, caption, comments, author=author, initials=initials)
+        if not added:
             fallback_comments.extend(comments)
 
     if _include_section_review_comments():
@@ -2061,14 +2190,12 @@ def build_annotated_docx(
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
 
-    supplied_rows = (
-        list(review.get("academic_findings", []))
-        + list(review.get("alignment_results", []))
-        + list(review.get("revision_results", []))
-    )
-    review_rows = _sanitise_rows_for_export(
-        supplied_rows + _placeholder_finding_rows(source_map, supplied_rows)
-    )
+    supplied_rows = synchronise_export_fallback_findings(review, source_map)
+    review_rows = _sanitise_rows_for_export(supplied_rows)
+    academic_level = (review.get("summary") or {}).get("academic_level")
+    review_rows = order_and_number_rows([
+        {**row, "_academic_level": academic_level} for row in review_rows
+    ])
     if _merge_comments_by_section():
         return _build_grouped_annotated_docx(
             document,

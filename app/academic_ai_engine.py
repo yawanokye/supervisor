@@ -31,6 +31,7 @@ from .ai_schemas import (
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
 from .review_enrichment import enrich_finding_row
+from .statistical_review import statistical_warnings_to_issues
 from .thorough_review import thorough_review_deterministic_issues
 from .articleready_review_bridge import attach_articleready_quality_audit
 from .professional_review_pipeline import (
@@ -422,10 +423,10 @@ def _degree_specific_review_contract(
         chapter = 0
 
     common = [
-        "Evaluate every detected section and subsection using direct evidence from the uploaded document.",
+        "Evaluate every detected section and subsection using direct evidence from the study or work under review.",
         "Distinguish a missing element from a present but weakly developed element.",
         "Consolidate recurring proofreading defects, but do not merge distinct conceptual, alignment, citation or methodological problems.",
-        "Check factual support, source traceability, internal consistency and the limits of inference at the declared programme level.",
+        "Check factual support, source traceability, internal consistency and the limits of inference at the actual academic level.",
     ]
 
     if key == "bachelors":
@@ -1144,7 +1145,7 @@ def _batch_prompt(
             "the_guideline_strengthens_but_does_not_replace_the_existing_academic_review": True,
         },
         "instruction": (
-            "Review every supplied section and subsection at the stated benchmark. Return exactly one review for every section_key. "
+            "Review every supplied section and subsection at the actual academic level. Return exactly one review for every section_key. "
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate sections. "
             "A section may have zero issues only after a substantive assessment. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
@@ -1283,12 +1284,12 @@ def _verification_prompt(
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
-            "Independently verify the proposed issues at the stated benchmark. Remove unsupported, repetitive or misplaced findings; "
+            "Independently verify the proposed issues at the actual academic level. Remove unsupported, repetitive or misplaced findings; "
             "correct severity and evidence; add important missed issues; and confirm that all sections received a substantive assessment. "
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
-            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the declared level and add material missed issues even when the primary review did not propose them. Keep the issue ordering by academic level and review depth, so a Standard Research Master’s/MPhil review should normally retain more material, research-intensive findings than a Standard Non-Research Master’s review of the same weak chapter. In Chapter One this includes problem-gap evidence, "
+            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the actual academic level and add material missed issues even when the primary review did not propose them. Keep the issue ordering by academic level and review depth, so a Standard Research Master’s/MPhil review should normally retain more material, research-intensive findings than a Standard Non-Research Master’s review of the same weak chapter. In Chapter One this includes problem-gap evidence, "
             "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
             "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
             "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
@@ -2582,9 +2583,19 @@ async def enrich_review_with_academic_ai(
         if valid:
             raw_issues.append(valid)
 
+    # Convert deterministic statistical checks into evidence-anchored findings.
+    # Verified arithmetic inconsistencies are stated directly. Reporting omissions
+    # are labelled as matters requiring the original analytical output.
+    for statistical_issue in statistical_warnings_to_issues(
+        review.get("statistical_review") or {}, academic_level=academic_level
+    ):
+        valid = _valid_issue(statistical_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
     # v1.9.9.8: UCC section-coverage contract. This deterministic layer
-    # ensures every relevant UCC thesis/dissertation section in the uploaded
-    # chapter is assessed at the selected academic level. It is added before
+    # ensures every relevant UCC thesis/dissertation section in the submitted
+    # chapter is assessed at the actual academic level. It is added before
     # the evidence gate so it cannot bypass factual placement controls.
     for ucc_issue in ucc_section_contract_issues(
         current,

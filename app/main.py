@@ -1451,7 +1451,7 @@ async def _run_review_job(
             message=(
                 "Resuming the review from its last saved checkpoint"
                 if resumed
-                else "Reading and organising the uploaded documents"
+                else "Reading and organising the study files"
             ),
             current_stage=current_stage,
             recoverable=True,
@@ -2175,7 +2175,7 @@ async def create_review(
         raise HTTPException(
             status_code=500,
             detail=(
-                "The uploaded documents could not be saved for reliable "
+                "The study files could not be saved for reliable "
                 "processing. Check the persistent storage configuration."
             ),
         ) from exc

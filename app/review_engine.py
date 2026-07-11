@@ -443,7 +443,7 @@ def _partition_submission_for_review(
                 )
                 raise ValueError(
                     "The doctoral thesis may use custom chapter titles, order "
-                    "and number, but the uploaded document does not yet demonstrate "
+                    "and number, but the study or work does not yet demonstrate "
                     "the complete set of core research functions. "
                     f"Detected structure: {uploaded}. "
                     f"Functional areas requiring confirmation: {missing}. "
@@ -527,7 +527,7 @@ def _partition_submission_for_review(
             )
             raise ValueError(
                 f"You selected Chapters 1–{combined_chapter_end}, but the "
-                f"uploaded document was identified as {detected_text}. "
+                f"study or work was identified as {detected_text}. "
                 f"Missing from the selected range: {missing_text}. "
                 "The review has not started. Upload one composite document "
                 "containing every chapter from Chapter One through the selected "
@@ -583,7 +583,7 @@ def _partition_submission_for_review(
     detected_text = ", ".join(profile["detected_labels"])
     if detected and selected_chapter not in detected:
         raise ValueError(
-            f"You selected {selected_name}, but the uploaded document was identified as {detected_text}. "
+            f"You selected {selected_name}, but the study or work was identified as {detected_text}. "
             "The review has not started. "
             f"Upload {selected_name} containing expected sections such as {_expected_components_text(selected_chapter)}."
         )
@@ -598,7 +598,7 @@ def _partition_submission_for_review(
             )
         if selected_score < 3:
             raise ValueError(
-                f"The app could not confirm that the uploaded document is {selected_name}. "
+                f"The app could not confirm that the study or work is {selected_name}. "
                 "The review has not started. Use a clear chapter title and recognised section headings. "
                 "Section numbering is optional. Include expected components such as "
                 f"{_expected_components_text(selected_chapter)}."
