@@ -188,7 +188,7 @@ services:
       - key: VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES
         value: true
       - key: VPROF_COMMENT_MAX_CHARS
-        value: 1500
+        value: 1100
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
         value: 0.58
       - key: VPROF_DEVELOPMENTAL_COMMENTS
@@ -256,20 +256,32 @@ services:
       - key: VPROF_EVIDENCE_SAFE_CHECKLIST
         value: true
       - key: VPROF_NATIVE_COMMENT_STYLE
-        value: anchored_grouped
+        value: one_per_finding
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
-        value: false
-      - key: VPROF_COMMENT_MERGE_BY_SECTION
         value: true
+      - key: VPROF_COMMENT_MERGE_BY_SECTION
+        value: false
       - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
-        value: 3
+        value: 1
       - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS
         value: false
       - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS
-        value: false
+        value: true
       - key: VPROF_VERIFY_DOCX_COMMENT_COUNT
         value: true
       - key: VPROF_SHOW_FINDING_COMMENT_RECONCILIATION
+        value: true
+      - key: VPROF_ADD_QUALITY_EXPECTATION_TO_COMMENTS
+        value: false
+      - key: VPROF_INCLUDE_DEGREE_LABEL_IN_COMMENTS
+        value: false
+      - key: VPROF_REPORT_INCLUDE_DETAILED_FINDINGS
+        value: false
+      - key: VPROF_REPORT_MAX_DETAILED_FINDINGS
+        value: 30
+      - key: VPROF_INTRO_BACKGROUND_SYNTHESIS_MODE
+        value: focused
+      - key: VPROF_FINAL_COMMENT_RECONCILIATION
         value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true

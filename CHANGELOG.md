@@ -705,3 +705,17 @@
 - Fixed strict-schema category handling that previously caused valid statistical findings to be silently discarded.
 - Strengthened student-facing, current-study wording and removed app-facing “uploaded document” language.
 - Preserved evidence-led comment counts with no predetermined finding quota.
+
+## v1.9.9.25 — Final Professional Review Reconciliation
+
+- Added a canonical final finding pipeline that verifies, consolidates, sorts and numbers findings only after all review stages are complete.
+- Corrected non-sequential and missing comment numbers across the report, native comments, inline annotations and correction tracker.
+- Changed the native DOCX default to one finding per exact evidence anchor and disabled routine section-level comments.
+- Moved genuinely missing-section guidance to the numbered chapter correction tracker rather than anchoring it to unrelated text.
+- Added global false-positive checks for existing references, definitions and equivalent thesis headings.
+- Removed brevity-only criticism of purpose statements and research questions.
+- Removed repetitive programme-level boilerplate and mechanical traceability language from student-facing feedback.
+- Calibrated Chapter One to use selective evidence-led background development while retaining deep critical synthesis requirements for Chapter Two.
+- Consolidated repeated statistical findings concerning the same table or model while preserving deterministic calculation and model-appropriateness checks.
+- Reworked the professional report as a concise, decision-led summary that refers students to the sequential native comments for detailed corrections.
+- Corrected red marker order when several distinct comments apply to the same passage.
