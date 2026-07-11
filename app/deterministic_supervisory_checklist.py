@@ -527,9 +527,6 @@ def _important_objective_terms(objectives_text: str) -> List[str]:
         phrase = re.split(r"\s+(?:among|within|in|on|for)\s+", phrase)[0].strip()
         if phrase and phrase not in candidates:
             candidates.append(phrase)
-    for phrase in ("fraud detection", "fraud prevention", "internal controls", "fraud incidence", "fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation", "awareness", "operational performance", "green procurement practices"):
-        if phrase in text and phrase not in candidates:
-            candidates.append(phrase)
     return [c for c in candidates if c and c not in stop][:6]
 
 def hard_chapter_one_supervisory_issues(
@@ -967,36 +964,6 @@ def hard_chapter_one_supervisory_issues(
             category="citations_and_sources",
             severity="moderate",
         ))
-
-    if ("commercial bank" in full_low and "rural bank" in full_low) or ("assinman" in full_low and "commercial bank" in full_low):
-        anchor = _first_substantive(problem) or _first_substantive(background)
-        issues.append(_issue(
-            code="POPULATION-SCOPE-DRIFT",
-            section=source_section(anchor) if anchor else "Chapter One",
-            title="The study population and case setting are not consistently stated",
-            assessment="The chapter alternates between commercial banks, rural banks and the Assinman Rural Bank PLC case setting without consistently explaining the population boundary.",
-            consequence="Population drift weakens alignment among the title, problem, objectives, methodology and eventual findings.",
-            action="State the target population and case setting consistently across the title, background, problem statement, objectives, questions, scope and significance.",
-            anchor=anchor,
-            category="cross_section_coherence",
-            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
-        ))
-
-    if any(term in full_low for term in ("fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation")):
-        bg_prob = normalised(bg_text + " " + problem_text)
-        if degree in {"research_masters", "professional_doctorate", "phd"} and "fraud triangle" not in bg_prob and "pressure" not in bg_prob and "opportunity" not in bg_prob:
-            anchor = _first_substantive(background) or _first_substantive(problem)
-            issues.append(_issue(
-                code="THEORY-NOT-INTEGRATED",
-                section=source_section(anchor) if anchor else "Chapter One",
-                title="The theoretical basis is mentioned in the objectives but not integrated into the chapter argument",
-                assessment="Fraud-triangle factors appear in the objectives or questions, but the background and problem statement do not yet explain how that theory frames the study.",
-                consequence="At MPhil level and above, theory should guide the argument before it appears in the objectives, questions or analysis plan.",
-                action="Introduce the relevant theory or conceptual framework in the background/problem discussion and explain how it supports the variables, objectives and expected analysis.",
-                anchor=anchor,
-                category="theoretical_grounding",
-                severity="major",
-            ))
 
     # Remove Nones and duplicate hard codes.
     out: List[Dict[str, Any]] = []

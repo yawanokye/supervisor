@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import re
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from docx import Document
@@ -14,6 +14,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_trim
 from .articleready_review_bridge import build_articleready_quality_audit
+from .professional_review_pipeline import build_professional_review_package
 
 INK = "1F2937"
 MUTED = "667085"
@@ -746,13 +747,142 @@ def _add_compact_follow_up(
             break
     return added > 0
 
-def build_docx_report(review: Dict[str, Any]) -> bytes:
-    """Create a concise human-supervisor summary report.
+def _add_professional_finding_table(doc: Document, ledger: Sequence[Dict[str, Any]], title: str) -> None:
+    doc.add_heading(title, level=1)
+    if not ledger:
+        doc.add_paragraph("No material evidence-anchored correction was identified at the selected benchmark.")
+        return
+    table = doc.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    table.autofit = False
+    header = table.rows[0]
+    _set_repeat_table_header(header)
+    for cell, width in zip(header.cells, (0.45, 1.7, 2.75, 3.25)):
+        _set_cell_width(cell, width)
+        _set_cell_shading(cell, BRAND)
+    _set_cell_text(header.cells[0], "No.", True, "FFFFFF", 8.5)
+    _set_cell_text(header.cells[1], "Location", True, "FFFFFF", 8.5)
+    _set_cell_text(header.cells[2], "Professional assessment", True, "FFFFFF", 8.5)
+    _set_cell_text(header.cells[3], "Specific correction required", True, "FFFFFF", 8.5)
+    for idx, item in enumerate(ledger):
+        row = table.add_row()
+        _prevent_row_split(row)
+        for cell, width in zip(row.cells, (0.45, 1.7, 2.75, 3.25)):
+            _set_cell_width(cell, width)
+            if idx % 2:
+                _set_cell_shading(cell, "F8FAFC")
+        _set_cell_text(row.cells[0], item.get("number", ""), True, BRAND, 8.2)
+        location = item.get("location") or item.get("section") or "Chapter-level finding"
+        _set_cell_text(row.cells[1], location, False, MUTED, 7.9)
+        assessment = item.get("assessment") or item.get("issue") or "Academic correction required"
+        issue = item.get("issue")
+        if issue and _normalised(issue) not in _normalised(assessment):
+            assessment = f"{issue}. {assessment}"
+        verification = item.get("verification")
+        if verification:
+            assessment = f"{assessment} [{verification}]"
+        _set_cell_text(row.cells[2], _compact_sentence(assessment, 520), False, INK, 8.0)
+        correction = item.get("required_correction") or "Revise the cited passage in line with the professional assessment."
+        example = item.get("example")
+        if example:
+            correction = f"{correction} For example, {re.sub(r'^(?:for\s+)?example[:,]?\s*', '', str(example), flags=re.I).strip()}"
+        _set_cell_text(row.cells[3], _compact_sentence(correction, 620), False, INK, 8.0)
 
-    Detailed passage-level comments, examples, evidence locations and source
-    verification notes remain in the annotated document. This report presents
-    only the overall judgement, strengths and the main corrections required for
-    each chapter or section.
+
+def _add_chapter_judgement_table(doc: Document, judgements: Sequence[Dict[str, Any]], title: str) -> None:
+    doc.add_heading(title, level=1)
+    if not judgements:
+        doc.add_paragraph("No distinct chapter judgement was available from the submitted scope.")
+        return
+    table = doc.add_table(rows=1, cols=5)
+    table.style = "Table Grid"
+    table.autofit = False
+    header = table.rows[0]
+    _set_repeat_table_header(header)
+    for cell, width in zip(header.cells, (1.05, 1.9, 0.65, 1.15, 3.05)):
+        _set_cell_width(cell, width)
+        _set_cell_shading(cell, BRAND)
+    for cell, text in zip(header.cells, ("Chapter", "Specialist lens", "Score", "Issue profile", "Professional judgement")):
+        _set_cell_text(cell, text, True, "FFFFFF", 8.4)
+    for idx, item in enumerate(judgements):
+        row = table.add_row()
+        _prevent_row_split(row)
+        for cell, width in zip(row.cells, (1.05, 1.9, 0.65, 1.15, 3.05)):
+            _set_cell_width(cell, width)
+            if idx % 2:
+                _set_cell_shading(cell, "F8FAFC")
+        counts = item.get("severity_counts") or {}
+        profile = f"{counts.get('critical', 0)} critical; {counts.get('major', 0)} major; {counts.get('moderate', 0)} moderate"
+        decision = item.get("decision", "")
+        strengths = item.get("strengths") or []
+        if strengths:
+            decision += " Strength to retain: " + _compact_sentence(strengths[0], 180)
+        _set_cell_text(row.cells[0], item.get("chapter", "Chapter"), True, BRAND, 8.2)
+        _set_cell_text(row.cells[1], item.get("specialist_role", "Professional chapter reviewer"), False, INK, 8.0)
+        _set_cell_text(row.cells[2], item.get("score") if item.get("score") is not None else "—", True, INK, 8.1)
+        _set_cell_text(row.cells[3], profile, False, MUTED, 7.9)
+        _set_cell_text(row.cells[4], decision, False, INK, 8.0)
+
+
+def _add_methods_results_audit(doc: Document, audit: Dict[str, Any], number: int) -> int:
+    doc.add_heading(f"{number}. Methods, Results and Discussion Accuracy Audit", level=1)
+    doc.add_paragraph(_clean(audit.get("accuracy_statement")))
+    groups = [
+        ("Methods and reproducibility", audit.get("methods_findings") or []),
+        ("Results and analytical accuracy", audit.get("results_accuracy_findings") or []),
+        ("Discussion and interpretation", audit.get("discussion_findings") or []),
+    ]
+    for label, rows in groups:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(5)
+        p.paragraph_format.space_after = Pt(2)
+        p.add_run(label).bold = True
+        if not rows:
+            p.add_run(": no separate material finding was identified from the evidence supplied.")
+            continue
+        for item in rows[:18]:
+            q = doc.add_paragraph()
+            q.paragraph_format.left_indent = Inches(0.24)
+            q.paragraph_format.first_line_indent = Inches(-0.18)
+            q.paragraph_format.space_after = Pt(2)
+            q.add_run(f"{item.get('number')}. ").bold = True
+            q.add_run(_compact_sentence(item.get("issue") or item.get("assessment"), 260))
+            loc = q.add_run(f" ({_compact_sentence(item.get('location'), 130)})")
+            loc.italic = True
+            loc.font.color.rgb = RGBColor.from_string(MUTED)
+    return number + 1
+
+
+def _add_priority_plan(doc: Document, plan: Dict[str, Sequence[Dict[str, Any]]], number: int) -> int:
+    doc.add_heading(f"{number}. Prioritised Correction Plan", level=1)
+    labels = [
+        ("Priority 1: validity and submission blockers", "priority_1_validity_and_submission_blockers"),
+        ("Priority 2: major scholarly revision", "priority_2_major_scholarly_revision"),
+        ("Priority 3: targeted and editorial revision", "priority_3_targeted_and_editorial_revision"),
+    ]
+    for label, key in labels:
+        rows = list(plan.get(key) or [])
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after = Pt(2)
+        p.add_run(label).bold = True
+        if not rows:
+            p.add_run(": none identified.")
+            continue
+        for item in rows[:15]:
+            q = doc.add_paragraph(style="List Bullet")
+            q.paragraph_format.space_after = Pt(2)
+            q.add_run(f"Correction {item.get('number')} — {item.get('section')}: ").bold = True
+            q.add_run(_compact_sentence(item.get("required_correction"), 360))
+    return number + 1
+
+
+def build_docx_report(review: Dict[str, Any]) -> bytes:
+    """Create the canonical professional supervisor or examiner report.
+
+    The report, native comments and inline annotated document are rendered from
+    the same finding ledger. The report therefore preserves substantive academic
+    judgement instead of reducing the review to a short comment summary.
     """
     doc = Document()
     _set_document_styles(doc)
@@ -764,11 +894,13 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     section.right_margin = Inches(0.62)
 
     summary = review.get("summary") or {}
-    depth = str(summary.get("review_depth", "standard")).lower()
+    package = review.get("professional_review") or build_professional_review_package(review)
+    profile = package.get("profile") or {}
+    ledger = package.get("finding_ledger") or []
 
     title = doc.add_paragraph(style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.add_run("SUPERVISOR’S SUMMARY REVIEW")
+    title.add_run(_clean(profile.get("report_title") or summary.get("professional_report_title") or "PROFESSIONAL ACADEMIC REVIEW"))
 
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -778,50 +910,18 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     run.font.size = Pt(10.5)
     run.font.color.rgb = RGBColor.from_string(MUTED)
 
-    # Compact two-pair metadata table.
     details = doc.add_table(rows=0, cols=4)
     details.style = "Table Grid"
     details.autofit = False
     pairs = [
-        (
-            ("Document", summary.get("document_label", "")),
-            ("Academic level", summary.get("academic_level", "")),
-        ),
-        (
-            (
-                "Review stage",
-                "Revised submission"
-                if summary.get("revised_mode")
-                else "Initial submission",
-            ),
-            ("Review depth", str(summary.get("review_depth", "standard")).title()),
-        ),
-        (
-            (
-                "Sections reviewed",
-                summary.get("academic_sections_reviewed", ""),
-            ),
-            ("Overall judgement", summary.get("readiness_label", "")),
-        ),
+        (("Review role", profile.get("role", "Professional academic reviewer")), ("Review scope", str(summary.get("review_scope", "chapter")).replace("_", " ").title())),
+        (("Document", summary.get("document_label", "")), ("Academic level", summary.get("academic_level", ""))),
+        (("Review depth", str(summary.get("review_depth", "standard")).title()), ("Canonical findings", len(ledger))),
+        (("Submission stage", "Revised submission" if summary.get("revised_mode") else "Initial submission"), ("Overall judgement", package.get("recommendation", {}).get("decision") or summary.get("readiness_label", ""))),
     ]
-    if summary.get("thesis_structure_label"):
-        pairs.append(
-            (
-                (
-                    "Thesis structure",
-                    summary.get("thesis_structure_label", ""),
-                ),
-                (
-                    "Fixed five chapters",
-                    "Required"
-                    if summary.get("fixed_five_chapter_required")
-                    else "Not required",
-                ),
-            )
-        )
     for left, right in pairs:
         cells = details.add_row().cells
-        for cell, width in zip(cells, (1.2, 2.35, 1.35, 2.35)):
+        for cell, width in zip(cells, (1.25, 2.35, 1.35, 2.35)):
             _set_cell_width(cell, width)
         _set_cell_shading(cells[0], SOFT)
         _set_cell_text(cells[0], left[0], True, BRAND, 8.5)
@@ -830,190 +930,90 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         _set_cell_text(cells[2], right[0], True, BRAND, 8.5)
         _set_cell_text(cells[3], right[1], False, INK, 8.5)
 
-    context_rows = _context_summary(review)
-    if context_rows:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(6)
-        p.paragraph_format.space_after = Pt(3)
-        p.add_run("Study context used: ").bold = True
-        p.add_run(
-            "; ".join(
-                f"{label}: {_compact_sentence(value, 180)}"
-                for label, value in context_rows
-            )
-        )
-
-    doc.add_heading("1. Overall Supervisor Comment", level=1)
+    doc.add_heading("1. Overall Professional Judgement", level=1)
     doc.add_paragraph(_compact_overall_assessment(review))
-
+    p = doc.add_paragraph()
+    p.add_run("Scope-specific judgement: ").bold = True
+    p.add_run(_clean(profile.get("primary_task")))
     judgement = doc.add_table(rows=1, cols=1)
     judgement.style = "Table Grid"
     cell = judgement.cell(0, 0)
-    fill = (
-        PALE_AMBER
-        if summary.get("critical_issues", 0) or summary.get("major_issues", 0)
-        else PALE_GREEN
-    )
+    counts = Counter(item.get("severity") for item in ledger)
+    fill = PALE_AMBER if counts.get("critical", 0) or counts.get("major", 0) else PALE_GREEN
     _set_cell_shading(cell, fill)
-    counts = (
-        f'{summary.get("critical_issues", 0)} critical, '
-        f'{summary.get("major_issues", 0)} major and '
-        f'{summary.get("moderate_issues", 0)} moderate correction(s)'
-    )
-    _set_cell_text(
-        cell,
-        f'{summary.get("readiness_label", "Review completed")}. '
-        f"The main revision workload comprises {counts}.",
-        True,
-        INK,
-        9.3,
-    )
+    recommendation = package.get("recommendation") or {}
+    _set_cell_text(cell, f"{recommendation.get('decision', 'Review completed')}. {recommendation.get('meaning', '')}", True, INK, 9.2)
 
-    _add_articleready_quality_audit_section(doc, review, 2)
+    section_number = 2
+    blockers = list((package.get("priority_correction_plan") or {}).get("priority_1_validity_and_submission_blockers") or [])
+    doc.add_heading(f"{section_number}. Critical Submission Blockers", level=1)
+    section_number += 1
+    if blockers:
+        for item in blockers:
+            q = doc.add_paragraph(style="List Number")
+            q.add_run(f"Correction {item.get('number')} — {item.get('section')}: ").bold = True
+            q.add_run(_compact_sentence(item.get("required_correction"), 420))
+    else:
+        doc.add_paragraph("No critical blocker was identified. Major and moderate corrections may still prevent approval at the selected academic level.")
 
-    doc.add_heading("3. Main Strengths", level=1)
+    _add_chapter_judgement_table(doc, package.get("chapter_judgements") or [], f"{section_number}. Chapter or Section Judgements")
+    section_number += 1
+
+    _add_professional_finding_table(doc, ledger, f"{section_number}. Detailed Professional Findings and Required Corrections")
+    section_number += 1
+
+    section_number = _add_methods_results_audit(doc, package.get("methods_results_discussion_audit") or {}, section_number)
+
+    alignment_rows = package.get("cross_chapter_alignment") or []
+    if alignment_rows:
+        doc.add_heading(f"{section_number}. Cross-Chapter Alignment", level=1)
+        section_number += 1
+        for row in alignment_rows[:20]:
+            q = doc.add_paragraph(style="List Bullet")
+            if row.get("number"):
+                q.add_run(f"Correction {row.get('number')} — ").bold = True
+            q.add_run(_compact_sentence(row.get("finding") or row.get("required_correction"), 360))
+            if row.get("required_correction") and _normalised(row.get("required_correction")) not in _normalised(row.get("finding")):
+                q.add_run(" Required action: ").bold = True
+                q.add_run(_compact_sentence(row.get("required_correction"), 280))
+
+    doc.add_heading(f"{section_number}. Strengths to Retain", level=1)
+    section_number += 1
     strengths = review.get("academic_strengths") or []
-    strength_values = _unique(
-        (
-            f'{_clean(item.get("section", "Chapter"))}: '
-            f'{_compact_sentence(item.get("observation", ""), 260)}'
-            for item in strengths
-        ),
-        5,
-    )
-    if strength_values:
-        for value in strength_values:
-            p = doc.add_paragraph(style="List Bullet")
-            p.paragraph_format.space_after = Pt(3)
-            p.add_run(value)
+    if strengths:
+        for value in _unique((f"{_clean(item.get('section', 'Chapter'))}: {_compact_sentence(item.get('observation', ''), 320)}" for item in strengths), 12):
+            doc.add_paragraph(value, style="List Bullet")
     else:
-        doc.add_paragraph(
-            "The document contains the required chapter framework, but the "
-            "substantive strengths should become clearer after the priority "
-            "corrections have been addressed."
-        )
+        doc.add_paragraph("The revision should preserve any accurate evidence, coherent section structure and well-supported arguments while addressing the corrections above.")
 
-    doc.add_heading("4. Strengths and Key Corrections by Chapter or Section", level=1)
-    intro = doc.add_paragraph(
-        "All material corrections identified by the review are summarised below in "
-        "concise action form. Detailed explanations, examples and exact locations remain "
-        "in the annotated document."
-    )
-    intro.paragraph_format.space_after = Pt(5)
+    section_number = _add_priority_plan(doc, package.get("priority_correction_plan") or {}, section_number)
 
-    units = _summary_units(review)
-    if not units:
-        doc.add_paragraph(
-            "No identifiable chapter or section summary was available."
-        )
+    evidence_required = (package.get("methods_results_discussion_audit") or {}).get("evidence_required") or []
+    doc.add_heading(f"{section_number}. Evidence Required for Verification", level=1)
+    section_number += 1
+    if evidence_required:
+        for item in evidence_required:
+            q = doc.add_paragraph(style="List Bullet")
+            q.add_run(f"Correction {item.get('number')}: ").bold = True
+            q.add_run(_compact_sentence(item.get("evidence_needed"), 360))
+            loc = q.add_run(f" ({_compact_sentence(item.get('location'), 150)})")
+            loc.italic = True
+            loc.font.color.rgb = RGBColor.from_string(MUTED)
     else:
-        table = doc.add_table(rows=1, cols=3)
-        table.style = "Table Grid"
-        table.autofit = False
-        header = table.rows[0]
-        _set_repeat_table_header(header)
-        for cell, width in zip(header.cells, (1.65, 2.2, 3.85)):
-            _set_cell_width(cell, width)
-            _set_cell_shading(cell, BRAND)
-        _set_cell_text(header.cells[0], "Chapter / Section", True, "FFFFFF", 9)
-        _set_cell_text(header.cells[1], "Strengths", True, "FFFFFF", 9)
-        _set_cell_text(header.cells[2], "Key corrections required", True, "FFFFFF", 9)
+        doc.add_paragraph("No separate original-output request was generated. This does not remove the candidate’s responsibility to retain data, instruments, coding records and analytical output for examination.")
 
-        for index, unit in enumerate(units):
-            row = table.add_row()
-            _prevent_row_split(row)
-            for cell, width in zip(row.cells, (1.65, 2.2, 3.85)):
-                _set_cell_width(cell, width)
-            if index % 2:
-                for cell in row.cells:
-                    _set_cell_shading(cell, "F8FAFC")
+    if _add_compact_follow_up(doc, f"{section_number}. Response to Earlier Supervisor Comments", review.get("revision_results") or [], 12):
+        section_number += 1
 
-            _set_cell_text(
-                row.cells[0],
-                unit["label"],
-                True,
-                BRAND,
-                8.8,
-            )
-            _add_cell_list(
-                row.cells[1],
-                unit.get("strengths") or [],
-                empty_text="No separate strength recorded.",
-                size=8.5,
-            )
-
-            corrections = list(unit.get("corrections") or [])
-            corrections.extend(
-                f"Review note: {_compact_sentence(warning, 220)}"
-                for warning in unit.get("warnings") or []
-            )
-            _add_cell_list(
-                row.cells[2],
-                corrections,
-                numbered=True,
-                empty_text=(
-                    "No major correction identified at the selected benchmark."
-                ),
-                size=8.5,
-            )
-
-    next_number = 5
-    if _add_compact_follow_up(
-        doc,
-        f"{next_number}. Cross-Chapter Alignment",
-        review.get("alignment_results") or [],
-        4,
-    ):
-        next_number += 1
-
-    if _add_compact_follow_up(
-        doc,
-        f"{next_number}. Response to Earlier Supervisor Comments",
-        review.get("revision_results") or [],
-        4,
-    ):
-        next_number += 1
-
-    doc.add_heading(f"{next_number}. Supervisor’s Recommendation", level=1)
-    final_guidance = _compact_sentence(
-        summary.get("readiness_meaning", ""),
-        420,
-    )
-    if not final_guidance:
-        final_guidance = (
-            "Address the corrections summarised above and the detailed comments "
-            "in the annotated document before resubmission."
-        )
-    doc.add_paragraph(final_guidance)
-
-    priority_actions = review.get("priority_actions") or []
-    immediate = []
-    seen = set()
-    for action in priority_actions:
-        text = _compact_sentence(action.get("action", ""), 260)
-        signature = _normalised(text)
-        if not text or not signature or signature in seen:
-            continue
-        seen.add(signature)
-        immediate.append(text)
-        if len(immediate) >= 5:
-            break
-
-    if immediate:
-        lead = doc.add_paragraph()
-        lead.paragraph_format.space_after = Pt(2)
-        lead.add_run("Immediate revision priorities:").bold = True
-        for index, action in enumerate(immediate, start=1):
-            p = doc.add_paragraph()
-            p.paragraph_format.left_indent = Inches(0.24)
-            p.paragraph_format.first_line_indent = Inches(-0.18)
-            p.paragraph_format.space_after = Pt(2)
-            p.add_run(f"{index}. ").bold = True
-            p.add_run(action)
+    doc.add_heading(f"{section_number}. Professional Recommendation", level=1)
+    doc.add_paragraph(f"{recommendation.get('decision', summary.get('readiness_label', 'Review completed'))}. {recommendation.get('meaning', summary.get('readiness_meaning', ''))}")
+    closing = doc.add_paragraph()
+    closing.add_run("Next action: ").bold = True
+    closing.add_run("Resolve Priority 1 matters first, verify all analytical findings against original evidence, complete Priority 2 scholarly revisions, and then address Priority 3 presentation issues before resubmission.")
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("AI Professor | Supervisor summary review")
+    footer_run = footer.add_run(f"AI Professor | {profile.get('role', 'Professional academic reviewer')}")
     footer_run.italic = True
     footer_run.font.size = Pt(7.5)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
@@ -1021,4 +1021,3 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
-

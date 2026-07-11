@@ -55,9 +55,9 @@ def _normalise_effort(value: str, default: str = "high") -> str:
 class HybridAIConfig:
     """Academic-review routing configuration.
 
-    The fast chapter reviewer uses GPT-5.4 mini. Factual verification,
+    The fast chapter reviewer uses GPT-5.6 Terra. Factual verification,
     cross-chapter judgement, advanced research methods/results review and
-    external examination use GPT-5.4. Review depth controls breadth and detail,
+    external examination use GPT-5.6 Terra. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
     VProfessor v1.9.9.10 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
@@ -215,15 +215,15 @@ class HybridAIConfig:
     deepseek_flash_input_price: float = 0.14
     deepseek_flash_cached_input_price: float = 0.0028
     deepseek_flash_output_price: float = 0.28
-    openai_mini_model: str = "gpt-5.4-mini"
-    openai_advanced_model: str = "gpt-5.4"
+    openai_mini_model: str = "gpt-5.6-terra"
+    openai_advanced_model: str = "gpt-5.6-terra"
     openai_mini_reasoning_effort: str = "high"
     openai_advanced_reasoning_effort: str = "high"
     mini_max_output_tokens: int = 7500
     review_max_output_tokens: int = 9000
-    openai_mini_input_price: float = 0.75
-    openai_mini_cached_input_price: float = 0.075
-    openai_mini_output_price: float = 4.50
+    openai_mini_input_price: float = 2.50
+    openai_mini_cached_input_price: float = 0.25
+    openai_mini_output_price: float = 15.00
     openai_advanced_input_price: float = 2.50
     openai_advanced_cached_input_price: float = 0.25
     openai_advanced_output_price: float = 15.00
@@ -257,10 +257,10 @@ class HybridAIConfig:
         # OPENAI_REVIEW_MODEL setting is intentionally ignored so a stale
         # o3-mini value cannot silently override the upgraded workflow.
         chapter_model = os.getenv(
-            "OPENAI_CHAPTER_MODEL", "gpt-5.4-mini"
+            "OPENAI_CHAPTER_MODEL", "gpt-5.6-terra"
         ).strip()
         expert_model = os.getenv(
-            "OPENAI_EXPERT_MODEL", "gpt-5.4"
+            "OPENAI_EXPERT_MODEL", "gpt-5.6-terra"
         ).strip()
         audit_model = os.getenv(
             "OPENAI_FINAL_AUDIT_MODEL", expert_model
@@ -311,15 +311,15 @@ class HybridAIConfig:
         advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
 
         chapter_input_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 0.75
+            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 2.50
         )
         chapter_cached_price = _env_float_alias(
             "PRICE_OPENAI_CHAPTER_CACHED_INPUT",
             "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-            0.075,
+            0.25,
         )
         chapter_output_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 4.50
+            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 15.00
         )
         expert_input_price = _env_float(
             "PRICE_OPENAI_EXPERT_INPUT", 2.50
@@ -510,7 +510,7 @@ class HybridAIConfig:
                 "VPROF_DEVELOPMENTAL_COMMENTS", True
             ),
             comment_depth_floor_enabled=_env_bool(
-                "VPROF_COMMENT_DEPTH_FLOOR_ENABLED", True
+                "VPROF_COMMENT_DEPTH_FLOOR_ENABLED", False
             ),
             standard_non_research_min_findings=_env_int(
                 "VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS", 14, 0
@@ -561,8 +561,8 @@ class HybridAIConfig:
             deepseek_fast_model=deepseek_fast_model,
             deepseek_quality_model=deepseek_quality_model,
             openai_fast_model=os.getenv(
-                "OPENAI_FAST_MODEL", "gpt-5.4-nano"
-            ).strip() or "gpt-5.4-nano",
+                "OPENAI_FAST_MODEL", "gpt-5.6-terra"
+            ).strip() or "gpt-5.6-terra",
 
             combined_app_pipeline_enabled=combined_pipeline_enabled,
             openai_cleaning_model=cleaning_model,
@@ -570,15 +570,15 @@ class HybridAIConfig:
             openai_section_analysis_fallback_model=section_fallback_model,
             openai_final_synthesis_model=final_synthesis_model,
             openai_final_synthesis_fallback_model=final_synthesis_fallback_model,
-            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 0.10),
-            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.01),
-            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 0.40),
-            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 1.00),
-            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.10),
-            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 6.00),
-            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 5.00),
-            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.50),
-            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 30.00),
+            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 2.50),
+            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.25),
+            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 15.00),
+            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 2.50),
+            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.25),
+            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 15.00),
+            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 2.50),
+            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.25),
+            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 15.00),
 
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
@@ -608,13 +608,13 @@ class HybridAIConfig:
             openai_expert_cached_input_price=expert_cached_price,
             openai_expert_output_price=expert_output_price,
             openai_fast_input_price=_env_float(
-                "PRICE_OPENAI_FAST_INPUT", 0.20
+                "PRICE_OPENAI_FAST_INPUT", 2.50
             ),
             openai_fast_cached_input_price=_env_float(
-                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.02
+                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.25
             ),
             openai_fast_output_price=_env_float(
-                "PRICE_OPENAI_FAST_OUTPUT", 1.25
+                "PRICE_OPENAI_FAST_OUTPUT", 15.00
             ),
 
             deepseek_extract_model=deepseek_fast_model,
@@ -704,8 +704,24 @@ class HybridAIConfig:
         return self.openai_expert_output_price
 
     def openai_prices_for_model(self, model: str) -> Tuple[float, float, float]:
-        """Return input, cached-input and output prices for an OpenAI model."""
+        """Return input, cached-input and output prices for an OpenAI model.
+
+        GPT-5.6 uses durable capability-tier names. Model-specific prices take
+        precedence over role prices so a Sol override is never costed as Terra.
+        """
         value = (model or "").strip().lower()
+        if value.startswith("gpt-5.6-sol") or value == "gpt-5.6":
+            return (
+                _env_float("PRICE_OPENAI_SOL_INPUT", 5.00),
+                _env_float("PRICE_OPENAI_SOL_CACHED_INPUT", 0.50),
+                _env_float("PRICE_OPENAI_SOL_OUTPUT", 30.00),
+            )
+        if value.startswith("gpt-5.6-terra"):
+            return (
+                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.50),
+                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.25),
+                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 15.00),
+            )
         if value == self.openai_fast_model.lower():
             return (
                 self.openai_fast_input_price,

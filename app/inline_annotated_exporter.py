@@ -35,7 +35,7 @@ from .annotated_exporter import (
 from .comment_quality import public_text, sanitise_finding_rows
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.18-inline-articleready-safe-anchors"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.19-professional-scope-ledger"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -180,7 +180,33 @@ def build_inline_annotated_docx(
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
-    next_reference_number = 1
+    existing_numbers = []
+    for candidate in review_rows:
+        try:
+            number = int(candidate.get("finding_number"))
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            existing_numbers.append(number)
+    next_reference_number = max(existing_numbers, default=0) + 1
+    used_reference_numbers = set()
+
+    def reference_number_for(row: Dict[str, Any]) -> int:
+        nonlocal next_reference_number
+        try:
+            preferred = int(row.get("finding_number"))
+        except (TypeError, ValueError):
+            preferred = 0
+        if preferred > 0 and preferred not in used_reference_numbers:
+            used_reference_numbers.add(preferred)
+            return preferred
+        while next_reference_number in used_reference_numbers:
+            next_reference_number += 1
+        value = next_reference_number
+        used_reference_numbers.add(value)
+        next_reference_number += 1
+        return value
+
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
@@ -189,16 +215,14 @@ def build_inline_annotated_docx(
         if _is_missing_section_finding(row):
             raw_missing_comment = _row_comment(row)
             if raw_missing_comment:
-                reference_number = next_reference_number
-                next_reference_number += 1
+                reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
             continue
         raw_comment = _row_comment(row)
         if not raw_comment:
             continue
-        reference_number = next_reference_number
-        next_reference_number += 1
+        reference_number = reference_number_for(row)
         numbered_rows.append((reference_number, row, raw_comment))
         comment = _with_comment_reference(reference_number, raw_comment)
         evidence = [

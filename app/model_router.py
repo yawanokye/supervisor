@@ -365,8 +365,8 @@ class CostAwareAIProvider:
             else:
                 # Keep the ordinary review within DeepSeek when Flash has a
                 # transient/schema failure. If the provider is unavailable,
-                # use GPT-5.4 nano rather than silently moving the whole
-                # chapter to GPT-5.4 mini.
+                # use GPT-5.6 Terra rather than silently moving the whole
+                # chapter to GPT-5.6 Terra.
                 primary, fallback, escalation = self._normalise_targets(
                     ds_fast, oa_fast, oa_chapter
                 )
@@ -432,7 +432,7 @@ class CostAwareAIProvider:
 
         if stage_value is ReviewStage.RESEARCH_INTENSIVE_AUDIT:
             # One bounded expert audit gives Research Master's/MPhil work the
-            # conceptual and methodological depth that GPT-5.4 mini alone did
+            # conceptual and methodological depth that GPT-5.6 Terra alone did
             # not consistently provide. Economy mode may remain DeepSeek-led.
             if profile is RoutingProfile.ECONOMY:
                 primary, fallback, escalation = self._normalise_targets(

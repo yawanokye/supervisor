@@ -26,7 +26,7 @@ from .comment_quality import (
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.18-articleready-safe-anchors"
+ANNOTATION_EXPORT_VERSION = "1.9.9.19-professional-scope-ledger"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -144,9 +144,9 @@ def _missing_section_bottom_comment(row: Dict[str, Any]) -> str:
         else:
             action = f"Add a clearly labelled {section_name} section at the appropriate point in the chapter and ensure the content matches the programme format."
     if not example and normalised(section_name) == "definition of terms":
-        example = "For example, define internal controls, fraud detection, fraud prevention, fraud incidence, pressure, opportunity and rationalisation in terms that match the instrument and analysis plan."
+        example = "For example, define each central construct using the dimensions and indicators applied in the instrument, coding framework or analysis plan."
     elif not example and normalised(section_name) == "references":
-        example = "For example, check entries such as Alnaa and Matey, Meduri and Amanamah, remove duplicate citation clusters and provide complete author, year, title, source and DOI or URL details where required."
+        example = "For example, remove duplicate citation clusters and provide complete author, year, title, source and DOI or URL details for every source retained."
     parts = [f"Missing section: {section_name}.", comment.rstrip(" .") + ".", _normalise_action_start(action).rstrip(" .") + "."]
     if example:
         example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I).strip(" .")
@@ -438,7 +438,7 @@ def _best_span(text: str, matched_terms: Iterable[str], problematic_quote: str =
     if quote:
         exact_start = text.find(quote)
         if exact_start >= 0:
-            return _expand_to_safe_text_span(paragraph_text, exact_start, exact_start + len(quote))
+            return _expand_to_safe_text_span(text, exact_start, exact_start + len(quote))
         normalised_quote = normalised(quote)
         for start, end, sentence in _sentence_spans(text):
             if normalised_quote and normalised_quote in normalised(sentence):
@@ -1719,45 +1719,52 @@ def _insertion_anchor_for_unanchored_row(
     row: Dict[str, Any],
     source_map: Dict[int, Dict[str, Any]],
 ) -> int:
-    """Return the nearest useful passage when the finding concerns absent material.
+    """Locate a neutral insertion point for genuinely absent material.
 
-    A missing section cannot be anchored to text that does not exist. In that
-    case the comment is placed on the passage immediately around the expected
-    insertion point and the comment text tells the student where to add the
-    material. This is more useful than placing the comment on a chapter or
-    section heading.
+    The locator uses structural headings and wording from the current document
+    only. It must never import names, variables or organisations from a prior
+    submission. Missing sections remain listed at the chapter bottom.
     """
     haystack = normalised(" ".join([
         row.get("issue_title", ""), row.get("item", ""), row.get("section", ""),
         row.get("section_reference", ""), row.get("required_action", ""),
         row.get("comment", ""), row.get("assessment", ""),
     ]))
+    structural_patterns = {
+        "definition": [r"definition\s+of\s+(?:key\s+)?(?:terms|concepts)", r"operational\s+definition"],
+        "references": [r"^\s*references\s*$", r"^\s*bibliography\s*$"],
+        "gap": [r"research\s+gap", r"statement\s+of\s+the\s+problem", r"problem\s+statement"],
+        "objective": [r"research\s+objectives?", r"specific\s+objectives?", r"general\s+objective"],
+        "question": [r"research\s+questions?"],
+        "scope": [r"scope\s+of\s+the\s+study", r"delimitations?\s+of\s+the\s+study"],
+        "significance": [r"significance\s+of\s+the\s+study", r"contribution\s+to\s+knowledge"],
+        "limitation": [r"limitations?\s+of\s+the\s+study"],
+        "method": [r"research\s+methodology", r"research\s+methods", r"data\s+analysis"],
+        "results": [r"results", r"findings", r"discussion"],
+    }
     if "definition of terms" in haystack or "operational definition" in haystack:
-        return _first_paragraph_matching(source_map, [
-            r"Assinman\s+Rural\s+Bank\s+PLC\s+as\s+the\s+case\s+study",
-            r"scope\s+of\s+the\s+study",
-            r"Research\s+Gap\s*:",
-        ])
+        anchor = _first_paragraph_matching(source_map, structural_patterns["scope"] + structural_patterns["significance"])
+        return anchor or _first_paragraph_matching(source_map, structural_patterns["definition"])
     if "reference list" in haystack or "references" in haystack or "bibliography" in haystack:
-        return _first_paragraph_matching(source_map, [
-            r"\([^)]*(?:19|20)\d{2}[^)]*\)",
-        ])
+        return _first_paragraph_matching(source_map, structural_patterns["references"])
     if "research gap" in haystack:
-        return _first_paragraph_matching(source_map, [r"Research\s+Gap\s*:", r"Despite\s+the\s+implementation", r"However,\s+there\s+is\s+a\s+need"])
+        return _first_paragraph_matching(source_map, structural_patterns["gap"])
     if "objective" in haystack:
-        return _first_paragraph_matching(source_map, [r"^\s*i\.\s+To\s+", r"primary\s+objective\s+of\s+this\s+study", r"Research\s+Objectives"])
+        return _first_paragraph_matching(source_map, structural_patterns["objective"])
     if "research question" in haystack:
-        return _first_paragraph_matching(source_map, [r"Which\s+factors", r"What\s+specific", r"rate\s+of\s+successful"])
+        return _first_paragraph_matching(source_map, structural_patterns["question"])
     if "scope" in haystack or "delimitation" in haystack:
-        return _first_paragraph_matching(source_map, [r"Assinman\s+Rural\s+Bank\s+PLC\s+as\s+the\s+case\s+study", r"scope\s+of\s+the\s+study"])
+        return _first_paragraph_matching(source_map, structural_patterns["scope"])
     if "significance" in haystack or "contribution" in haystack:
-        return _first_paragraph_matching(source_map, [r"The\s+study\s+will\s+provide\s+valuable\s+insights", r"Research\s+Gap\s*:"])
+        return _first_paragraph_matching(source_map, structural_patterns["significance"])
     if "limitation" in haystack or "generalisation" in haystack or "generalization" in haystack:
-        return _first_paragraph_matching(source_map, [r"generalization\s+of\s+findings", r"information\s+and\s+data\s+adequacy"])
-    if "population" in haystack or "case setting" in haystack or "commercial banks" in haystack or "rural banks" in haystack:
-        return _first_paragraph_matching(source_map, [r"commercial\s+banks\s+in\s+Ghana", r"Rural\s+banks\s+in\s+Ghana", r"Assinman\s+Rural\s+Bank"])
+        return _first_paragraph_matching(source_map, structural_patterns["limitation"])
+    if any(term in haystack for term in ("method", "sampling", "instrument", "validity", "reliability")):
+        return _first_paragraph_matching(source_map, structural_patterns["method"])
+    if any(term in haystack for term in ("result", "analysis", "discussion", "statistical")):
+        return _first_paragraph_matching(source_map, structural_patterns["results"])
     if "citation" in haystack or "source attribution" in haystack:
-        return _first_paragraph_matching(source_map, [r"government\s*\(", r"\([^)]*(?:19|20)\d{2}[^)]*\)"])
+        return _first_paragraph_matching(source_map, [r"\([^)]*(?:19|20)\d{2}[^)]*\)"])
     return 0
 
 
@@ -1840,6 +1847,7 @@ def _add_specific_corrections_required(
         entries.append((number, text))
     if not entries:
         return
+    entries.sort(key=lambda item: item[0])
     for number, text in reversed(entries):
         note = _insert_blue_paragraph_after(anchor)
         run = note.add_run(f"{number}. {text}")
@@ -1883,7 +1891,32 @@ def _build_grouped_annotated_docx(
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
-    next_reference_number = 1
+    existing_numbers = []
+    for candidate in review_rows:
+        try:
+            number = int(candidate.get("finding_number"))
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            existing_numbers.append(number)
+    next_reference_number = max(existing_numbers, default=0) + 1
+    used_reference_numbers = set()
+
+    def reference_number_for(row: Dict[str, Any]) -> int:
+        nonlocal next_reference_number
+        try:
+            preferred = int(row.get("finding_number"))
+        except (TypeError, ValueError):
+            preferred = 0
+        if preferred > 0 and preferred not in used_reference_numbers:
+            used_reference_numbers.add(preferred)
+            return preferred
+        while next_reference_number in used_reference_numbers:
+            next_reference_number += 1
+        value = next_reference_number
+        used_reference_numbers.add(value)
+        next_reference_number += 1
+        return value
 
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -1893,16 +1926,14 @@ def _build_grouped_annotated_docx(
         if _is_missing_section_finding(row):
             raw_missing_comment = _missing_section_bottom_comment(row) or _comment_body(row)
             if raw_missing_comment:
-                reference_number = next_reference_number
-                next_reference_number += 1
+                reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
             continue
         raw_comment = _comment_body(row)
         if not raw_comment:
             continue
-        reference_number = next_reference_number
-        next_reference_number += 1
+        reference_number = reference_number_for(row)
         numbered_rows.append((reference_number, row, raw_comment))
         comment = _with_comment_reference(reference_number, raw_comment)
         evidence = [

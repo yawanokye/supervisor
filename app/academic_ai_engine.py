@@ -33,6 +33,12 @@ from .comment_quality import prepare_public_issues
 from .review_enrichment import enrich_finding_row
 from .thorough_review import thorough_review_deterministic_issues
 from .articleready_review_bridge import attach_articleready_quality_audit
+from .professional_review_pipeline import (
+    attach_professional_review_package,
+    professional_scope_contract,
+    professional_scope_profile,
+    specialist_role_for_chapter,
+)
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .ucc_section_contract import (
     missing_section_labels_in_output,
@@ -629,16 +635,16 @@ _EXPERT_SECTION_TERMS = (
 def _section_requires_expert_model(
     section: Dict[str, Any], academic_level: Any
 ) -> bool:
-    """Use GPT-5.4 for high-risk academic reasoning at research levels.
+    """Use GPT-5.6 Terra for high-risk academic reasoning at research levels.
 
     Bachelor's and non-research master's chapter drafting remains on the faster
-    GPT-5.4 mini model. Research master's and doctoral reviews escalate methods,
-    results, discussion, contribution and cross-chapter synthesis to GPT-5.4.
+    GPT-5.6 Terra model. Research master's and doctoral reviews escalate methods,
+    results, discussion, contribution and cross-chapter synthesis to GPT-5.6 Terra.
     """
     if not _is_research_intensive_level(academic_level):
         return False
     # Doctoral work is high-stakes throughout, so every substantive section is
-    # reviewed by GPT-5.4. Research master's work escalates the academically
+    # reviewed by GPT-5.6 Terra. Research master's work escalates the academically
     # decisive sections while routine descriptive material remains on the mini
     # model for speed.
     if _is_doctoral_level(academic_level):
@@ -987,6 +993,9 @@ def _batch_prompt(
             "part": section.get("part", 1),
             "cross_chapter_audit": bool(section.get("alignment_audit")),
             "revision_audit": bool(section.get("revision_audit")),
+            "specialist_reviewer_role": specialist_role_for_chapter(
+                section.get("chapter_number"), section.get("heading", "")
+            ),
             "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
             "extra_context": section.get("extra_context") or {},
@@ -1079,6 +1088,8 @@ def _batch_prompt(
             "depth_expectation": benchmark["review_intensity_expectation"],
             "review_intensity": benchmark["review_intensity"],
             "degree_specific_review_contract": degree_contract,
+            "professional_reviewer_profile": professional_scope_profile(summary),
+            "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -1143,7 +1154,8 @@ def _batch_prompt(
             "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. "
-            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant."
+            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant. "
+            "Apply the professional_scope_contract exactly: a single chapter receives a bounded chapter judgement, combined chapters receive separate chapter judgements plus an integration audit, and a complete thesis receives examiner-style chapter judgements, whole-thesis alignment, methods-results accuracy evaluation, contribution assessment and a defensible recommendation."
         ),
         "sections": sections,
     }
@@ -1260,6 +1272,8 @@ def _verification_prompt(
             "review_benchmark": benchmark["degree_standard"],
             "depth_expectation": benchmark["review_intensity_expectation"],
             "degree_specific_review_contract": degree_contract,
+            "professional_reviewer_profile": professional_scope_profile(summary),
+            "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -1278,6 +1292,7 @@ def _verification_prompt(
             "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
             "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
             "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
+            "Verify that the proposed review follows the professional_scope_contract. Single-chapter comments must remain bounded, combined-chapter reviews must assess every included chapter and their alignment, and complete-thesis reviews must support an examiner-style synthesis. "
             "Do not invent issues to reach a number, but do not compress distinct material defects into a single vague comment."
         ),
     }
@@ -2555,11 +2570,9 @@ async def enrich_review_with_academic_ai(
         if valid:
             raw_issues.append(valid)
 
-    # v1.9.9.16: thorough full-thesis statistical and methods-results accuracy layer.
-    # This preserves the style of a strong PhD supervisor review by adding
-    # evidence-anchored checks for PROCESS moderation, R²/F consistency,
-    # duplicated hypothesis numbering, model-language drift and incomplete
-    # results/discussion markers before public cleaning and DOCX export.
+    # Professional methods-results-discussion accuracy layer. It detects the
+    # actual research route and applies only evidence-supported, method-specific
+    # checks before public cleaning and DOCX export.
     for thorough_issue in thorough_review_deterministic_issues(
         current,
         academic_level=academic_level,
@@ -3047,6 +3060,7 @@ async def enrich_review_with_academic_ai(
             + "The review reports the most material issues and provides context-aware guidance where revision is required."
         ).strip()
     review["priority_actions"] = priority
+    review = attach_professional_review_package(review)
     review = attach_articleready_quality_audit(review)
     review["ai_review"] = {
         "review_depth": depth,

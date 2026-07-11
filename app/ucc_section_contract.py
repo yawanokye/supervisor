@@ -255,7 +255,10 @@ def present_relevant_sections(paragraphs: Sequence[Dict[str, Any]]) -> Set[str]:
 
 
 def ucc_comment_floor(paragraphs: Sequence[Dict[str, Any]], academic_level: Any, depth: str) -> int:
-    if not enabled():
+    # Professional review is evidence- and coverage-driven, not count-driven.
+    # The legacy floor can be re-enabled explicitly for old deployments, but it
+    # is disabled by default because quotas encourage repetitive comments.
+    if not enabled() or os.getenv("VPROF_FINDING_QUOTAS_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
         return 0
     degree = _degree_key(academic_level)
     depth = normalised(str(depth or "standard")) or "standard"
@@ -759,37 +762,6 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
             severity="moderate",
         ))
 
-    if ("commercial bank" in full_low and "rural bank" in full_low) or ("assinman" in full_low and "commercial bank" in full_low):
-        anchor = _first_substantive(problem) or _first_substantive(background) or _first_chapter_anchor(paragraphs, 1)
-        issues.append(_issue(
-            code="CH1-POPULATION-SCOPE-DRIFT",
-            section=source_section(anchor) if anchor else "Chapter One",
-            title="The study population and case setting are not consistently stated",
-            assessment="The chapter alternates between commercial banks, rural banks and the Assinman Rural Bank PLC case setting without consistently explaining the population boundary.",
-            action="State the target population and case setting consistently across the title, background, problem statement, objectives, questions, scope and significance.",
-            anchor=anchor,
-            category="cross_section_coherence",
-            degree=degree,
-            severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
-        ))
-
-    fraud_terms = any(term in full_low for term in ("fraud triangle", "pressure", "opportunity", "rationalization", "rationalisation"))
-    if fraud_terms and degree in {"research_masters", "professional_doctorate", "phd"}:
-        bg_prob = normalised(bg + " " + prob)
-        if "fraud triangle" not in bg_prob and "pressure" not in bg_prob and "opportunity" not in bg_prob:
-            anchor = _first_substantive(background) or _first_substantive(problem) or _first_chapter_anchor(paragraphs, 1)
-            issues.append(_issue(
-                code="CH1-THEORY-NOT-INTEGRATED",
-                section=source_section(anchor) if anchor else "Chapter One",
-                title="The theoretical basis is mentioned in the objectives but not integrated into the chapter argument",
-                assessment="Fraud-triangle factors appear in the objectives or questions, but the background and problem statement do not yet explain how that theory frames the study.",
-                action="Introduce the relevant theory or conceptual framework in the background/problem discussion and explain how it supports the variables, objectives and expected analysis.",
-                anchor=anchor,
-                category="theoretical_grounding",
-                degree=degree,
-                severity="major",
-            ))
-
     if significance and "research gap" in normalised(sig):
         issues.append(_issue(
             code="CH1-GAP-MISPLACED-IN-SIGNIFICANCE",
@@ -803,7 +775,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
             severity="major",
         ))
 
-    if limitations and any(term in normalised(lim) for term in ("generalization", "generalisation")) and ("case study" in full_low or "assinman" in full_low):
+    if limitations and any(term in normalised(lim) for term in ("generalization", "generalisation")) and "case study" in full_low:
         issues.append(_issue(
             code="CH1-LIMITATION-GENERALISATION",
             section="Limitations of the Study",
