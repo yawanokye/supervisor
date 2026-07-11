@@ -41,6 +41,8 @@ def _degree_key(level: Any) -> str:
 
 
 def _degree_expectation_phrase(degree: str) -> str:
+    if os.getenv("VPROF_INCLUDE_DEGREE_LABEL_IN_COMMENTS", "false").strip().lower() in {"0", "false", "no", "off"}:
+        return ""
     return {
         "bachelors": "At Bachelor’s level, this weakness matters because the work must show basic research coherence, accurate presentation and correct application of method.",
         "non_research_masters": "At Non-Research Master’s level, this weakness matters because the work must show applied problem clarity, credible evidence and defensible professional recommendations.",
@@ -565,6 +567,11 @@ def hard_chapter_one_supervisory_issues(
         if not row.get("chapter_number")
         and int(row.get("paragraph") or 0) < first_chapter_paragraph
         and len(clean_text(row.get("text", "")).split()) >= 4
+        and not re.search(
+            r"^(?:university|college|school|faculty|department)\b|^(?:by|candidate|supervisor|co-supervisor)\b",
+            normalised(clean_text(row.get("text", ""))),
+            flags=re.I,
+        )
     ]
 
     bg_text = _section_plain(background)
@@ -711,6 +718,19 @@ def hard_chapter_one_supervisory_issues(
                 category="objectives_questions_hypotheses",
                 severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
             ))
+    if objectives and not questions:
+        issues.append(_issue(
+            code="B3.3-MISSING-QUESTIONS",
+            section="Research Objectives",
+            title="Research questions are missing although research objectives are stated",
+            assessment="The chapter states research objectives but does not provide corresponding research questions or explain why the study is hypothesis-only.",
+            consequence="The reader cannot see how each objective will be answered and how the later analysis should be organised.",
+            action="Add one clear research question for each descriptive objective and align inferential objectives with the relevant hypotheses. Where the design is intentionally hypothesis-only, explain that structure explicitly.",
+            anchor=_first_substantive(objectives),
+            category="objectives_questions_hypotheses",
+            severity="major",
+        ))
+
     if objectives and questions:
         combined = normalised(objectives_text + "\n" + questions_text)
         has_relational = any(term in combined for term in ("relationship", "impact", "effect", "influence", "predict"))

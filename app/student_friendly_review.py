@@ -301,7 +301,7 @@ def _missing_section_rewrite(issue: Dict[str, Any], academic_level: Any = None) 
     output["item"] = output["issue_title"]
     output["assessment"] = f"{display_label} is missing from {chapter}. This section is required under UCC thesis guidelines and the UCC thesis structure. {purpose}"
     output["comment"] = output["assessment"]
-    output["academic_consequence"] = f"Without this section, the reader cannot fully assess the structure and boundaries of the study at {academic_level_label(academic_level)}."
+    output["academic_consequence"] = "Without this section, the reader cannot fully assess the structure, boundaries or interpretation of the study."
     output["required_action"] = f"Add a clearly labelled {display_label} section. {placement}"
     output["illustrative_guidance"] = _missing_section_example(display_label, output)
     output["missing_section_label"] = display_label
@@ -309,28 +309,31 @@ def _missing_section_rewrite(issue: Dict[str, Any], academic_level: Any = None) 
 
 
 def _specific_level_expectation(issue: Dict[str, Any], academic_level: Any) -> str:
-    level = academic_level_label(academic_level)
-    if level == "the applicable academic level":
-        return ""
+    """Return a natural quality expectation without repeating the degree label.
+
+    The academic benchmark is applied by the review prompts and report. Native
+    comments should normally explain the concrete defect rather than repeat
+    "At PhD level" or "At MPhil level" after every finding.
+    """
     section_text = normalised(" ".join(_clean(issue.get(field)) for field in (
         "section", "issue_title", "item", "assessment", "comment"
     )))
     category = normalised(_clean(issue.get("category")))
     if any(term in section_text for term in ("significance", "contribution", "implication")):
-        return f"At {level}, the study should state a clear and defensible contribution that is proportionate to the evidence and design."
+        return "The claimed contribution must be explicit and proportionate to the evidence and design."
     if any(term in section_text for term in ("discussion", "interpretation")):
-        return f"At {level}, the discussion should explain the result, integrate theory and previous studies, and respect the limits of the design."
+        return "The discussion should explain the result, integrate relevant theory and evidence, and respect the limits of the design."
     if any(term in section_text for term in ("statistic", "result", "regression", "anova", "sem", "moderation", "mediation", "table", "coefficient")) or category in {"statistical accuracy", "analysis appropriateness", "results and interpretation"}:
-        return f"At {level}, every conclusion should be traceable to the correct table, estimate, uncertainty measure, diagnostic evidence and decision rule."
+        return "Each conclusion must agree with the relevant table, estimate, uncertainty measure, diagnostic evidence and decision rule."
     if any(term in section_text for term in ("method", "design", "sampling", "instrument", "validity", "reliability", "ethic")) or category == "methodological rigour":
-        return f"At {level}, the methodological choice should be justified, reproducible and clearly linked to the relevant objective or hypothesis."
+        return "The method should be justified and documented well enough for another researcher to understand and reproduce the procedure."
     if any(term in section_text for term in ("literature", "empirical review", "theory", "conceptual", "gap")) or category in {"theoretical grounding", "critical analysis"}:
-        return f"At {level}, the review should compare evidence, evaluate differences in method and context, and show how the synthesis supports the study's gap or framework."
+        return "The literature should be used at the depth required by the chapter and should support the study's argument, gap and framework."
     if any(term in section_text for term in ("objective", "question", "hypoth", "purpose", "problem")):
-        return f"At {level}, the problem, purpose, objectives, questions or hypotheses should form one clear and traceable research logic."
+        return "The problem, purpose, objectives, questions and hypotheses should form one coherent research logic."
     if any(term in section_text for term in ("grammar", "language", "spelling", "punctuation", "citation", "reference")):
-        return f"At {level}, the presentation should be accurate, consistent and professionally edited so that language does not obscure the academic argument."
-    return f"At {level}, the point should be stated precisely and supported well enough for an examiner to follow the study's reasoning."
+        return "The presentation should be accurate and consistent so that language does not obscure the academic argument."
+    return "The point should be stated precisely and supported sufficiently for the reader to follow the study's reasoning."
 
 
 def _remove_generic_level_boilerplate(text: str) -> str:
@@ -343,6 +346,17 @@ def _remove_generic_level_boilerplate(text: str) -> str:
     )
     for pattern in patterns:
         text = re.sub(pattern, "", text, flags=re.I)
+    text = re.sub(
+        r"(?:^|(?<=[.!?])\s+)At\s+(?:PhD|MPhil|Professional Doctorate|professional doctorate|Master(?:'s|s)|non-research Master(?:'s|s)|Bachelor(?:'s|s))\s+level,\s*[^.!?]+[.!?]",
+        " ", text, flags=re.I,
+    )
+    text = re.sub(r"\b(?:at|for) (?:PhD|MPhil|Professional Doctorate|professional doctorate|Master(?:'s|s)|non-research Master(?:'s|s)|Bachelor(?:'s|s)) level\b", "", text, flags=re.I)
+    text = re.sub(r"\bshould be traceable to\b", "should be clearly linked to", text, flags=re.I)
+    text = re.sub(r"\bclear and traceable research logic\b", "clear and coherent research logic", text, flags=re.I)
+    text = re.sub(r"\bmethodological traceability\b", "method clarity and reproducibility", text, flags=re.I)
+    text = re.sub(r"\btraceability of (?:the )?methods?\b", "clarity and reproducibility of the methods", text, flags=re.I)
+    text = re.sub(r"\btraceability\b", "clear connection", text, flags=re.I)
+    text = re.sub(r"\btraceable\b", "clearly supported", text, flags=re.I)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")
 
 
@@ -402,6 +416,12 @@ def _generated_example(issue: Dict[str, Any]) -> str:
 
     if any(term in text for term in ("definition of terms", "definition of key concepts", "operational definition")):
         return f"define {joined} exactly as they are measured or analysed in the study" if joined else "define the main constructs exactly as they are measured or analysed in the study"
+    if any(term in text for term in ("outer loading", "factor loading", "composite reliability", "cronbach", "rho a", "average variance extracted", "ave", "htmt", "fornell", "measurement model", "construct reliability", "construct validity")):
+        return "report the relevant loading, reliability or validity statistic, state the decision threshold used, and explain whether the construct meets that criterion using values from the same measurement-model output"
+    if any(term in text for term in ("result", "statistic", "regression", "anova", "sem", "moderation", "mediation", "coefficient", "p value", "r squared")):
+        if "interpret" in text or "explain the coefficient" in text:
+            return "state the direction and size of the coefficient, report its uncertainty and significance from the same model output, and explain what the result means for the relevant objective"
+        return "report the estimate, standard error, test statistic, degrees of freedom where applicable, p-value, confidence interval and relevant model diagnostic from the same analysis output"
     if any(term in text for term in ("objective", "research question", "hypoth", "purpose", "alignment")):
         if quote:
             return f"revise the wording beginning “{quote[:120]}” and use the same constructs in the matching objective, question or hypothesis, analysis and reported result"
@@ -417,8 +437,6 @@ def _generated_example(issue: Dict[str, Any]) -> str:
         if quote:
             return f"after the paragraph beginning “{quote[:100]}”, add separate statements of the theoretical, empirical, practical and policy contribution supported by the study"
         return "separate the theoretical, empirical, practical and policy contribution supported by the study"
-    if any(term in text for term in ("result", "statistic", "regression", "anova", "sem", "moderation", "mediation", "coefficient", "p value", "r squared")):
-        return "report the estimate, standard error, test statistic, degrees of freedom where applicable, p-value, confidence interval and relevant model diagnostic from the same analysis output"
     if any(term in text for term in ("discussion", "interpretation")):
         return f"explain what the finding about {joined} means, compare it with the relevant theory and prior evidence, and state the limit of the conclusion" if joined else "explain what the finding means, compare it with theory and prior evidence, and state the limit of the conclusion"
     if any(term in text for term in ("citation", "reference", "source attribution")):
@@ -454,12 +472,15 @@ def make_issue_student_friendly(issue: Dict[str, Any], academic_level: Any = Non
     for field in ("assessment", "comment", "academic_consequence"):
         output[field] = _remove_generic_level_boilerplate(output.get(field, ""))
 
-    # Add one issue-specific level expectation, not the same boilerplate in every comment.
-    expectation = _specific_level_expectation(output, academic_level)
-    assessment_field = "comment" if _clean(output.get("comment")) else "assessment"
-    current = _clean(output.get(assessment_field))
-    if expectation and not re.search(r"\bAt (?:PhD|MPhil|professional doctorate|Master's|non-research Master's|Bachelor's) level\b", current, flags=re.I):
-        output[assessment_field] = (current.rstrip(" .") + ". " + expectation).strip() if current else expectation
+    # The degree standard is applied silently. Add a quality expectation only
+    # when explicitly requested and only where the existing assessment is too
+    # short to explain why the issue matters.
+    if _env_enabled("VPROF_ADD_QUALITY_EXPECTATION_TO_COMMENTS", False):
+        expectation = _specific_level_expectation(output, academic_level)
+        assessment_field = "comment" if _clean(output.get("comment")) else "assessment"
+        current = _clean(output.get(assessment_field))
+        if expectation and len(current.split()) < 24:
+            output[assessment_field] = (current.rstrip(" .") + ". " + expectation).strip() if current else expectation
 
     example = _clean(output.get("illustrative_guidance"))
     if not _example_relevant(example, output):

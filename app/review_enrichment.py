@@ -43,18 +43,37 @@ def _visible_citation(source: str) -> str:
 
 
 def _context_terms(row: Dict[str, Any], limit: int = 4) -> List[str]:
+    supplied = [clean_text(value) for value in (row.get("study_terms") or []) if clean_text(value)]
+    if supplied:
+        return supplied[:limit]
     source = _source_text(row)
     if not source:
         return []
-    # Prefer repeated, current-study noun-like terms. This deliberately avoids
-    # a fixed example bank, which previously leaked an unrelated banking study.
-    tokens = re.findall(r"\b[A-Za-z][A-Za-z'-]{3,}\b", source)
-    counts = Counter(
-        token.lower() for token in tokens
+    # Prefer multi-word noun-like phrases so examples use actual constructs such
+    # as "classroom incivility" rather than generic words such as "education".
+    words = re.findall(r"\b[A-Za-z][A-Za-z'’-]{2,}\b", source)
+    counts = Counter()
+    for size in (3, 2):
+        for index in range(len(words) - size + 1):
+            phrase_words = words[index:index + size]
+            if any(word.lower() in _STOPWORDS for word in phrase_words):
+                continue
+            phrase = " ".join(phrase_words).lower()
+            counts[phrase] += 1
+    output: List[str] = []
+    for term, _count in counts.most_common(30):
+        if term in output:
+            continue
+        output.append(term)
+        if len(output) >= limit:
+            return output
+    # Fall back to single terms only when a safe multi-word construct cannot be
+    # extracted from the marked passage.
+    single_counts = Counter(
+        token.lower() for token in words
         if token.lower() not in _STOPWORDS and not token.isdigit()
     )
-    output: List[str] = []
-    for term, _count in counts.most_common(20):
+    for term, _count in single_counts.most_common(20):
         if term in output:
             continue
         output.append(term)
@@ -101,14 +120,19 @@ def context_specific_example(row: Dict[str, Any]) -> str:
     if any(term in text for term in ("problem statement", "research gap", "local evidence", "magnitude", "empirical evidence")):
         return "support the stated problem with a verified statistic, institutional record, policy report or peer-reviewed study from the actual study context, then explain what remains unresolved"
 
+    if any(term in text for term in ("r squared", "coefficient", "p value", "f statistic", "t statistic", "confidence interval", "statistical", "regression", "anova", "sem", "moderation", "mediation")):
+        if "interpret" in text or "explain the coefficient" in text:
+            return "state the direction and size of the coefficient, report its uncertainty and significance from the same model output, and explain what the result means for the relevant objective"
+        return "reproduce the coefficient or effect estimate, standard error, test statistic, degrees of freedom where applicable, p-value, confidence interval and model-fit information directly from the same original output"
+
+    if any(term in text for term in ("outer loading", "factor loading", "composite reliability", "cronbach", "rho a", "average variance extracted", "ave", "htmt", "fornell", "measurement model", "construct reliability", "construct validity")):
+        return "report the relevant loading, reliability or validity statistic, state the decision threshold used, and explain whether the construct meets that criterion using values from the same measurement-model output"
+
     if any(term in text for term in ("objective", "research question", "alignment", "purpose")):
         quote = clean_text(row.get("problematic_quote", ""))
         if quote:
             return f"revise the wording around “{quote[:120]}” so that one objective, one question or hypothesis, one analysis and one reported finding address the same relationship"
         return "map each objective to one research question or hypothesis, the data required, the analysis used, the corresponding result and the conclusion drawn"
-
-    if any(term in text for term in ("r squared", "coefficient", "p value", "f statistic", "t statistic", "confidence interval", "statistical", "regression", "anova", "sem", "moderation", "mediation")):
-        return "reproduce the coefficient or effect estimate, standard error, test statistic, degrees of freedom where applicable, p-value, confidence interval and model-fit information directly from the same original output"
 
     if any(term in text for term in ("qualitative", "theme", "coding", "quotation", "trustworthiness")):
         return "show how the code or category developed into the reported theme, support the interpretation with representative participant evidence, and explain any negative or divergent case"

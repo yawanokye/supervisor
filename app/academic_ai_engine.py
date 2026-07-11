@@ -127,7 +127,7 @@ CHAPTER_DIMENSIONS: Dict[int, List[str]] = {
         "summary of main findings by objective without repeating the analysis",
         "conclusions drawn from findings rather than restated results",
         "unexpected findings, contribution and implications",
-        "recommendations traceable to specific findings",
+        "recommendations clearly linked to specific findings",
         "responsible actors and realistic implementation where appropriate",
         "limitations and suggestions for further research",
         "absence of new evidence and consistency with the research problem",
@@ -200,7 +200,7 @@ DEGREE_LEVEL_PROFILES: Dict[str, Dict[str, Any]] = {
         "benchmark": (
             "Require research-intensive Master’s depth: critical synthesis rather than description, defensible theoretical and conceptual grounding, "
             "a clearly evidenced research problem and gap, explicit methodological justification, construct and terminology precision, complete "
-            "purpose-objective-question-hypothesis-method-result alignment, source traceability, and a clear empirical, theoretical, methodological "
+            "purpose-objective-question-hypothesis-method-result alignment, citation and source support, and a clear empirical, theoretical, methodological "
             "or contextual contribution appropriate to MPhil work."
         ),
         "orientation": "research-intensive-master's",
@@ -402,7 +402,7 @@ def _degree_specific_review_contract(
         "Evaluate every detected section and subsection using direct evidence from the study or work under review.",
         "Distinguish a missing element from a present but weakly developed element.",
         "Consolidate recurring proofreading defects, but do not merge distinct conceptual, alignment, citation or methodological problems.",
-        "Check factual support, source traceability, internal consistency and the limits of inference at the actual academic level.",
+        "Check factual support, citation and reference consistency, internal consistency and the limits of inference appropriate to the programme. Apply the programme standard silently rather than repeating the degree label in comments.",
     ]
 
     if key == "bachelors":
@@ -440,7 +440,7 @@ def _degree_specific_review_contract(
             "one-to-one alignment among the title, problem, purpose, objectives, questions, hypotheses where applicable, methods, results, conclusions and recommendations",
             "compatibility between the research design and words such as effect, impact, influence, determinant, relationship and association",
             "methodological defensibility, operationalisation, measurement validity, reproducibility, assumptions and limitations appropriate to the stated approach",
-            "citation-reference correspondence, source traceability, unsupported empirical claims, author-year consistency and source quality",
+            "citation-reference correspondence, citation and source support, unsupported empirical claims, author-year consistency and source quality",
             "a clear research contribution appropriate to a research Master's dissertation, without imposing doctoral originality",
         ]
         contribution = "Require a clear research contribution and critical scholarly judgement appropriate to MPhil work, but do not impose a PhD-level original contribution to knowledge."
@@ -1126,7 +1126,7 @@ def _batch_prompt(
             "the_guideline_strengthens_but_does_not_replace_the_existing_academic_review": True,
         },
         "instruction": (
-            "Review every supplied coverage unit at the actual academic level. Return exactly one review for every section_key. "
+            "Review every supplied coverage unit against the applicable programme standard, without repeating the programme label in routine comments. Return exactly one review for every section_key. "
             "For each coverage unit, assess every target_paragraph_id or target table row individually, use context_paragraph_ids only to understand continuity, and return all target IDs in assessed_paragraph_ids. Internally assign each target PASS, COMMENT, VERIFY SOURCE or RE-ANALYSE. Return no visible issue for PASS. "
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate passages. "
             "A target passage may have zero issues only after a substantive assessment. There is no predetermined number of comments: report every distinct material issue and do not invent issues to reach a count. "
@@ -1136,8 +1136,8 @@ def _batch_prompt(
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Write comments in direct student-facing language. Start with the specific defect, not a checklist label. For example, write “Definition of Terms is missing from Chapter One. This section is required under the UCC thesis structure...” rather than “Expected UCC thesis section is not evident.” Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
-            "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. "
-            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant. "
+            "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. Do not criticise a purpose statement, research question, objective or hypothesis merely because it is concise; assess precision, completeness and alignment. In Chapter One, review the background as a focused broad-to-specific argument. In Chapter Two, require deep critical synthesis across theory, context, methods, measures, findings, contradictions and limitations. "
+            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For research-intensive Master’s and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, citation and reference consistency and contribution wherever relevant. Do not repeat the programme level in routine comments. "
             "Apply the professional_scope_contract exactly: a single chapter receives a bounded chapter judgement, combined chapters receive separate chapter judgements plus an integration audit, and a complete thesis receives examiner-style chapter judgements, whole-thesis alignment, methods-results accuracy evaluation, contribution assessment and a defensible recommendation."
         ),
         "sections": sections,
@@ -1266,14 +1266,14 @@ def _verification_prompt(
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
-            "Independently verify the proposed issues at the actual academic level. Remove unsupported, repetitive or misplaced findings; "
+            "Independently verify the proposed issues against the applicable programme standard. Remove unsupported, repetitive or misplaced findings; "
             "correct severity and evidence; add important missed issues; and confirm that all sections received a substantive assessment. "
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
-            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the actual academic level and add material missed issues even when the primary review did not propose them. The number of findings must arise solely from the evidence, not from the degree label or a target count. In Chapter One this includes problem-gap evidence, "
-            "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
-            "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
+            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension against the applicable programme standard and add material missed issues even when the primary review did not propose them. Apply that standard silently rather than repeating the degree label in each finding. The number of findings must arise solely from the evidence, not from the degree label or a target count. In Chapter One this includes problem-gap evidence, "
+            "focused and evidence-led background progression, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
+            "definition quality, citation-reference correspondence, uncited empirical claims and source support. In Chapter One, require a focused broad-to-specific progression and sufficient integration to justify the problem, but reserve exhaustive comparison of study designs, samples, measures, contradictions and limitations for Chapter Two. "
             "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
             "Verify that the proposed review follows the professional_scope_contract. Single-chapter comments must remain bounded, combined-chapter reviews must assess every included chapter and their alignment, and complete-thesis reviews must support an examiner-style synthesis. "
             "Do not invent issues to reach a number, but do not compress distinct material defects into a single vague comment."

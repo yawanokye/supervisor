@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 from collections import Counter, OrderedDict, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -33,6 +34,20 @@ def _clean(value: Any) -> str:
 
 def _normalised(value: Any) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", _clean(value).lower()).strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, minimum: int = 0, maximum: int = 500) -> int:
+    try:
+        return max(minimum, min(maximum, int(os.getenv(name, str(default)))))
+    except (TypeError, ValueError):
+        return default
 
 
 def _set_cell_shading(cell, fill: str) -> None:
@@ -453,7 +468,7 @@ def _compact_overall_assessment(review: Dict[str, Any]) -> str:
         or ""
     )
     if not raw:
-        return f"The work has been reviewed at {academic_level_label(summary.get('academic_level'))}."
+        return "The work has been reviewed against the applicable programme and disciplinary standards."
     sentences = re.split(r"(?<=[.!?])\s+", raw)
     selected: List[str] = []
     total = 0
@@ -1010,7 +1025,19 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     else:
         next_number = 5
 
-    _add_professional_finding_table(doc, ledger, f"{next_number}. Detailed Professional Findings and Required Corrections")
+    _add_simple_heading(doc, f"{next_number}. Numbered comments and detailed corrections")
+    include_details = _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False)
+    max_details = _env_int("VPROF_REPORT_MAX_DETAILED_FINDINGS", 30, 1, 200)
+    if include_details:
+        prioritised = sorted(ledger, key=lambda item: ({"critical": 0, "major": 1, "moderate": 2, "minor": 3}.get(str(item.get("severity") or "minor").lower(), 9), int(item.get("number") or 0)))
+        _add_professional_finding_table(doc, prioritised[:max_details], "Selected detailed findings")
+        if len(ledger) > max_details:
+            doc.add_paragraph(f"The reviewed thesis contains {len(ledger)} sequentially numbered comments. This report presents the {max_details} highest-priority findings; the complete guidance is attached to the exact passages in the reviewed thesis and correction tracker.")
+    else:
+        doc.add_paragraph(
+            f"The reviewed thesis contains {len(ledger)} sequentially numbered comments attached to the relevant sentences, paragraphs and tables. "
+            "The comments provide the detailed explanation and correction guidance. This report deliberately summarises the decision, validity barriers, statistical audit and chapter correction plan without repeating every comment word for word."
+        )
     next_number += 1
 
     _add_simple_heading(doc, f"{next_number}. Evidence Required for Verification")
@@ -1060,7 +1087,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     the same finding ledger. The report therefore preserves substantive academic
     judgement instead of reducing the review to a short comment summary.
     """
-    if str(__import__("os").getenv("VPROF_SPEC_ALIGNED_SUPERVISORY_REPORT", "true")).strip().lower() in {"1", "true", "yes", "on"}:
+    if str(os.getenv("VPROF_SPEC_ALIGNED_SUPERVISORY_REPORT", "true")).strip().lower() in {"1", "true", "yes", "on"}:
         return _build_spec_aligned_docx_report(review)
 
     doc = Document()
@@ -1165,12 +1192,18 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
             q.add_run(f"Correction {item.get('number')} — {item.get('section')}: ").bold = True
             q.add_run(_compact_sentence(item.get("required_correction"), 420))
     else:
-        doc.add_paragraph(f"No critical blocker was identified. Major and moderate corrections may still prevent approval at {academic_level_label(summary.get('academic_level'))}.")
+        doc.add_paragraph(f"No critical blocker was identified. Major and moderate corrections may still prevent approval or progression.")
 
     _add_chapter_judgement_table(doc, package.get("chapter_judgements") or [], f"{section_number}. Chapter or Section Judgements")
     section_number += 1
 
-    _add_professional_finding_table(doc, ledger, f"{section_number}. Detailed Professional Findings and Required Corrections")
+    doc.add_heading(f"{section_number}. Numbered Comments and Detailed Corrections", level=1)
+    if _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False):
+        max_details = _env_int("VPROF_REPORT_MAX_DETAILED_FINDINGS", 30, 1, 200)
+        prioritised = sorted(ledger, key=lambda item: ({"critical": 0, "major": 1, "moderate": 2, "minor": 3}.get(str(item.get("severity") or "minor").lower(), 9), int(item.get("number") or 0)))
+        _add_professional_finding_table(doc, prioritised[:max_details], "Selected detailed findings")
+    else:
+        doc.add_paragraph(f"The reviewed work contains {len(ledger)} sequentially numbered, passage-specific comments. The detailed guidance remains beside the relevant text in the reviewed thesis, while this report concentrates on the overall judgement and priorities.")
     section_number += 1
 
     section_number = _add_methods_results_audit(doc, package.get("methods_results_discussion_audit") or {}, section_number)

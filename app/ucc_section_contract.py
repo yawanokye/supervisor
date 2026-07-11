@@ -28,6 +28,8 @@ def _degree_key(level: Any) -> str:
 
 
 def _degree_phrase(degree: str) -> str:
+    if os.getenv("VPROF_INCLUDE_DEGREE_LABEL_IN_COMMENTS", "false").strip().lower() in {"0", "false", "no", "off"}:
+        return ""
     return {
         "bachelors": "At Bachelor’s level, the section should show basic research coherence, correct academic presentation and a manageable contribution.",
         "non_research_masters": "At Non-Research Master’s level, the section should show applied problem clarity, credible evidence and defensible professional judgement.",

@@ -34,12 +34,12 @@ from .annotated_exporter import (
     _add_specific_corrections_required,
     _specific_correction_text,
 )
-from .comment_quality import public_text, sanitise_finding_rows
-from .finding_order import order_and_number_rows
+from .comment_quality import public_text
+from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.21-expert-sequential-detailed-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.25-final-review-reconciliation"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -166,12 +166,10 @@ def _row_comment(row: Dict[str, Any]) -> str:
 
 
 def _rows_for_inline(review: Dict[str, Any], source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    supplied_rows = (
-        list(review.get("academic_findings", []))
-        + list(review.get("alignment_results", []))
-        + list(review.get("revision_results", []))
-    )
-    return sanitise_finding_rows(supplied_rows + _placeholder_finding_rows(source_map, supplied_rows))
+    # The exporter must use the same final, filtered and sequentially numbered
+    # findings as the report and native-comment version. Export-time fallback
+    # findings are synchronised before this function is called.
+    return build_canonical_finding_rows(review)
 
 
 def build_inline_annotated_docx(
@@ -190,9 +188,12 @@ def build_inline_annotated_docx(
     source_map, _ = _source_locator_map(document)
     academic_level = (review.get("summary") or {}).get("academic_level")
     synchronise_export_fallback_findings(review, source_map)
-    review_rows = order_and_number_rows([
-        {**row, "_academic_level": academic_level} for row in _rows_for_inline(review, source_map)
-    ])
+    # Rebuild after export fallbacks have been synchronised. Numbering is then
+    # fixed once and reused everywhere.
+    review_rows = [
+        {**row, "_academic_level": academic_level}
+        for row in build_canonical_finding_rows(review, force=True)
+    ]
 
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
     missing_section_rows: List[Dict[str, Any]] = []
