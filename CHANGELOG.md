@@ -1,3 +1,13 @@
+# v1.9.9.23 — Clear Student-Facing Review and Statistical Table Audit
+
+- Replaced checklist and app-facing language with clear supervisor comments.
+- Removed “uploaded document/text” from student-facing feedback.
+- Rewrote missing-section comments in direct UCC-aligned language.
+- Added context-specific example validation and blocked stale examples from earlier studies.
+- Added table-level checks for descriptive means, regression consistency, correlation interpretation, moderation and analysis appropriateness.
+- Applied the same canonical findings to native comments, detailed inline annotations and professional reports.
+- Retained evidence-driven review with no predetermined number of comments.
+
 # v1.9.9.21 - Expert sequential, anchored and detailed review
 
 - Orders all findings by their actual position in the study and renumbers them sequentially from 1.
@@ -685,3 +695,13 @@
 - Removed predetermined minimum comment counts and finding floors.
 - Required each review response to identify the passage IDs assessed.
 - Added coverage assurance to the professional report.
+
+## v1.9.9.24 — Specification-Aligned Supervisory Review
+
+- Implemented the supplied coverage-driven supervisor/examiner algorithm as an explicit review contract.
+- Added PASS, COMMENT, VERIFY SOURCE and RE-ANALYSE statuses to the coverage ledger.
+- Added a specification-aligned report with scope, overall decision, strengths, critical corrections, statistical audit, chapter plan, detailed findings, evidence requirements and revision order.
+- Added measurement-structure checks and expanded deterministic statistical reconciliation.
+- Fixed strict-schema category handling that previously caused valid statistical findings to be silently discarded.
+- Strengthened student-facing, current-study wording and removed app-facing “uploaded document” language.
+- Preserved evidence-led comment counts with no predetermined finding quota.

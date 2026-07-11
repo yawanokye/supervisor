@@ -199,6 +199,24 @@ services:
         value: false
       - key: VPROF_SYSTEMATIC_COVERAGE_REVIEW
         value: true
+      - key: VPROF_STUDENT_FRIENDLY_COMMENTS
+        value: true
+      - key: VPROF_CONTEXT_SPECIFIC_EXAMPLES
+        value: true
+      - key: VPROF_STATISTICAL_TABLE_AUDIT
+        value: true
+      - key: VPROF_ANALYSIS_APPROPRIATENESS_AUDIT
+        value: true
+      - key: VPROF_SPEC_ALIGNED_SUPERVISORY_REPORT
+        value: true
+      - key: VPROF_COVERAGE_STATUS_LEDGER
+        value: true
+      - key: VPROF_MEASUREMENT_AUDIT
+        value: true
+      - key: VPROF_REFERENCE_RECONCILIATION_AUDIT
+        value: true
+      - key: VPROF_REQUIRE_STATISTICAL_AUDIT_FOR_RESULTS
+        value: true
       - key: VPROF_COVERAGE_PARAGRAPHS_PER_UNIT
         value: 7
       - key: VPROF_COVERAGE_CONTEXT_PARAGRAPHS
