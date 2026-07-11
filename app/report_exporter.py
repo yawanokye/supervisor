@@ -16,6 +16,7 @@ from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_t
 from .articleready_review_bridge import build_articleready_quality_audit
 from .professional_review_pipeline import build_professional_review_package
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
+from .supervisory_review_algorithm import build_supervisory_report_spec
 
 INK = "1F2937"
 MUTED = "667085"
@@ -878,6 +879,180 @@ def _add_priority_plan(doc: Document, plan: Dict[str, Sequence[Dict[str, Any]]],
     return number + 1
 
 
+
+def _add_simple_heading(doc: Document, text: str, level: int = 1) -> None:
+    doc.add_heading(_clean(text), level=level)
+
+
+def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
+    """Build a supervisor/examiner report aligned with the supplied review specification.
+
+    The report is intentionally decision-led. It explains scope and limitations,
+    identifies barriers to validity, presents the deterministic statistical audit,
+    provides a chapter correction plan and then lists the detailed findings from the
+    same canonical ledger used by the annotated DOCX.
+    """
+    doc = Document()
+    _set_document_styles(doc)
+    section = doc.sections[0]
+    section.top_margin = Inches(0.58)
+    section.bottom_margin = Inches(0.58)
+    section.left_margin = Inches(0.62)
+    section.right_margin = Inches(0.62)
+
+    summary = review.get("summary") or {}
+    package = review.get("professional_review") or build_professional_review_package(review)
+    spec = package.get("supervisory_report_spec") or build_supervisory_report_spec(review, package)
+    ledger = package.get("finding_ledger") or []
+    profile = package.get("profile") or {}
+
+    title = doc.add_paragraph(style="Title")
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title.add_run(_clean(spec.get("report_title") or "SUPERVISORY REVIEW REPORT"))
+
+    study_label = _clean(summary.get("study_title") or summary.get("document_label") or summary.get("filename") or "Study reviewed")
+    details = doc.add_table(rows=0, cols=2)
+    details.style = "Table Grid"
+    for label, value in (
+        ("Study reviewed", study_label),
+        ("Review mode", _clean(spec.get("review_mode") or profile.get("role") or "Professional academic supervisor")),
+        ("Overall decision", _clean(spec.get("overall_decision") or "Review completed")),
+        ("Context-specific comments", len(ledger)),
+    ):
+        cells = details.add_row().cells
+        _set_cell_shading(cells[0], SOFT)
+        _set_cell_text(cells[0], label, True, BRAND, 8.7)
+        _set_cell_text(cells[1], value, False, INK, 8.7)
+
+    _add_simple_heading(doc, "1. Scope and limitation of the review")
+    doc.add_paragraph(_clean(spec.get("scope_and_limitation")))
+
+    _add_simple_heading(doc, "2. Overall supervisory assessment")
+    overall = _clean(spec.get("overall_assessment"))
+    if not overall:
+        overall = _clean((package.get("recommendation") or {}).get("meaning"))
+    doc.add_paragraph(overall or "The study was reviewed against the academic standard, internal alignment and evidence reported in the work.")
+
+    _add_simple_heading(doc, "2.1 Main strengths", level=2)
+    strengths = list(spec.get("strengths") or [])
+    if strengths:
+        for item in strengths:
+            doc.add_paragraph(_clean(item), style="List Bullet")
+    else:
+        doc.add_paragraph("Retain the parts of the study that are accurate, well supported and clearly aligned while completing the corrections below.")
+
+    _add_simple_heading(doc, "2.2 Critical corrections required before the study can proceed", level=2)
+    critical = list(spec.get("critical_corrections") or [])
+    if critical:
+        table = doc.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        for cell, text in zip(table.rows[0].cells, ("Area", "Required correction")):
+            _set_cell_shading(cell, BRAND)
+            _set_cell_text(cell, text, True, "FFFFFF", 8.4)
+        for item in critical:
+            cells = table.add_row().cells
+            _set_cell_text(cells[0], item.get("area"), True, BRAND, 8.2)
+            refs = ", ".join(str(v) for v in item.get("finding_numbers") or [])
+            action = _clean(item.get("required_correction"))
+            if refs:
+                action += f" [Corrections {refs}]"
+            _set_cell_text(cells[1], action, False, INK, 8.2)
+    else:
+        doc.add_paragraph("No critical or major correction was identified. Address the remaining targeted corrections before resubmission.")
+
+    _add_simple_heading(doc, "3. Methods, Results and Discussion Accuracy Audit")
+    p = doc.add_paragraph()
+    p.add_run("Statistical consistency and analysis appropriateness: ").bold = True
+    p.add_run("Each reported model is checked for internal numerical consistency, suitability for the research task and agreement between the table and interpretation.")
+    stat_rows = list(spec.get("statistical_audit") or [])
+    if stat_rows:
+        doc.add_paragraph(
+            "These checks evaluate the internal consistency and adequacy of the statistics printed in the study. They do not replace re-analysis from the raw data and original software output."
+        )
+        table = doc.add_table(rows=1, cols=4)
+        table.style = "Table Grid"
+        for cell, text in zip(table.rows[0].cells, ("Check", "Finding", "Status", "Action")):
+            _set_cell_shading(cell, BRAND)
+            _set_cell_text(cell, text, True, "FFFFFF", 8.1)
+        for item in stat_rows:
+            cells = table.add_row().cells
+            _set_cell_text(cells[0], item.get("check"), True, BRAND, 7.9)
+            _set_cell_text(cells[1], item.get("finding"), False, INK, 7.9)
+            _set_cell_text(cells[2], item.get("status"), True, INK, 7.9)
+            _set_cell_text(cells[3], item.get("action"), False, INK, 7.9)
+    else:
+        doc.add_paragraph(
+            "No deterministic statistical inconsistency was identified in the material reviewed. This does not certify the underlying calculations where raw data or original software output was not supplied."
+        )
+
+    _add_simple_heading(doc, "4. Chapter-by-chapter correction plan")
+    plans = list(spec.get("chapter_plans") or [])
+    if plans:
+        for plan in plans:
+            p = doc.add_paragraph()
+            p.add_run(f"{_clean(plan.get('chapter'))}: ").bold = True
+            corrections = [_clean(value) for value in plan.get("corrections") or [] if _clean(value)]
+            p.add_run("; ".join(corrections) if corrections else "No material correction identified.")
+    else:
+        doc.add_paragraph("No chapter-specific correction plan was generated.")
+
+    coverage = spec.get("coverage") or {}
+    if coverage:
+        _add_simple_heading(doc, "5. Review coverage assurance")
+        counts = coverage.get("status_counts") or {}
+        doc.add_paragraph(
+            f"The review assessed {coverage.get('assessed_target_count', 0)} of {coverage.get('target_count', 0)} paragraphs and table rows across "
+            f"{coverage.get('completed_units', 0)} of {coverage.get('unit_count', 0)} review units. "
+            f"Coverage statuses: PASS {counts.get('PASS', 0)}, COMMENT {counts.get('COMMENT', 0)}, VERIFY SOURCE {counts.get('VERIFY SOURCE', 0)}, RE-ANALYSE {counts.get('RE-ANALYSE', 0)}. "
+            "The number of comments was determined by the issues found, not by a predetermined quota."
+        )
+        next_number = 6
+    else:
+        next_number = 5
+
+    _add_professional_finding_table(doc, ledger, f"{next_number}. Detailed Professional Findings and Required Corrections")
+    next_number += 1
+
+    _add_simple_heading(doc, f"{next_number}. Evidence Required for Verification")
+    evidence_required = list(spec.get("evidence_required") or [])
+    if evidence_required:
+        for item in evidence_required:
+            p = doc.add_paragraph(style="List Bullet")
+            if item.get("number"):
+                p.add_run(f"Correction {item.get('number')}: ").bold = True
+            p.add_run(_clean(item.get("evidence_needed") or item.get("required_correction") or item))
+    else:
+        doc.add_paragraph(
+            "Retain the raw data, instrument or coding framework, sampling records, ethical approval and original analytical output so that any result can be verified during supervision or examination."
+        )
+    next_number += 1
+
+    _add_simple_heading(doc, f"{next_number}. Order of revision")
+    for text in (
+        "Correct all measurement, scoring, model-specification and statistical inconsistencies first.",
+        "Resolve major cross-chapter alignment, methodological and theoretical issues.",
+        "Rebuild the results, discussion, conclusions and recommendations from verified analysis.",
+        "Complete reference reconciliation, language editing, formatting and final document checks.",
+    ):
+        doc.add_paragraph(text, style="List Number")
+    next_number += 1
+
+    _add_simple_heading(doc, f"{next_number}. Professional recommendation")
+    recommendation = package.get("recommendation") or {}
+    doc.add_paragraph(f"{_clean(spec.get('overall_decision') or recommendation.get('decision'))}. {_clean(recommendation.get('meaning'))}")
+
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    footer_run = footer.add_run(f"VProfessor | {_clean(profile.get('role') or 'Professional academic reviewer')}")
+    footer_run.italic = True
+    footer_run.font.size = Pt(7.5)
+    footer_run.font.color.rgb = RGBColor.from_string(MUTED)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def build_docx_report(review: Dict[str, Any]) -> bytes:
     """Create the canonical professional supervisor or examiner report.
 
@@ -885,6 +1060,9 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     the same finding ledger. The report therefore preserves substantive academic
     judgement instead of reducing the review to a short comment summary.
     """
+    if str(__import__("os").getenv("VPROF_SPEC_ALIGNED_SUPERVISORY_REPORT", "true")).strip().lower() in {"1", "true", "yes", "on"}:
+        return _build_spec_aligned_docx_report(review)
+
     doc = Document()
     _set_document_styles(doc)
 
@@ -918,6 +1096,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
         (("Review role", profile.get("role", "Professional academic reviewer")), ("Review scope", str(summary.get("review_scope", "chapter")).replace("_", " ").title())),
         (("Document", summary.get("document_label", "")), ("Academic level", summary.get("academic_level", ""))),
         (("Review depth", str(summary.get("review_depth", "standard")).title()), ("Canonical findings", len(ledger))),
+        (("Coverage assessed", f"{summary.get('coverage_percent', 0)}%" if summary.get("systematic_coverage_review") else "Legacy section review"), ("Review units", f"{summary.get('coverage_units_completed', 0)}/{summary.get('coverage_units_total', 0)}" if summary.get("systematic_coverage_review") else summary.get("academic_review_units_completed", ""))),
         (("Submission stage", "Revised submission" if summary.get("revised_mode") else "Initial submission"), ("Overall judgement", package.get("recommendation", {}).get("decision") or summary.get("readiness_label", ""))),
     ]
     for left, right in pairs:
@@ -946,6 +1125,37 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     _set_cell_text(cell, f"{recommendation.get('decision', 'Review completed')}. {recommendation.get('meaning', '')}", True, INK, 9.2)
 
     section_number = 2
+    if summary.get("systematic_coverage_review"):
+        doc.add_heading(f"{section_number}. Review Coverage Assurance", level=1)
+        section_number += 1
+        coverage = review.get("coverage_ledger") or {}
+        complete = bool(coverage.get("complete"))
+        status = "Complete" if complete else "Incomplete"
+        doc.add_paragraph(
+            f"Coverage status: {status}. The reviewer assessed {coverage.get('assessed_target_count', 0)} of "
+            f"{coverage.get('target_count', 0)} substantive paragraphs and table rows across "
+            f"{coverage.get('completed_units', 0)} of {coverage.get('unit_count', 0)} sequential review units. "
+            "The number of comments was determined by the material issues found, not by a predetermined quota."
+        )
+        chapters = coverage.get("chapters") or {}
+        if chapters:
+            table = doc.add_table(rows=1, cols=4)
+            table.style = "Table Grid"
+            header = table.rows[0]
+            for cell, text in zip(header.cells, ("Chapter", "Units", "Targets", "Coverage")):
+                _set_cell_shading(cell, BRAND)
+                _set_cell_text(cell, text, True, "FFFFFF", 8.3)
+            for chapter, stats in sorted(chapters.items(), key=lambda item: str(item[0])):
+                row = table.add_row().cells
+                chapter_label = CHAPTER_NAMES.get(int(chapter), f"Chapter {chapter}") if str(chapter).isdigit() else "Whole thesis"
+                target_total = int(stats.get("targets") or 0)
+                assessed = int(stats.get("assessed_targets") or 0)
+                percent = round(100.0 * assessed / max(1, target_total), 1)
+                _set_cell_text(row[0], chapter_label, True, BRAND, 8.1)
+                _set_cell_text(row[1], f"{stats.get('completed_units', 0)}/{stats.get('units', 0)}", False, INK, 8.1)
+                _set_cell_text(row[2], f"{assessed}/{target_total}", False, INK, 8.1)
+                _set_cell_text(row[3], f"{percent}%", False, INK, 8.1)
+
     blockers = list((package.get("priority_correction_plan") or {}).get("priority_1_validity_and_submission_blockers") or [])
     doc.add_heading(f"{section_number}. Critical Submission Blockers", level=1)
     section_number += 1

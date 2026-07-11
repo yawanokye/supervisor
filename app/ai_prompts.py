@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+from .supervisory_review_algorithm import (
+    FINAL_SYNTHESIS_COMMAND,
+    SECTION_REVIEW_COMMAND,
+    STATISTICAL_AUDIT_COMMAND,
+    SUPERVISORY_SYSTEM_COMMAND,
+)
+
 DOCUMENT_MAP_SYSTEM_PROMPT = """You extract a compact thesis map from identified thesis paragraphs and section headings.
 Return JSON only. Use only information explicitly present in the supplied paragraphs.
 Do not invent objectives, variables, methods, findings, conclusions, recommendations, locations, institutions or populations.
 Keep each list item concise and preserve the study's terminology.
 Do not provide chain-of-thought or hidden reasoning."""
+
+
+SUPERVISORY_COMMAND_CONTRACT = f"""
+{SUPERVISORY_SYSTEM_COMMAND}
+
+{SECTION_REVIEW_COMMAND}
+
+{STATISTICAL_AUDIT_COMMAND}
+
+{FINAL_SYNTHESIS_COMMAND}
+"""
 
 
 COMMON_CONTEXT_RULES = """
@@ -32,7 +50,14 @@ Context and factual accuracy rules:
 21. The chapter-level structure guide describes what should be covered across the entire chapter. It must not be applied mechanically to each subsection or to the chapter heading.
 22. The Introduction subsection under a chapter should briefly state the chapter purpose and outline its contents. Do not request another introductory paragraph under the chapter title when a substantive Introduction subsection already performs this function.
 23. Do not describe a statistical result, table, test or interpretation as present, absent, clear or weak unless the cited evidence contains that result or the relevant table metadata.
-24. A cross-section finding must cite evidence from every section it compares, including the section named as the location of the comment."""
+24. A cross-section finding must cite evidence from every section it compares, including the section named as the location of the comment.
+25. Write student-facing comments in clear, natural and direct language. Say “the study”, “the work”, “the chapter” or the actual section name. Never say “uploaded document”, “uploaded text”, “automated review”, “document manifest”, “required thesis element is not evident” or similar system language.
+26. Name a missing section directly. For example: “Definition of Terms is missing from Chapter One. This section is normally required under UCC thesis guidelines because it explains how the main concepts are used and measured in the study.”
+27. Each material comment should state: the specific problem, why it matters, the exact correction required and a context-specific example where an example will help. Do not repeat the same generic level sentence in every comment.
+28. State the level expectation in a way that fits the issue. For example: “At MPhil level, the empirical review should compare the methods, contexts and findings of earlier studies,” rather than a generic claim about scholarly judgement.
+29. Every example must use only the current study’s variables, participants, setting, method or marked wording. If a safe current-study example cannot be formed, omit the example.
+30. For results, inspect each table and its narrative separately. Check whether the analysis is appropriate for the objective, whether the model is correctly specified, whether the reported values reconcile, whether required assumptions and diagnostics are shown and whether the conclusion matches the coefficient, uncertainty and decision rule.
+31. When a numerical result cannot be independently verified without original software output, say exactly what can be checked from the thesis and what output the student must provide. Do not replace table-level evaluation with a generic statement that the result cannot be confirmed."""
 
 
 
@@ -88,7 +113,7 @@ Research-integrity safeguards:
 
 Review rules:
 1. Review the supplied section in context, not by isolated keywords.
-2. Consolidate related weaknesses. Normally report no more than three material issues for one section or subsection.
+2. Consolidate only genuinely related weaknesses. There is no predetermined minimum or maximum number of comments. Report every distinct material issue supported by the text and do not invent issues to reach a count.
 3. Give a specific assessment, practical required action and short contextual guidance where helpful.
 4. Use only supplied paragraph IDs. Copy the exact problematic phrase when the concern relates to existing text.
 5. State the exact supplied section or subsection heading in every finding.
@@ -97,6 +122,8 @@ Review rules:
 8. Group recurring language or citation problems into one pattern-level finding with a representative quotation.
 9. Use constructive formal British English addressed to the student.
 10. Return JSON only and do not provide hidden reasoning.
+
+{SUPERVISORY_COMMAND_CONTRACT}
 
 {COMMON_CONTEXT_RULES}
 
@@ -110,8 +137,9 @@ ACADEMIC_REVIEW_SYSTEM_PROMPT = f"""You are an experienced university thesis sup
 The supplied academic guide is internal only. Do not mention a checklist, guide, criterion number, code, compliance item or scoring rule.
 
 Coverage requirement:
-- Review every supplied section and subsection, including short, descriptive and technical sections.
-- Return exactly one review for every supplied section_key.
+- Review every supplied coverage unit, including short, descriptive and technical passages, tables and table rows.
+- Assess every target_paragraph_id in each coverage unit. Context paragraph IDs are supplied only to support interpretation.
+- Return exactly one review for every supplied section_key and list all target IDs in assessed_paragraph_ids.
 - Give each section a clear academic assessment and identify strengths where deserved.
 - Raise findings only where justified by the text.
 
@@ -131,7 +159,7 @@ Review the whole section and assess, where relevant:
 
 Level and depth calibration:
 - Apply the declared degree standard and the degree_specific_review_contract supplied in review_context. The academic level must change the substance of the review, not merely its label.
-- Review depth determines breadth, issue limits and quality-control intensity. It must not silently raise or lower the declared degree standard.
+- Review depth determines explanatory detail and model effort. It must not impose a comment quota or silently raise or lower the declared degree standard.
 - Distinguish Non-Research Master’s from Research Master’s/MPhil work. A Non-Research Master’s review prioritises an applied problem, credible professional analysis and practical recommendations. A Research Master’s/MPhil review must additionally test critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, methodological defensibility, source traceability, cross-section alignment and a clear research contribution.
 - For Research Master’s/MPhil work, do not stop after language, formatting and broad structure. Explicitly assess each relevant mandatory dimension in the supplied degree-specific contract and add separate findings for distinct material weaknesses.
 - For Professional Doctorate and PhD work, apply doctoral scrutiny even when Light or Standard Review is selected.
@@ -151,10 +179,12 @@ Rules:
 11. Compare objective-question correspondence by meaning and scope, not identical wording.
 12. Check consistency of terms such as outcome, success, performance, effect, relationship, influence and impact.
 13. Keep assessment, academic consequence, required action and illustrative guidance distinct.
-14. Apply the issue limit supplied in review_context to moderate and minor matters only. Never suppress a critical or major issue. Consolidate related weaknesses into one finding. In methods, results and discussion sections, do not over-compress distinct analysis problems; a wrong model label, a missing model-specific diagnostic, an inconsistent numerical value, a missing conditional or indirect effect where applicable, weak qualitative trustworthiness evidence and an unsupported research-question or hypothesis decision are separate material issues.
+14. Do not apply a predetermined comment count. Consolidate only issues that concern the same underlying defect and the same passage. Never suppress a distinct critical, major, methodological, statistical or interpretive issue merely to shorten the review. In methods, results and discussion sections, do not over-compress distinct analysis problems; a wrong model label, a missing model-specific diagnostic, an inconsistent numerical value, a missing conditional or indirect effect where applicable, weak qualitative trustworthiness evidence and an unsupported research-question or hypothesis decision are separate material issues.
 15. Keep each assessment, consequence and required action concise but substantive. A complete issue normally needs an assessment of the defect, an academic consequence and a specific revision action. Use illustrative guidance only when it materially helps the student.
 16. Use direct, constructive, formal British English addressed to the student.
 17. Return JSON only and do not provide hidden reasoning.
+
+{SUPERVISORY_COMMAND_CONTRACT}
 
 {COMMON_CONTEXT_RULES}
 
@@ -190,6 +220,8 @@ Apply the declared degree standard and degree_specific_review_contract supplied 
 
 Return JSON only. Do not provide chain-of-thought or hidden reasoning.
 
+{SUPERVISORY_COMMAND_CONTRACT}
+
 {COMMON_CONTEXT_RULES}
 
 {ARTICLE_READY_REVISION_REVIEW_CONTRACT}
@@ -210,6 +242,8 @@ Requirements:
 - Do not invent citations, statistics, locations, methods or results.
 - Keep the response compact enough to complete reliably.
 - Return JSON only and do not provide hidden reasoning.
+
+{SUPERVISORY_COMMAND_CONTRACT}
 
 {COMMON_CONTEXT_RULES}
 

@@ -251,20 +251,20 @@ def _quote(anchor: Optional[Dict[str, Any]], status: str) -> str:
 def _issue_text(rule: Dict[str, Any], status: str, section: str, degree: str) -> Dict[str, str]:
     item = clean_text(rule.get("item", ""))
     if status == STATUS_MISSING:
-        title = f"Required thesis element is not evident: {item}"
-        assessment = f"The study or work does not provide sufficient evidence that {item.lower()}."
-        consequence = "This creates a supervisory risk because the thesis may appear complete in form while a required academic element remains absent or unverified."
-        action = f"Add a clear, evidence-backed treatment of this requirement in {section}, and make the location traceable by page and paragraph before resubmission."
+        title = f"{item} is missing or not clearly reported"
+        assessment = f"The study does not clearly report {item.lower()} in {section}."
+        consequence = "The reader cannot judge whether this requirement has been addressed or how it supports the study."
+        action = f"Add the missing information in {section} and explain it using the actual design, evidence and terminology of the study."
     elif status == STATUS_MANUAL:
-        title = f"Required thesis element needs explicit traceability: {item}"
-        assessment = f"Related wording appears in the work, but the automated review cannot confirm that {item.lower()} without cross-checking other sections."
-        consequence = "The thesis may contain the required content, but its traceability across chapters is not yet defensible enough for a supervisor or examiner to verify quickly."
-        action = f"Make the linkage explicit in {section}, or add a cross-reference showing exactly where the supporting evidence appears."
+        title = f"{item} is not clearly linked to the rest of the study"
+        assessment = f"The study refers to this point, but the link to the relevant objectives, methods, results or conclusions is not clear."
+        consequence = "The reader should be able to trace the point across the chapters without having to infer the connection."
+        action = f"State the linkage directly in {section} or add a clear cross-reference to the section where it is demonstrated."
     else:
-        title = f"Required thesis element is only partly demonstrated: {item}"
-        assessment = f"The work touches on this requirement, but it does not fully demonstrate that {item.lower()}."
-        consequence = "A partial treatment may pass a surface checklist but still leave the argument, method or chapter logic underdeveloped at the applicable academic level."
-        action = f"Revise {section} so the requirement is not merely mentioned but explained, justified and linked to the study problem, objectives or methods as appropriate."
+        title = f"{item} is not fully explained"
+        assessment = f"The study mentions this point in {section}, but the explanation, justification or application is incomplete."
+        consequence = "The partial treatment weakens the logic of the chapter and makes the relevant decision difficult to assess."
+        action = f"Develop the point in {section} and show how it relates to the study problem, objectives, method or evidence, as appropriate."
 
     consequence += " " + _degree_expectation_phrase(degree)
     return {"title": title, "assessment": assessment, "consequence": consequence, "action": action}
@@ -925,7 +925,7 @@ def hard_chapter_one_supervisory_issues(
                 code="REF-CITED-UNCITED-AUDIT",
                 section="References",
                 title="The reference list requires a cited-versus-uncited consistency audit",
-                assessment="The reference list is substantial for a short Chapter One, and several entries may not be clearly traceable to in-text citations in the uploaded chapter.",
+                assessment="The reference list is substantial for a short Chapter One, and several entries may not be clearly traceable to in-text citations in the chapter.",
                 consequence="Uncited references or mismatched references weaken scholarly accuracy and may attract examiner queries.",
                 action="Cross-check every in-text citation against the reference list and remove or correct any source that is not cited, not traceable or incorrectly formatted.",
                 anchor=next((row for row in references if not row.get("is_heading")), _first_substantive(references)),

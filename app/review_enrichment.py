@@ -5,6 +5,7 @@ from collections import Counter
 from typing import Any, Dict, List
 
 from .document_parser import clean_text, normalised
+from .student_friendly_review import make_finding_student_friendly
 
 _STOPWORDS = {
     "chapter", "section", "study", "research", "student", "students", "thesis", "dissertation",
@@ -131,4 +132,9 @@ def enrich_finding_row(row: Dict[str, Any]) -> Dict[str, Any]:
     output = dict(row)
     if not clean_text(output.get("illustrative_guidance", "")):
         output["illustrative_guidance"] = context_specific_example(output)
-    return output
+    # Always validate wording and examples against the current finding. This
+    # prevents examples from an earlier submission leaking into a new study.
+    return make_finding_student_friendly(
+        output,
+        output.get("_academic_level") or output.get("academic_level"),
+    )

@@ -40,11 +40,17 @@ def at_level_phrase(value: Any) -> str:
 
 
 _REPLACEMENTS = (
-    (r"\bthe uploaded documents\b", "the submitted work"),
+    (r"\bthe uploaded documents\b", "the study materials"),
     (r"\bthe uploaded document\b", "the study"),
     (r"\bthis uploaded document\b", "this work"),
-    (r"\buploaded documents\b", "submitted work"),
+    (r"\bthe uploaded chapter\b", "the chapter"),
+    (r"\bthe uploaded text\b", "the study"),
+    (r"\buploaded documents\b", "study materials"),
     (r"\buploaded document\b", "study"),
+    (r"\buploaded chapter\b", "chapter"),
+    (r"\buploaded text\b", "study"),
+    (r"\bthe supplied document\b", "the study"),
+    (r"\bthe submitted document\b", "the study"),
 )
 
 

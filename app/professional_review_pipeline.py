@@ -6,6 +6,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from .finding_order import chapter_number as ordered_chapter_number, document_order_key, order_and_number_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
+from .student_friendly_review import make_finding_student_friendly
+from .supervisory_review_algorithm import build_supervisory_report_spec
 
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
@@ -278,6 +280,7 @@ def build_finding_ledger(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     level = academic_level_label((review.get("summary") or {}).get("academic_level"))
     ledger: List[Dict[str, Any]] = []
     for row in rows:
+        row = make_finding_student_friendly(row, (review.get("summary") or {}).get("academic_level"))
         number = int(row.get("finding_number"))
         chapter = _chapter_number(row)
         evidence = row.get("evidence") or []
@@ -502,10 +505,13 @@ def build_professional_review_package(review: Dict[str, Any]) -> Dict[str, Any]:
             "one_canonical_finding_ledger": True,
             "native_docx_is_delivery_layer": True,
             "finding_quota_used": False,
+            "systematic_coverage_driven_review": bool((review.get("summary") or {}).get("systematic_coverage_review")),
+            "coverage_release_gate_passed": not bool((review.get("summary") or {}).get("coverage_release_blocking")),
             "examples_must_use_current_study_context": True,
             "statistical_recomputation_claimed_only_with_original_evidence": True,
         },
     }
+    package["supervisory_report_spec"] = build_supervisory_report_spec(review, package)
     return package
 
 

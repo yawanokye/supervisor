@@ -114,6 +114,15 @@ class HybridAIConfig:
     chapter_packet_max_chars: int
     chapter_recovery_concurrency: int
     chapter_recovery_max_output_tokens: int
+    systematic_coverage_review_enabled: bool
+    coverage_prose_paragraphs_per_unit: int
+    coverage_context_paragraphs: int
+    coverage_unit_max_chars: int
+    coverage_table_rows_per_unit: int
+    coverage_units_per_request: int
+    coverage_high_risk_units_per_request: int
+    coverage_request_max_chars: int
+    coverage_release_gate_enabled: bool
     section_batch_size: int
     light_section_batch_size: int
     advanced_section_batch_size: int
@@ -424,6 +433,33 @@ class HybridAIConfig:
             ),
             chapter_recovery_max_output_tokens=_env_int(
                 "AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS", 7000
+            ),
+            systematic_coverage_review_enabled=_env_bool(
+                "VPROF_SYSTEMATIC_COVERAGE_REVIEW", True
+            ),
+            coverage_prose_paragraphs_per_unit=_env_int(
+                "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 7
+            ),
+            coverage_context_paragraphs=_env_int(
+                "VPROF_COVERAGE_CONTEXT_PARAGRAPHS", 1, 0
+            ),
+            coverage_unit_max_chars=_env_int(
+                "VPROF_COVERAGE_UNIT_MAX_CHARS", 12000
+            ),
+            coverage_table_rows_per_unit=_env_int(
+                "VPROF_COVERAGE_TABLE_ROWS_PER_UNIT", 10
+            ),
+            coverage_units_per_request=_env_int(
+                "VPROF_COVERAGE_UNITS_PER_REQUEST", 4
+            ),
+            coverage_high_risk_units_per_request=_env_int(
+                "VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 2
+            ),
+            coverage_request_max_chars=_env_int(
+                "VPROF_COVERAGE_REQUEST_MAX_CHARS", 28000
+            ),
+            coverage_release_gate_enabled=_env_bool(
+                "VPROF_COVERAGE_RELEASE_GATE", True
             ),
             section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
             light_section_batch_size=_env_int(

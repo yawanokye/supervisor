@@ -107,6 +107,24 @@ def _find_rows(grouped: Dict[str, List[Dict[str, Any]]], names: Iterable[str]) -
     return []
 
 
+def _find_content_rows(paragraphs: Sequence[Dict[str, Any]], names: Iterable[str]) -> List[Dict[str, Any]]:
+    """Recognise a required element even when it is not formatted as a heading.
+
+    This is conservative: one-word aliases are ignored and multi-word labels
+    must appear in the paragraph or table title. It prevents false missing-section
+    comments where, for example, sample size or demographic characteristics are
+    clearly reported inside a broader methods/results section.
+    """
+    wanted = [normalised(name) for name in names if len(normalised(name).split()) >= 2]
+    for row in _current_rows(paragraphs):
+        haystack = normalised(
+            clean_text(row.get("table_title", "")) + " " + clean_text(row.get("text", ""))
+        )
+        if any(name in haystack for name in wanted):
+            return [row]
+    return []
+
+
 def _plain(rows: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(clean_text(row.get("text", "")) for row in rows if clean_text(row.get("text", "")))
 
@@ -157,6 +175,10 @@ def _issue(
     severity: str = "major",
     confidence: float = 0.94,
     quote: str = "",
+    example: str = "",
+    study_terms: Optional[Sequence[str]] = None,
+    missing_section_label: str = "",
+    chapter_number: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     if anchor is None:
         return None
@@ -175,7 +197,10 @@ def _issue(
         "assessment": clean_text(assessment),
         "academic_consequence": _degree_phrase(degree),
         "required_action": clean_text(action),
-        "illustrative_guidance": "",
+        "illustrative_guidance": clean_text(example),
+        "study_terms": [clean_text(value) for value in (study_terms or []) if clean_text(value)],
+        "missing_section_label": clean_text(missing_section_label),
+        "chapter_number": chapter_number if chapter_number is not None else anchor.get("chapter_number"),
         "guidance_type": "structural_guidance",
         "source_verification_required": category == "citations_and_sources",
         "context_guard_adjusted": False,
@@ -195,7 +220,7 @@ UCC_EXPECTED: Dict[int, List[Tuple[str, List[str], str, str]]] = {
         ("Significance of the Study", ["significance of the study"], "critical_analysis", "major"),
         ("Limitations of the Study", ["limitations of the study", "limitation of the study"], "chapter_structure", "major"),
         ("Scope / Delimitation of the Study", ["delimitation of the study", "delimitations of the study", "scope of the study", "scope"], "chapter_structure", "major"),
-        ("Definition of Terms", ["definition of terms", "operational definition of terms"], "objectives_questions_hypotheses", "major"),
+        ("Definition of Terms", ["definition of terms", "definition of key terms", "definition of key concepts", "definition of concepts", "operational definition of terms", "operational definitions"], "objectives_questions_hypotheses", "major"),
         ("Organisation of the Study", ["organisation of the study", "organization of the study"], "chapter_structure", "moderate"),
     ],
     2: [
@@ -223,7 +248,7 @@ UCC_EXPECTED: Dict[int, List[Tuple[str, List[str], str, str]]] = {
     4: [
         ("Introduction", ["introduction"], "chapter_structure", "moderate"),
         ("Response Rate", ["response rate"], "results_and_interpretation", "major"),
-        ("Sample Characteristics", ["sample characteristics", "demographic", "background characteristics"], "results_and_interpretation", "major"),
+        ("Sample Characteristics", ["sample characteristics", "demographic characteristics", "demographic characteristics of respondents", "background characteristics"], "results_and_interpretation", "major"),
         ("Results by Objective", ["results", "findings", "presentation of results", "hypothesis testing"], "results_and_interpretation", "critical"),
         ("Discussion of Findings", ["discussion of findings", "discussion"], "discussion_and_integration", "critical"),
         ("Diagnostic Tests", ["diagnostic tests", "model diagnostics", "assumption tests"], "results_and_interpretation", "major"),
@@ -265,25 +290,68 @@ def present_relevant_sections(paragraphs: Sequence[Dict[str, Any]]) -> Set[str]:
 
 
 def ucc_comment_floor(paragraphs: Sequence[Dict[str, Any]], academic_level: Any, depth: str) -> int:
-    # Professional review is evidence- and coverage-driven, not count-driven.
-    # The legacy floor can be re-enabled explicitly for old deployments, but it
-    # is disabled by default because quotas encourage repetitive comments.
-    if not enabled() or os.getenv("VPROF_FINDING_QUOTAS_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
-        return 0
-    degree = _degree_key(academic_level)
-    depth = normalised(str(depth or "standard")) or "standard"
-    table = {
-        "light": {"bachelors": 8, "non_research_masters": 10, "research_masters": 12, "professional_doctorate": 14, "phd": 16},
-        "standard": {"bachelors": 14, "non_research_masters": 18, "research_masters": 24, "professional_doctorate": 28, "phd": 32},
-        "advanced": {"bachelors": 20, "non_research_masters": 24, "research_masters": 32, "professional_doctorate": 38, "phd": 44},
-    }
-    base = table.get(depth, table["standard"])[degree]
-    section_minimum = max(0, len(present_relevant_sections(paragraphs)))
-    # A single uploaded chapter should still receive enough depth, but the floor
-    # should not exceed the number of supported findings available. The caller
-    # will apply evidence gates and can add fewer if the document does not
-    # support more comments.
-    return max(base, section_minimum)
+    """No predetermined UCC comment floor.
+
+    The UCC structure remains a coverage guide, but it cannot force a minimum
+    number of findings. Only evidence-backed issues are released.
+    """
+    return 0
+
+
+def _study_terms_for_chapter(paragraphs: Sequence[Dict[str, Any]], chapter: int, limit: int = 6) -> List[str]:
+    text = " ".join(
+        clean_text(row.get("text", ""))
+        for row in _current_rows(paragraphs)
+        if row.get("chapter_number") in {None, chapter}
+    )
+    candidates: List[str] = []
+    # Prefer recognisable constructs explicitly present in the current study.
+    for phrase in re.findall(
+        r"\b(?:classroom incivility|academic entitlement|academic engagement|academic achievement|academic performance|perceived academic support|perceived value|teacher self-efficacy|instructional practices|organisational performance|erratic power supply|internally generated funds|social studies)\b",
+        text,
+        flags=re.I,
+    ):
+        candidates.append(clean_text(phrase))
+    # Fall back to title/purpose patterns only after explicit construct phrases.
+    for pattern in (
+        r"(?:effect|influence|impact|relationship)\s+of\s+(.+?)\s+on\s+(.+?)(?:\s+among|\s+in\s+|[.:]|$)",
+        r"moderating\s+role\s+of\s+(.+?)(?:\s+among|\s+in\s+|[.:]|$)",
+    ):
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            candidates.extend(clean_text(value) for value in match.groups() if clean_text(value))
+    output: List[str] = []
+    for value in candidates:
+        value = re.sub(r"\s+", " ", value).strip(" ,;:-")
+        if re.match(r"^(?:these|those|this|their|the)\b", value, flags=re.I) and len(value.split()) > 4:
+            continue
+        if value and normalised(value) not in {normalised(item) for item in output}:
+            output.append(value)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _missing_section_example(label: str, terms: Sequence[str]) -> str:
+    key = normalised(label)
+    joined = ", ".join(terms[:3])
+    if key == "definition of terms":
+        return (
+            f"Define {joined} as they are used and measured in the study."
+            if joined else
+            "Define each main construct as it is used and measured in the study, rather than copying a general dictionary definition."
+        )
+    if key == "limitations of the study":
+        return "State the limitations arising from the design, sample, measurement and data collection, and explain how each one restricts interpretation or generalisation."
+    if key == "scope delimitation of the study":
+        return "State the population, location, variables or themes, period covered and the boundaries deliberately excluded from the study."
+    if key == "background to the study":
+        return "Develop the discussion from the wider context to the specific study setting, then lead clearly to the problem being investigated."
+    if key == "research questions":
+        return "Write one clear research question for each objective and retain the same constructs, population and setting in both sections."
+    if key == "organisation of the study" or key == "organization of the study":
+        return "Give one concise sentence explaining the purpose and main content of each chapter."
+    return "Add the section under a clear heading and ensure that its content performs the academic purpose expected in that chapter."
 
 
 def _missing_section_issue(paragraphs: Sequence[Dict[str, Any]], chapter: int, label: str, category: str, severity: str, degree: str) -> Optional[Dict[str, Any]]:
@@ -291,17 +359,32 @@ def _missing_section_issue(paragraphs: Sequence[Dict[str, Any]], chapter: int, l
     if label == "Research Hypotheses":
         return None
     sev = severity if degree in {"research_masters", "professional_doctorate", "phd"} else ("major" if severity == "critical" else severity)
+    chapter_words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    chapter_label = f"Chapter {chapter_words.get(chapter, chapter)}"
+    purposes = {
+        "Definition of Terms": "It helps the reader understand the exact meaning and measurement of the main concepts used in the study.",
+        "Limitations of the Study": "It shows the constraints that affect the interpretation, transferability or generalisation of the findings.",
+        "Scope / Delimitation of the Study": "It states the boundaries of the study so the reader knows what was included and excluded.",
+        "Background to the Study": "It provides the context and evidence needed to lead the reader to the research problem.",
+        "Research Questions": "It translates the objectives into answerable questions and guides the analysis.",
+        "Organisation of the Study": "It gives the reader a clear guide to the remaining chapters.",
+    }
+    terms = _study_terms_for_chapter(paragraphs, chapter)
     return _issue(
         code=f"CH{chapter}-MISSING-{normalised(label).replace(' ', '-').upper()}",
-        section=f"Chapter {chapter}",
-        title=f"Expected UCC thesis section is not evident: {label}",
-        assessment=f"The UCC thesis structure normally expects {label} in this chapter, but the work does not make that section evident.",
-        action=f"Add or clearly label the {label} section if it is required by the programme format; if the programme uses an equivalent heading, make the equivalence clear.",
+        section=chapter_label,
+        title=f"{label} is missing from {chapter_label}",
+        assessment=f"The {label} section is missing from {chapter_label}. This section is normally required under UCC thesis guidelines. {purposes.get(label, 'It is needed to complete the academic structure of the chapter.')}",
+        action=f"Add a clearly labelled {label} section in the appropriate position in {chapter_label} and develop it using the actual focus and evidence of the study.",
+        example=_missing_section_example(label, terms),
+        study_terms=terms,
+        missing_section_label=label,
+        chapter_number=chapter,
         anchor=anchor,
         category=category,
         degree=degree,
         severity=sev,
-        confidence=0.86,
+        confidence=0.91,
     )
 
 
@@ -313,9 +396,9 @@ def _thin_section_issue(label: str, rows: Sequence[Dict[str, Any]], category: st
     return _issue(
         code=f"THIN-{normalised(label).replace(' ', '-').upper()}",
         section=label,
-        title=f"The {label} section is too thin at {_degree_label(degree)}",
-        assessment=f"The section is present, but it is not developed enough to satisfy the expected thesis function at {_degree_label(degree)}.",
-        action=f"Develop the {label} section with precise evidence, justification and links to the study problem, objectives or methods as appropriate.",
+        title=f"The {label} section needs further development",
+        assessment=f"The {label} section is present, but it is too brief to perform its purpose adequately at {_degree_label(degree)}.",
+        action=f"Expand the {label} section with the specific evidence, explanation and links needed for this study.",
         anchor=anchor,
         category=category,
         degree=degree,
@@ -387,7 +470,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
     significance = _find_rows(grouped, ["significance of the study"])
     limitations = _find_rows(grouped, ["limitations of the study", "limitation of the study"])
     delimitation = _find_rows(grouped, ["delimitation of the study", "delimitations of the study", "scope of the study"])
-    definitions = _find_rows(grouped, ["definition of terms", "operational definition of terms"])
+    definitions = _find_rows(grouped, ["definition of terms", "definition of key terms", "definition of key concepts", "definition of concepts", "operational definition of terms", "operational definitions"])
     references = _find_rows(grouped, ["references"])
     full_text = _plain(_current_rows(paragraphs))
     bg = _plain(background)
@@ -880,10 +963,14 @@ def ucc_section_contract_issues(
 
     for chapter, label, names, category, severity in expected_sections_for_scope(current):
         rows = _find_rows(grouped, names)
+        found_as_heading = bool(rows)
+        if not rows:
+            rows = _find_content_rows(current, names)
         if rows:
-            # Do not complain that References-like sections are thin; focus on
-            # substantive thesis sections.
-            if label not in {"Introduction", "Organisation of the Study"}:
+            # Only assess section depth when an actual section heading was found.
+            # Content located inside a wider section counts as present and is
+            # assessed by the systematic passage reviewer instead.
+            if found_as_heading and label not in {"Introduction", "Organisation of the Study"}:
                 issues.append(_thin_section_issue(label, rows, category, severity, degree))
         else:
             # Hypotheses are conditionally required. The chapter-specific check

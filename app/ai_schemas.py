@@ -12,7 +12,7 @@ ReviewStatus = Literal[
     "not_applicable",
 ]
 Severity = Literal["critical", "major", "moderate", "minor"]
-GuidanceType = Literal["direct_correction", "structural_guidance", "conditional_guidance", "source_verification", "language_pattern"]
+GuidanceType = Literal["direct_correction", "structural_guidance", "conditional_guidance", "source_verification", "language_pattern", "statistical_verification"]
 AcademicCategory = Literal[
     "title_and_focus",
     "chapter_structure",
@@ -31,6 +31,11 @@ AcademicCategory = Literal[
     "academic_writing",
     "tables_figures_and_presentation",
     "ethics_and_integrity",
+    "measurement_and_scoring",
+    "statistical_accuracy",
+    "analysis_appropriateness",
+    "reference_integrity",
+    "document_completeness",
     "other",
 ]
 
@@ -101,6 +106,7 @@ class AcademicSectionReview(StrictModel):
     section_name: str
     section_score: float = Field(ge=0.0, le=100.0)
     section_assessment: str
+    assessed_paragraph_ids: List[str] = Field(default_factory=list)
     strengths: List[AcademicStrength] = Field(default_factory=list)
     issues: List[AcademicIssue] = Field(default_factory=list)
     coverage_warning: str = ""

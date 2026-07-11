@@ -1916,6 +1916,10 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
 
 def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
     """Return a detailed blue correction that mirrors the academic finding."""
+    safe_row = sanitise_finding_row(row)
+    if safe_row is None:
+        return ""
+    row = safe_row
     label = _canonical_group_label(row)
     issue = _sanitise_guidance(row.get("item", "") or row.get("issue_title", ""))
     assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
@@ -1946,7 +1950,7 @@ def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
         " ".join(parts),
     )
     if level != "the applicable academic level" and not explicit_level_sentence:
-        parts.append(f"At {level}, the correction should demonstrate clear scholarly judgement, methodological or analytical defensibility, and traceable support from the study evidence.")
+        parts.append(f"At {level}, the correction should be clear, evidence-based and directly linked to the purpose of the affected section.")
 
     if action:
         parts.append(_normalise_action_start(action).rstrip(" .") + ".")

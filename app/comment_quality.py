@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .document_parser import clean_text, normalised
+from .student_friendly_review import make_issue_student_friendly, make_finding_student_friendly
 
 _INTERNAL_NOTICE_RE = re.compile(
     r"(?:\s*\[?Manual confirmation recommended because the independent audit request was unavailable;?"
@@ -165,10 +166,14 @@ def strip_internal_notices(value: Any) -> str:
         # paragraph-ID or recovery details. Drop the entire sentence because the
         # remaining fragment is usually not meaningful supervision.
         text = _INTERNAL_LEAK_SENTENCE_RE.sub(" ", text)
-    text = re.sub(r"\bthe uploaded documents\b", "the submitted work", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded documents\b", "the study materials", text, flags=re.I)
     text = re.sub(r"\bthe uploaded document\b", "the study", text, flags=re.I)
-    text = re.sub(r"\buploaded documents\b", "submitted work", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded chapter\b", "the chapter", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded text\b", "the study", text, flags=re.I)
+    text = re.sub(r"\buploaded documents\b", "study materials", text, flags=re.I)
     text = re.sub(r"\buploaded document\b", "study", text, flags=re.I)
+    text = re.sub(r"\buploaded chapter\b", "chapter", text, flags=re.I)
+    text = re.sub(r"\buploaded text\b", "study", text, flags=re.I)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")
 
 
@@ -319,7 +324,9 @@ def _fallback_action(category: str) -> str:
 
 
 def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    output = dict(issue)
+    output = make_issue_student_friendly(
+        dict(issue), issue.get("_academic_level") or issue.get("academic_level")
+    )
     current_year = current_year or datetime.now(timezone.utc).year
     if _future_date_only_issue(output, current_year):
         return None
@@ -472,7 +479,9 @@ def prepare_public_issues(issues: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[s
 
 
 def sanitise_finding_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    output = dict(row)
+    output = make_finding_student_friendly(
+        dict(row), row.get("_academic_level") or row.get("academic_level")
+    )
     for field in ("item", "comment", "required_action", "illustrative_guidance", "reference_label", "section_reference", "section"):
         value = output.get(field, "")
         if field == "required_action":
