@@ -2,7 +2,7 @@
 
 ## Environment variables
 
-Set `OPENAI_API_KEY`. GPT-5.4 mini handles fast chapter review, while GPT-5.4 handles the universal factual audit, research-intensive sections and External Assessment. Review depth changes breadth and explanation, not the factual-accuracy threshold.
+Set `OPENAI_API_KEY`. GPT-5.6 Terra handles fast chapter review, while GPT-5.6 Terra handles the universal factual audit, research-intensive sections and External Assessment. Review depth changes breadth and explanation, not the factual-accuracy threshold.
 
 ## Commands
 
@@ -27,7 +27,7 @@ AI_ADVANCED_MAX_OUTPUT_TOKENS=10000
 AI_ADVANCED_SECOND_PASS=true
 ```
 
-All three review depths use the selected academic-level benchmark. Light, Standard and Advanced Review all receive a separate GPT-5.4 evidence-grounded accuracy audit. Advanced depth may be broader, but no depth bypasses factual validation.
+All three review depths use the selected academic-level benchmark. Light, Standard and Advanced Review all receive a separate GPT-5.6 Terra evidence-grounded accuracy audit. Advanced depth may be broader, but no depth bypasses factual validation.
 
 ## Institutional portal deployment
 
@@ -83,15 +83,15 @@ One OpenAI API key enables all three review levels and External Assessment:
 ```text
 OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 PRICE_OPENAI_CHAPTER_INPUT=0.75
 PRICE_OPENAI_CHAPTER_CACHED_INPUT=0.075
@@ -123,7 +123,7 @@ The grouped review workflow reduces the number of OpenAI requests substantially.
 - Standard Review processes up to 5 sections per request.
 - Advanced Review processes up to 4 sections per request.
 - Chapter groups use high reasoning.
-- GPT-5.4 is reserved for research-intensive sections, the universal audit and External Assessment.
+- GPT-5.6 Terra is reserved for research-intensive sections, the universal audit and External Assessment.
 - Omitted sections are retried in groups of up to 6, not individually.
 - Structured-output retries are disabled by default because grouped recovery handles incomplete coverage.
 
@@ -137,11 +137,11 @@ AI_RECOVERY_BATCH_SIZE=6
 AI_MAX_RECOVERY_BATCHES=2
 AI_STRUCTURED_OUTPUT_RETRIES=0
 
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
 AI_ADVANCED_SECOND_PASS=true
 AI_ADVANCED_AUDIT_MAX_FINDINGS=24
@@ -222,10 +222,10 @@ To stop a job that was already running before this version was deployed, tempora
 
 Version 1.9.1 replaces the single-model o3-mini workflow with role-based routing:
 
-- GPT-5.4 mini handles fast chapter-level assessment for Bachelor’s and taught Master’s work.
-- GPT-5.4 handles research-intensive MPhil sections and every substantive Professional Doctorate or PhD section.
-- GPT-5.4 performs the universal factual, evidence and placement audit for every depth and academic level.
-- External Assessment uses GPT-5.4, with `xhigh` reasoning for the final confidential decision.
+- GPT-5.6 Terra handles fast chapter-level assessment for Bachelor’s and taught Master’s work.
+- GPT-5.6 Terra handles research-intensive MPhil sections and every substantive Professional Doctorate or PhD section.
+- GPT-5.6 Terra performs the universal factual, evidence and placement audit for every depth and academic level.
+- External Assessment uses GPT-5.6 Terra, with `xhigh` reasoning for the final confidential decision.
 - Native Word comments use the logged-in lecturer’s full name and automatically derived initials, not “Supervisor Assistant”.
 
 Use **Clear build cache & deploy**, retain the database and persistent disk, and remove `OPENAI_REVIEW_MODEL=o3-mini` from Render. Set the role-specific variables listed in the AI provider section. The review, audit and External Assessment checkpoint hashes changed, so earlier model outputs are not reused. Existing annotated files are regenerated with the named comment author when the original source DOCX remains in persistent storage. Otherwise, submit a fresh review.
@@ -274,11 +274,11 @@ OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Supervisory review
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
 AI_CHAPTER_REVIEW_CONCURRENCY=4
 AI_CHAPTER_PACKET_MAX_CHARS=120000
@@ -287,9 +287,9 @@ AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
 AI_VERIFICATION_BATCH_SIZE=12
 
 # External examination
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS=8000
 AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS=8000
@@ -376,15 +376,15 @@ DEEPSEEK_REASONING_EFFORT=high
 DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT=high
 
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 ```
 
@@ -433,10 +433,10 @@ DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
 DEEPSEEK_THINKING_ENABLED=true
 
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_FAST_MODEL=gpt-5.4-nano
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
-OPENAI_EXPERT_MODEL=gpt-5.4
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FAST_MODEL=gpt-5.6-terra
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 
 AI_FAST_REQUEST_TIMEOUT_SECONDS=120
 AI_FAST_REQUEST_MAX_RETRIES=0
@@ -453,9 +453,9 @@ AI_FAST_AUDIT_MAX_BATCHES=1
 For Light and Standard review, the normal request plan is now:
 
 1. one DeepSeek V4 Flash first pass with thinking disabled;
-2. GPT-5.4 nano only if Flash is unavailable;
-3. one compact GPT-5.4 mini accuracy audit;
-4. no automatic GPT-5.4 escalation and no paid audit retry.
+2. GPT-5.6 Terra only if Flash is unavailable;
+3. one compact GPT-5.6 Terra accuracy audit;
+4. no automatic GPT-5.6 Terra escalation and no paid audit retry.
 
 If both the primary and low-cost fallback fail, the job stops clearly before
 starting another complete paid pass. Advanced review and External Assessment
@@ -495,7 +495,7 @@ AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS=6500
 OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=high
 ```
 
-In the Balanced profile, the expected Research Master’s/MPhil Standard path is one DeepSeek V4 Pro first pass followed by one GPT-5.4 expert audit. Non-Research Master’s Standard review retains the lower-cost Flash plus GPT-5.4 mini route. The MPhil path is intentionally deeper and may cost more than the applied Master’s route, but it remains bounded to one scholarly first pass and one expert audit.
+In the Balanced profile, the expected Research Master’s/MPhil Standard path is one DeepSeek V4 Pro first pass followed by one GPT-5.6 Terra expert audit. Non-Research Master’s Standard review retains the lower-cost Flash plus GPT-5.6 Terra route. The MPhil path is intentionally deeper and may cost more than the applied Master’s route, but it remains bounded to one scholarly first pass and one expert audit.
 
 
 ## v1.9.8.6 all-level degree-depth deployment
@@ -517,7 +517,7 @@ OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=high
 OPENAI_PHD_AUDIT_REASONING_EFFORT=xhigh
 ```
 
-Bachelor’s and Non-Research Master’s remain on the cost-efficient ordinary route. Research Master’s/MPhil, Professional Doctorate and PhD use DeepSeek V4 Pro for the research-intensive first pass and one bounded GPT-5.4 expert audit in the Balanced profile.
+Bachelor’s and Non-Research Master’s remain on the cost-efficient ordinary route. Research Master’s/MPhil, Professional Doctorate and PhD use DeepSeek V4 Pro for the research-intensive first pass and one bounded GPT-5.6 Terra expert audit in the Balanced profile.
 
 
 ## v1.9.8.6 developmental-depth deployment

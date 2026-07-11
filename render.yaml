@@ -52,27 +52,39 @@ services:
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
         value: 1.50
       - key: OPENAI_FAST_MODEL
-        value: gpt-5.4-nano
+        value: gpt-5.6-terra
       - key: OPENAI_CLEANING_MODEL
-        value: gpt-5.4-nano
+        value: gpt-5.6-terra
       - key: OPENAI_CHAPTER_MODEL
-        value: gpt-5.4-mini
+        value: gpt-5.6-terra
       - key: OPENAI_SECTION_ANALYSIS_MODEL
-        value: gpt-5.4-mini
+        value: gpt-5.6-terra
       - key: OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_EXPERT_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_AUDIT_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_EXTERNAL_DOMAIN_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
       - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
-        value: gpt-5.4
+        value: gpt-5.6-terra
+      - key: PRICE_OPENAI_TERRA_INPUT
+        value: "2.50"
+      - key: PRICE_OPENAI_TERRA_CACHED_INPUT
+        value: "0.25"
+      - key: PRICE_OPENAI_TERRA_OUTPUT
+        value: "15.00"
+      - key: PRICE_OPENAI_SOL_INPUT
+        value: "5.00"
+      - key: PRICE_OPENAI_SOL_CACHED_INPUT
+        value: "0.50"
+      - key: PRICE_OPENAI_SOL_OUTPUT
+        value: "30.00"
       - key: OPENAI_CHAPTER_REASONING_EFFORT
         value: medium
       - key: OPENAI_EXPERT_REASONING_EFFORT
@@ -182,15 +194,25 @@ services:
       - key: VPROF_DEVELOPMENTAL_COMMENTS
         value: true
       - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
-        value: true
+        value: false
+      - key: VPROF_FINDING_QUOTAS_ENABLED
+        value: false
       - key: VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS
-        value: 14
+        value: 0
       - key: VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS
-        value: 18
+        value: 0
       - key: VPROF_STANDARD_PROFESSIONAL_DOCTORATE_MIN_FINDINGS
-        value: 22
+        value: 0
       - key: VPROF_STANDARD_PHD_MIN_FINDINGS
-        value: 26
+        value: 0
+      - key: VPROF_PROFESSIONAL_REVIEW_PIPELINE
+        value: true
+      - key: VPROF_SCOPE_SPECIFIC_REPORTS
+        value: true
+      - key: VPROF_CANONICAL_FINDING_LEDGER
+        value: true
+      - key: VPROF_FULL_THESIS_EXAMINER_MODE
+        value: true
       - key: VPROF_DETERMINISTIC_SUPERVISORY_CHECKLIST
         value: true
       - key: VPROF_HARD_SUPERVISORY_CHECKLIST

@@ -1,3 +1,11 @@
+# v1.9.9.19 - Professional reviewer and examiner pipeline
+
+- Added scope-specific professional behaviour for chapter, combined-chapter and complete-thesis review.
+- Added chapter specialist roles, a canonical finding ledger, chapter judgements, cross-chapter alignment and an examiner-style complete-thesis recommendation.
+- Removed forced finding quotas and prior-study example contamination.
+- Unified report, native DOCX, inline annotated DOCX and correction numbering.
+- Strengthened methods, results and discussion auditing while distinguishing verified inconsistencies from matters requiring original analytical output.
+
 # Changelog
 
 ## 1.9.8.6 - Final MPhil Standard depth and clean native comments

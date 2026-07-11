@@ -74,10 +74,10 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 The routing profile is controlled by `VPROF_ROUTING_PROFILE`.
 
-- **Balanced**, recommended: Bachelor’s and Non-Research Master’s Light/Standard review use DeepSeek V4 Flash with GPT-5.4 nano as the low-cost fallback and one GPT-5.4 mini audit. Research Master’s/MPhil review uses DeepSeek V4 Pro for the scholarly first pass and one bounded GPT-5.4 expert audit. Advanced review remains eligible for GPT-5.4 expert judgement.
+- **Balanced**, recommended: Bachelor’s and Non-Research Master’s Light/Standard review use DeepSeek V4 Flash with GPT-5.6 Terra as the low-cost fallback and one GPT-5.6 Terra audit. Research Master’s/MPhil review uses DeepSeek V4 Pro for the scholarly first pass and one bounded GPT-5.6 Terra expert audit. Advanced review remains eligible for GPT-5.6 Terra expert judgement.
 - **Economy**: DeepSeek V4 Flash handles Light and Standard review, with DeepSeek V4 Pro as the provider fallback. DeepSeek V4 Pro also handles Advanced review.
-- **Quality**: OpenAI leads normal review. DeepSeek provides provider-failure fallback, while GPT-5.4 remains available for expert escalation.
-- Non-Research Master’s Light and Standard final audits use one GPT-5.4 mini request. Research Master’s/MPhil Standard review uses one bounded GPT-5.4 expert audit. Neither route duplicates the complete first pass.
+- **Quality**: OpenAI leads normal review. DeepSeek provides provider-failure fallback, while GPT-5.6 Terra remains available for expert escalation.
+- Non-Research Master’s Light and Standard final audits use one GPT-5.6 Terra request. Research Master’s/MPhil Standard review uses one bounded GPT-5.6 Terra expert audit. Neither route duplicates the complete first pass.
 - External Assessment remains OpenAI-led for the final degree recommendation. DeepSeek V4 Pro is used only if an OpenAI request fails.
 - The first pass is not duplicated by automatic router escalation. The independent audit is the only normal second-model call.
 - Every accepted response still passes strict Pydantic validation, exact evidence-ID checks, deterministic factual gates and native-comment placement checks.
@@ -89,7 +89,7 @@ The routing profile is controlled by `VPROF_ROUTING_PROFILE`.
 - Transient provider, timeout and evidence-validation failures are queued and retried automatically.
 - Automatic retries generate fresh provider checkpoints instead of replaying a defective response.
 - The portal remains in Queued or Processing status during recovery. It does not enter an automatic Paused state.
-- A final GPT-5.4 grounded rescue runs only when the normal audit would otherwise leave no valid comments.
+- A final GPT-5.6 Terra grounded rescue runs only when the normal audit would otherwise leave no valid comments.
 - No report or annotated DOCX is released until factual evidence and native Word comments are confirmed.
 
 
@@ -179,15 +179,15 @@ Lecturers can:
 
 ```env
 OPENAI_API_KEY=sk-...
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 DATABASE_URL=postgresql://...
 SESSION_SECRET=use-a-long-random-secret
@@ -318,7 +318,7 @@ The active review workflow is deliberately compact:
 3. Review independent chapters concurrently.
 4. Retry omitted content once at chapter-packet level.
 5. Run deterministic factual and placement checks.
-6. Audit approved findings in compact GPT-5.4 batches.
+6. Audit approved findings in compact GPT-5.6 Terra batches.
 7. Generate the report and native Word comments.
 
 This architecture removes the repeated section-recovery loop while retaining section-level evidence and comments.
@@ -345,7 +345,7 @@ The application now uses two compact, evidence-grounded workflows.
 3. Review independent chapters concurrently.
 4. Retry omitted material once at chapter-packet level.
 5. Apply deterministic factual and placement checks.
-6. Audit proposed findings in compact GPT-5.4 batches.
+6. Audit proposed findings in compact GPT-5.6 Terra batches.
 7. Generate the report and native Word comments.
 
 ### External examination
@@ -369,17 +369,17 @@ AI_CHAPTER_PACKET_MAX_CHARS=120000
 AI_CHAPTER_RECOVERY_CONCURRENCY=2
 AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS=7000
 AI_VERIFICATION_BATCH_SIZE=12
-OPENAI_CHAPTER_MODEL=gpt-5.4-mini
+OPENAI_CHAPTER_MODEL=gpt-5.6-terra
 OPENAI_CHAPTER_REASONING_EFFORT=high
-OPENAI_EXPERT_MODEL=gpt-5.4
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.4
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
 
 # External examination
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.4
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.4
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
 AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS=8000
 AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS=8000
