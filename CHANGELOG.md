@@ -1,3 +1,12 @@
+# v1.9.9.21 - Expert sequential, anchored and detailed review
+
+- Orders all findings by their actual position in the study and renumbers them sequentially from 1.
+- Anchors red reference numbers and native comments to the exact affected sentence, paragraph, or table row without splitting words.
+- Uses the study, the work, and submitted work in student-facing feedback, and names the actual standard such as “At PhD level” or “At MPhil level”.
+- Expands native comments and blue inline annotations to include the issue, academic consequence, required correction, and a current-study example where helpful.
+- Synchronises export-time findings with the canonical ledger so the report, native comments, inline annotations, and correction list retain one sequence.
+- Adds deterministic results-accuracy checks for coefficients, standard errors, t and F statistics, R², degrees of freedom, confidence intervals, p-values, frequencies, percentages, and method-specific reporting adequacy.
+
 # v1.9.9.19 - Professional reviewer and examiner pipeline
 
 - Added scope-specific professional behaviour for chapter, combined-chapter and complete-thesis review.

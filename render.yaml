@@ -188,7 +188,7 @@ services:
       - key: VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES
         value: true
       - key: VPROF_COMMENT_MAX_CHARS
-        value: 980
+        value: 1500
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
         value: 0.58
       - key: VPROF_DEVELOPMENTAL_COMMENTS
