@@ -193,11 +193,14 @@ function updateUploadWorkflow() {
   if (scopeStructureHelp) {
     if (combined) {
       scopeStructureHelp.textContent =
-        "Choose the last chapter in the range. The composite upload must contain every chapter in the selected range, beginning with Chapter One. All chapters in the range are reviewed together.";
-    } else {
+        "Professional combined-chapter review assesses every chapter in the selected range separately, then checks sequential alignment across the chapters.";
+    } else if (fullThesis) {
       scopeStructureHelp.textContent = doctoral
-        ? "Professional Doctorate and PhD theses may use custom chapter numbers, order and titles. Complete-thesis review checks core research functions, integration and contribution rather than enforcing five chapters."
-        : "Bachelor’s and Master’s complete theses are checked against the standard research structure, with justified additional chapters allowed.";
+        ? "Professional examiner mode reviews every submitted chapter, tests whole-thesis integration and contribution, audits methods and results, and gives an examiner-style recommendation without forcing a five-chapter structure."
+        : "Professional examiner mode reviews every chapter, checks the standard research functions and justified additional chapters, audits methods and results, and gives a whole-thesis recommendation.";
+    } else {
+      scopeStructureHelp.textContent =
+        "Professional chapter review assesses every section and subsection of the selected chapter and uses other supplied chapters only for relevant alignment checks.";
     }
   }
 
