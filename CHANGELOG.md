@@ -677,3 +677,11 @@
 - Added topic-safe Chapter One checks for population/scope drift, missing reference list, citation spacing/grouping, theory integration, misplaced research gap, and over-generalisation from case-study scope.
 - Treated General Objective / primary objective as an acceptable Purpose-equivalent where a programme uses that heading.
 - Renamed Scope/Delimitation handling to avoid confusing Scope of the Study with Limitations.
+
+## v1.9.9.22
+- Replaced broad chapter sampling with systematic sequential paragraph, heading and table-row coverage units.
+- Added a coverage ledger and a 100% coverage release gate.
+- Added smaller specialist packets for methods, results, analysis, discussion and tables.
+- Removed predetermined minimum comment counts and finding floors.
+- Required each review response to identify the passage IDs assessed.
+- Added coverage assurance to the professional report.

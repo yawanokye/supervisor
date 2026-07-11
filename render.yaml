@@ -197,6 +197,24 @@ services:
         value: false
       - key: VPROF_FINDING_QUOTAS_ENABLED
         value: false
+      - key: VPROF_SYSTEMATIC_COVERAGE_REVIEW
+        value: true
+      - key: VPROF_COVERAGE_PARAGRAPHS_PER_UNIT
+        value: 7
+      - key: VPROF_COVERAGE_CONTEXT_PARAGRAPHS
+        value: 1
+      - key: VPROF_COVERAGE_UNIT_MAX_CHARS
+        value: 12000
+      - key: VPROF_COVERAGE_TABLE_ROWS_PER_UNIT
+        value: 10
+      - key: VPROF_COVERAGE_UNITS_PER_REQUEST
+        value: 4
+      - key: VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST
+        value: 2
+      - key: VPROF_COVERAGE_REQUEST_MAX_CHARS
+        value: 28000
+      - key: VPROF_COVERAGE_RELEASE_GATE
+        value: true
       - key: VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS
         value: 0
       - key: VPROF_STANDARD_RESEARCH_MASTERS_MIN_FINDINGS
