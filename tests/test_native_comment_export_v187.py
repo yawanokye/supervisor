@@ -136,7 +136,7 @@ def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native
     assert paragraphs[:2] == ["Original title", "Original body text remains unchanged."]
     assert "Specific corrections required" in paragraphs
     assert any("Definition of Terms" in text for text in paragraphs)
-    assert any("Add the required section" in text for text in paragraphs)
+    assert any("Add a clearly labelled Definition of Terms section" in text for text in paragraphs)
     assert any(text.startswith("1. ") for text in paragraphs)
     comments = list(after.comments)
     assert len(comments) == 0
