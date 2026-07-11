@@ -50,11 +50,17 @@ def test_summary_report_lists_all_material_section_corrections():
     }
 
     document = Document(BytesIO(build_docx_report(review)))
-    table = next(table for table in document.tables if len(table.columns) == 3)
-    row = next(
-        row for row in table.rows
-        if "Statement of the Problem" in row.cells[0].text
+    table = next(
+        table for table in document.tables
+        if len(table.columns) == 4
+        and table.rows
+        and table.rows[0].cells[0].text == "No."
     )
-    text = row.cells[2].text
+    rows = [
+        row for row in table.rows[1:]
+        if "Statement of the Problem" in row.cells[1].text
+    ]
+    assert [row.cells[0].text for row in rows] == ["1", "2", "3", "4", "5"]
+    text = "\n".join(row.cells[3].text for row in rows)
     for index in range(1, 6):
         assert f"Required correction number {index}" in text

@@ -110,7 +110,7 @@ def test_professional_report_uses_examiner_title_and_detailed_findings():
     assert "Evidence Required for Verification" in text
 
 
-def test_native_comment_uses_canonical_finding_number():
+def test_native_comment_renumbers_from_one_in_document_order():
     document = Document()
     document.add_heading("Results", level=1)
     document.add_paragraph("The coefficient was significant.")
@@ -122,4 +122,4 @@ def test_native_comment_uses_canonical_finding_number():
     output = build_annotated_docx(source.getvalue(), review)
     comments = list(Document(io.BytesIO(output)).comments)
     assert len(comments) == 1
-    assert comments[0].text.startswith("7.")
+    assert comments[0].text.startswith("1.")
