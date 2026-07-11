@@ -150,7 +150,7 @@ def test_report_follows_specification_sections_and_includes_statistical_audit(mo
     assert "2. Overall supervisory assessment" in text
     assert "3. Methods, Results and Discussion Accuracy Audit" in text
     assert "4. Chapter-by-chapter correction plan" in text
-    assert "Detailed Professional Findings and Required Corrections" in text
+    assert "Numbered comments and detailed corrections" in text
     assert "uploaded" not in text.lower()
 
 

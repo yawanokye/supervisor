@@ -51,7 +51,7 @@ def test_ledger_numbering_follows_thesis_position_not_severity():
         "revision_results": [],
     }
     attach_professional_review_package(review)
-    assert [(row["number"], row["issue"]) for row in review["finding_ledger"]] == [
+    assert [(row["number"], row["issue"].rstrip(".")) for row in review["finding_ledger"]] == [
         (1, "Early correction"),
         (2, "Late correction"),
     ]
@@ -98,7 +98,7 @@ def test_public_comment_uses_study_and_phd_level_language():
     assert "uploaded document" not in text.lower()
     assert "selected academic level" not in text.lower()
     assert "the study" in text.lower()
-    assert "At PhD level" in text
+    assert "At PhD level" not in text
 
 
 def test_inline_annotation_is_detailed_and_uses_same_number():
@@ -126,7 +126,7 @@ def test_inline_annotation_is_detailed_and_uses_same_number():
     assert "magnitude, precision" in body
     assert "Report and interpret" in body
     assert "For example," in body
-    assert "At PhD level" in body
+    assert "At PhD level" not in body
     assert 'w:val="C00000"' in output.element.xml
 
 

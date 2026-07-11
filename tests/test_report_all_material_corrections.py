@@ -5,7 +5,7 @@ from docx import Document
 from app.report_exporter import build_docx_report
 
 
-def test_summary_report_lists_all_material_section_corrections():
+def test_summary_report_summarises_material_corrections_without_repeating_every_comment():
     findings = []
     for index in range(1, 6):
         findings.append({
@@ -50,17 +50,16 @@ def test_summary_report_lists_all_material_section_corrections():
     }
 
     document = Document(BytesIO(build_docx_report(review)))
-    table = next(
-        table for table in document.tables
-        if len(table.columns) == 4
-        and table.rows
-        and table.rows[0].cells[0].text == "No."
+    report_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "Numbered comments and detailed corrections" in report_text
+    assert "5 sequentially numbered comments" in report_text
+    assert "without repeating every comment word for word" in report_text
+    assert "Required correction number 1" in report_text
+    assert "Required correction number 5" in report_text
+    # The report is decision-led. It does not reproduce the full five-row
+    # correction register because the exact numbered guidance is in the thesis.
+    assert not any(
+        len(table.columns) == 4 and table.rows and table.rows[0].cells[0].text == "No."
+        for table in document.tables
     )
-    rows = [
-        row for row in table.rows[1:]
-        if "Statement of the Problem" in row.cells[1].text
-    ]
-    assert [row.cells[0].text for row in rows] == ["1", "2", "3", "4", "5"]
-    text = "\n".join(row.cells[3].text for row in rows)
-    for index in range(1, 6):
-        assert f"Required correction number {index}" in text
+

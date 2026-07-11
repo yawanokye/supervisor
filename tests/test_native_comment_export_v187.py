@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.21-expert-sequential-detailed-review"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.25-final-review-reconciliation"
     after_paragraphs, after_tables = _visible_content(after)
     before_paragraphs, before_tables = _visible_content(before)
     assert after_tables == before_tables
@@ -208,14 +208,14 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
     }
     output = Document(io.BytesIO(build_annotated_docx(source, review)))
     comments = list(output.comments)
-    assert len(comments) == 1
-    text = comments[0].text
-    assert "1. " in text and "2. " in text
+    assert len(comments) == 2
+    assert comments[0].text.startswith("1. ")
+    assert comments[1].text.startswith("2. ")
+    text = " ".join(comment.text for comment in comments)
     assert "Applies to" not in text
     assert "For example," in text
-    assert text.count("For example,") == 1
-    assert "[1]" in output.paragraphs[1].text and "[2]" in output.paragraphs[1].text
+    assert output.paragraphs[1].text.endswith("[1] [2]")
     stream = io.BytesIO()
     output.save(stream)
     with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as package:
-        assert 'w:val="C00000"' in package.read("word/comments.xml").decode("utf-8")
+        assert 'w:val="C00000"' in package.read("word/document.xml").decode("utf-8")

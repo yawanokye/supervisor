@@ -191,7 +191,7 @@ def test_heading_evidence_anchors_to_exact_heading_not_keyword_occurrence():
     comment_index = body_xml.index("commentRangeStart")
     assert keyword_index < target_index
     assert comment_index > keyword_index
-    assert target.text in [p.text for p in out.paragraphs]
+    assert any(p.text.startswith(target.text) for p in out.paragraphs)
 
 
 def test_summary_keeps_same_named_introductions_in_their_correct_chapters():

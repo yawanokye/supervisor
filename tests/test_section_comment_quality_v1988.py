@@ -17,7 +17,7 @@ def _source_doc() -> bytes:
     return out.getvalue()
 
 
-def test_section_comments_are_specific_not_generic_stamps():
+def test_routine_section_assessments_do_not_clutter_native_comments():
     review = {
         "summary": {"reviewer_name": "Supervisor"},
         "academic_section_reviews": [
@@ -39,18 +39,10 @@ def test_section_comments_are_specific_not_generic_stamps():
         "revision_results": [],
     }
     exported = build_annotated_docx(_source_doc(), review)
-    assert native_comment_count(exported) == 2
-    doc = Document(BytesIO(exported))
-    comments = [comment.text for comment in doc.comments]
-    joined = "\n".join(comments)
-    assert "selected academic level" not in joined
-    assert "No major issues" not in joined
-    assert "reviewed against" not in joined
-    assert any("broad sustainability debate" in text and "Ghanaian" in text for text in comments)
-    assert any("practical problem" in text and "empirical gap" in text for text in comments)
+    assert native_comment_count(exported) == 0
 
 
-def test_useful_model_section_assessment_is_polished_and_expanded():
+def test_section_assessment_alone_is_kept_in_report_not_native_review_pane():
     review = {
         "summary": {"reviewer_name": "Supervisor"},
         "academic_section_reviews": [
@@ -66,8 +58,5 @@ def test_useful_model_section_assessment_is_polished_and_expanded():
         "revision_results": [],
     }
     exported = build_annotated_docx(_source_doc(), review)
-    doc = Document(BytesIO(exported))
-    text = "\n".join(comment.text for comment in doc.comments)
-    assert "Issue:" not in text
-    assert "purpose is narrower" in text
-    assert "trace the design" in text or "principal construct" in text
+    assert native_comment_count(exported) == 0
+

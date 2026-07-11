@@ -82,7 +82,8 @@ def test_annotated_table_comment_names_section_and_table_without_arbitrary_red_t
 
     assert any("4.2 Regression Results, Table 4.1: Regression estimates" in text for text in comments)
     assert any("Explain the coefficient" in text for text in comments)
-    assert 'w:val="C00000"' not in out.element.xml
+    assert '[1]' in out.paragraphs[1].text
+    assert 'w:val="C00000"' in out.element.xml
 
 
 def test_degree_standard_is_independent_of_review_depth():

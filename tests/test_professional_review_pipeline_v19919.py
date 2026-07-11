@@ -105,7 +105,7 @@ def test_professional_report_uses_examiner_title_and_detailed_findings():
     output = build_docx_report(review)
     text = "\n".join(p.text for p in Document(io.BytesIO(output)).paragraphs)
     assert "PROFESSIONAL THESIS EXAMINER’S REPORT" in text
-    assert "Detailed Professional Findings and Required Corrections" in text
+    assert "Numbered comments and detailed corrections" in text
     assert "Methods, Results and Discussion Accuracy Audit" in text
     assert "Evidence Required for Verification" in text
 
