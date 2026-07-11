@@ -15,16 +15,16 @@ def _docx_bytes(document: Document) -> bytes:
     return stream.getvalue()
 
 
-def test_standard_depth_floor_orders_non_research_below_mphil(monkeypatch):
+def test_professional_review_uses_evidence_coverage_not_finding_quotas(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    monkeypatch.setenv("VPROF_COMMENT_DEPTH_FLOOR_ENABLED", "false")
     config = HybridAIConfig.from_env()
 
-    assert _degree_comment_floor("Non-Research Masters", "standard", config) == 18
-    assert _degree_comment_floor("Research Masters / MPhil", "standard", config) == 32
-    assert _degree_comment_floor("Professional Doctorate", "standard", config) == 42
-    assert _degree_comment_floor("PhD", "standard", config) == 58
-    assert _degree_comment_floor("Non-Research Masters", "standard", config) < _degree_comment_floor("Research Masters / MPhil", "standard", config)
+    assert _degree_comment_floor("Non-Research Masters", "standard", config) == 0
+    assert _degree_comment_floor("Research Masters / MPhil", "standard", config) == 0
+    assert _degree_comment_floor("Professional Doctorate", "standard", config) == 0
+    assert _degree_comment_floor("PhD", "standard", config) == 0
 
 
 def test_native_comments_export_developmental_detail(monkeypatch):

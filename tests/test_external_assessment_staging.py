@@ -88,7 +88,7 @@ def make_result(stage: str) -> ProviderResult:
         data=stage_payload(stage),
         usage=AIUsageRecord(
             provider="openai",
-            model="gpt-5.4",
+            model="gpt-5.6-terra",
             purpose=f"external_thesis_assessment_{stage}",
             input_tokens=100,
             cached_input_tokens=10,

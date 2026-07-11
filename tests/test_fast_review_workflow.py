@@ -22,14 +22,14 @@ def test_fast_defaults(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
     config = HybridAIConfig.from_env()
-    assert config.chapter_review_concurrency == 4
-    assert config.chapter_packet_max_chars == 120000
+    assert config.chapter_review_concurrency == 2
+    assert config.chapter_packet_max_chars == 60000
     assert config.verification_batch_size == 12
     assert config.structured_output_retries == 0
-    assert config.openai_chapter_model == "gpt-5.4-mini"
-    assert config.openai_expert_model == "gpt-5.4"
-    assert config.openai_final_audit_model == "gpt-5.4"
-    assert config.openai_chapter_reasoning_effort == "high"
+    assert config.openai_chapter_model == "gpt-5.6-terra"
+    assert config.openai_expert_model == "gpt-5.6-terra"
+    assert config.openai_final_audit_model == "gpt-5.6-terra"
+    assert config.openai_chapter_reasoning_effort == "medium"
 
 
 def test_legacy_batch_helper_remains_available():

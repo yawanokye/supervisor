@@ -35,13 +35,13 @@ def test_combined_adjudication_schema_keeps_corrections_and_decision_together():
 
 def test_external_role_specific_environment(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("OPENAI_EXTERNAL_DOMAIN_MODEL", "gpt-5.4")
-    monkeypatch.setenv("OPENAI_EXTERNAL_ADJUDICATOR_MODEL", "gpt-5.5")
+    monkeypatch.setenv("OPENAI_EXTERNAL_DOMAIN_MODEL", "gpt-5.6-terra")
+    monkeypatch.setenv("OPENAI_EXTERNAL_ADJUDICATOR_MODEL", "gpt-5.6-sol")
     monkeypatch.setenv("OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT", "high")
     monkeypatch.setenv("OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT", "xhigh")
     config = HybridAIConfig.from_env()
-    assert config.openai_external_domain_model == "gpt-5.4"
-    assert config.openai_external_adjudicator_model == "gpt-5.5"
+    assert config.openai_external_domain_model == "gpt-5.6-terra"
+    assert config.openai_external_adjudicator_model == "gpt-5.6-sol"
     assert config.openai_external_domain_reasoning_effort == "high"
     assert config.openai_external_adjudicator_reasoning_effort == "xhigh"
 

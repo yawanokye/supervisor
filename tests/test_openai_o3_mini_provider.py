@@ -73,7 +73,7 @@ def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch
     )
 
     assert captured["url"].endswith("/responses")
-    assert captured["payload"]["model"] == "gpt-5.4-mini"
+    assert captured["payload"]["model"] == "gpt-5.6-terra"
     assert captured["payload"]["reasoning"] == {"effort": "high"}
     assert captured["payload"]["text"]["format"]["type"] == "json_schema"
     assert captured["payload"]["text"]["format"]["strict"] is True
@@ -82,7 +82,7 @@ def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch
     assert captured["max_retries"] == 0
     assert result.data == {"judgement": "supported", "evidence_ids": ["P1"]}
     assert result.usage.provider == "openai"
-    assert result.usage.model == "gpt-5.4-mini"
+    assert result.usage.model == "gpt-5.6-terra"
     assert result.usage.cached_input_tokens == 20
 
 
