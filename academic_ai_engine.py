@@ -30,7 +30,24 @@ from .ai_schemas import (
 )
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
+from .coverage_review import build_coverage_ledger, build_coverage_units, coverage_packets
+from .review_enrichment import enrich_finding_row
+from .statistical_review import statistical_warnings_to_issues
+from .thorough_review import thorough_review_deterministic_issues
+from .articleready_review_bridge import attach_articleready_quality_audit
+from .professional_review_pipeline import (
+    attach_professional_review_package,
+    professional_scope_contract,
+    professional_scope_profile,
+    specialist_role_for_chapter,
+)
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
+from .ucc_section_contract import (
+    missing_section_labels_in_output,
+    present_relevant_sections,
+    ucc_comment_floor,
+    ucc_section_contract_issues,
+)
 from .supervisory_accuracy_guard import (
     apply_accuracy_gate,
     build_factual_index,
@@ -278,39 +295,12 @@ def _degree_audit_max_findings(academic_level: Any, depth: str) -> int:
 
 
 def _degree_comment_floor(academic_level: Any, depth: str, config: HybridAIConfig) -> int:
-    """Minimum material comments to preserve for a non-trivial chapter.
+    """Predetermined finding floors were removed in v1.9.9.22.
 
-    v1.9.9.3 makes the floor stronger for every academic level. The floor is
-    still not a licence to invent issues; it tells the orchestrator to keep
-    evidence-anchored, public-safe findings instead of over-compressing the
-    review into a small number of comments.
+    Review depth and academic level determine the standard and explanatory depth,
+    never the number of comments. The visible finding count is entirely evidence-led.
     """
-    if not config.comment_depth_floor_enabled:
-        return 0
-    key = _degree_key(academic_level)
-    if depth == "light":
-        return {
-            "bachelors": 8,
-            "non_research_masters": 10,
-            "research_masters": 12,
-            "professional_doctorate": 14,
-            "phd": 16,
-        }[key]
-    if depth == "standard":
-        return {
-            "bachelors": 14,
-            "non_research_masters": max(18, config.standard_non_research_min_findings),
-            "research_masters": max(24, config.standard_research_masters_min_findings),
-            "professional_doctorate": max(28, config.standard_professional_doctorate_min_findings),
-            "phd": max(32, config.standard_phd_min_findings),
-        }[key]
-    return {
-        "bachelors": 20,
-        "non_research_masters": max(24, config.standard_non_research_min_findings + 6),
-        "research_masters": max(32, config.standard_research_masters_min_findings + 8),
-        "professional_doctorate": max(38, config.standard_professional_doctorate_min_findings + 10),
-        "phd": max(44, config.standard_phd_min_findings + 12),
-    }[key]
+    return 0
 
 
 def _degree_required_public_categories(academic_level: Any, selected_chapter: Any, depth: str) -> Set[str]:
@@ -407,10 +397,10 @@ def _degree_specific_review_contract(
         chapter = 0
 
     common = [
-        "Evaluate every detected section and subsection using direct evidence from the uploaded document.",
+        "Evaluate every detected section and subsection using direct evidence from the study or work under review.",
         "Distinguish a missing element from a present but weakly developed element.",
         "Consolidate recurring proofreading defects, but do not merge distinct conceptual, alignment, citation or methodological problems.",
-        "Check factual support, source traceability, internal consistency and the limits of inference at the declared programme level.",
+        "Check factual support, source traceability, internal consistency and the limits of inference at the actual academic level.",
     ]
 
     if key == "bachelors":
@@ -493,8 +483,8 @@ def _degree_specific_review_contract(
         "degree_key": key,
         "orientation": DEGREE_LEVEL_PROFILES[key].get("orientation", key),
         "review_depth": depth,
-        "per_section_issue_ceiling_not_quota": _degree_issue_limit(academic_level, depth),
-        "independent_audit_material_finding_capacity": _degree_audit_max_findings(academic_level, depth),
+        "comment_count_rule": "No predetermined comment count. Preserve every distinct material issue supported by evidence and do not invent issues.",
+        "coverage_driven_review": True,
         "mandatory_dimensions": common + required,
         "chapter_specific_mandatory_checks": chapter_checks,
         "contribution_standard": contribution,
@@ -978,8 +968,17 @@ def _batch_prompt(
             "part": section.get("part", 1),
             "cross_chapter_audit": bool(section.get("alignment_audit")),
             "revision_audit": bool(section.get("revision_audit")),
+            "specialist_reviewer_role": specialist_role_for_chapter(
+                section.get("chapter_number"), section.get("heading", "")
+            ),
             "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
+            "coverage_unit": bool(section.get("coverage_unit")),
+            "coverage_unit_kind": section.get("coverage_unit_kind", "section"),
+            "coverage_unit_index": section.get("coverage_unit_index"),
+            "coverage_unit_total": section.get("coverage_unit_total"),
+            "target_paragraph_ids": list(section.get("target_paragraph_ids") or []),
+            "context_paragraph_ids": list(section.get("context_paragraph_ids") or []),
             "extra_context": section.get("extra_context") or {},
         })
     doctoral_structure = bool(
@@ -1070,6 +1069,8 @@ def _batch_prompt(
             "depth_expectation": benchmark["review_intensity_expectation"],
             "review_intensity": benchmark["review_intensity"],
             "degree_specific_review_contract": degree_contract,
+            "professional_reviewer_profile": professional_scope_profile(summary),
+            "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -1082,12 +1083,10 @@ def _batch_prompt(
             "return_exactly_one_review_for_each_section_key": True,
             "section_assessment_required_even_when_no_issue_is_found": True,
             "strengths_should_be_reported_where_deserved": True,
-            "normal_issue_limit_per_section": _degree_issue_limit(
-                summary.get("academic_level"), depth
-            ),
-            "independent_audit_material_finding_capacity": _degree_audit_max_findings(
-                summary.get("academic_level"), depth
-            ),
+            "comment_count_rule": "No predetermined minimum or maximum. Return every distinct material issue supported by the target text and no issue where the target is adequate.",
+            "review_units_are_coverage_targets_not_samples": True,
+            "every_target_paragraph_or_table_row_must_be_assessed": True,
+            "assessed_paragraph_ids_must_list_all_target_paragraph_ids": True,
             "degree_standard_must_not_change_with_depth": True,
             "degree_specific_dimensions_must_be_explicitly_assessed": True,
         },
@@ -1124,17 +1123,19 @@ def _batch_prompt(
             "the_guideline_strengthens_but_does_not_replace_the_existing_academic_review": True,
         },
         "instruction": (
-            "Review every supplied section and subsection at the stated benchmark. Return exactly one review for every section_key. "
-            "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate sections. "
-            "A section may have zero issues only after a substantive assessment. "
+            "Review every supplied coverage unit at the actual academic level. Return exactly one review for every section_key. "
+            "For each coverage unit, assess every target_paragraph_id or target table row individually, use context_paragraph_ids only to understand continuity, and return all target IDs in assessed_paragraph_ids. "
+            "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate passages. "
+            "A target passage may have zero issues only after a substantive assessment. There is no predetermined number of comments: report every distinct material issue and do not invent issues to reach a count. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
             + complete_structure_instruction
-            + "For Chapters Three and Four, determine which diagnostics are required by the actual statistical model, verify their presence and interpretation, and check numerical and inferential consistency across text, tables and figures. "
+            + "For Chapters Three and Four, first identify the actual research design and analysis route from the submitted document, then apply only the diagnostics and reporting requirements appropriate to that route. Conduct a level-appropriate methods-results-discussion audit across quantitative, qualitative, mixed-methods, review, experimental, econometric, SEM, mediation, moderation or other designs as applicable. Verify design-sampling alignment, instrument or protocol quality, reliability/validity/trustworthiness, data screening, model choice, assumptions, diagnostic thresholds, statistical or qualitative table completeness, numerical consistency where enough evidence is present, hypothesis/research-question decisions and discussion claims. For PROCESS, mediation, moderation, SEM, regression, ANOVA, t-test, chi-square, panel/time-series, thematic analysis and mixed-methods integration, require the specific outputs only when that analysis is actually used. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
             "Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. "
-            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant."
+            "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For Research Master’s/MPhil and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, source traceability and contribution wherever relevant. "
+            "Apply the professional_scope_contract exactly: a single chapter receives a bounded chapter judgement, combined chapters receive separate chapter judgements plus an integration audit, and a complete thesis receives examiner-style chapter judgements, whole-thesis alignment, methods-results accuracy evaluation, contribution assessment and a defensible recommendation."
         ),
         "sections": sections,
     }
@@ -1251,6 +1252,8 @@ def _verification_prompt(
             "review_benchmark": benchmark["degree_standard"],
             "depth_expectation": benchmark["review_intensity_expectation"],
             "degree_specific_review_contract": degree_contract,
+            "professional_reviewer_profile": professional_scope_profile(summary),
+            "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
             key: value for key, value in context_lock.items()
@@ -1260,15 +1263,16 @@ def _verification_prompt(
         "source_paragraphs": list(paragraphs.values()),
         "proposed_reviews": proposals,
         "instruction": (
-            "Independently verify the proposed issues at the stated benchmark. Remove unsupported, repetitive or misplaced findings; "
+            "Independently verify the proposed issues at the actual academic level. Remove unsupported, repetitive or misplaced findings; "
             "correct severity and evidence; add important missed issues; and confirm that all sections received a substantive assessment. "
             "Reject any example, citation, statistic, country, location, organisation, population or design assumption not found in the source. "
             "Apply the declared degree standard to originality, theoretical contribution, methodological defensibility, "
             "robustness, alternative explanations and contribution. Advanced Review increases scrutiny but not the degree level. "
-            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the declared level and add material missed issues even when the primary review did not propose them. Keep the issue ordering by academic level and review depth, so a Standard Research Master’s/MPhil review should normally retain more material, research-intensive findings than a Standard Non-Research Master’s review of the same weak chapter. In Chapter One this includes problem-gap evidence, "
+            "Use the degree_specific_review_contract as a mandatory coverage map. Independently test every relevant dimension at the actual academic level and add material missed issues even when the primary review did not propose them. The number of findings must arise solely from the evidence, not from the degree label or a target count. In Chapter One this includes problem-gap evidence, "
             "critical background synthesis, construct roles, title-purpose-objective-question alignment, causal-language compatibility, prospective significance, "
             "definition quality, citation-reference correspondence, uncited empirical claims and source traceability. "
             "Reject generic comments, misplaced evidence, incorrect section headings and incorrect or missing table references. "
+            "Verify that the proposed review follows the professional_scope_contract. Single-chapter comments must remain bounded, combined-chapter reviews must assess every included chapter and their alignment, and complete-thesis reviews must support an examiner-style synthesis. "
             "Do not invent issues to reach a number, but do not compress distinct material defects into a single vague comment."
         ),
     }
@@ -1392,11 +1396,29 @@ def _valid_issue(
     allowed_ids: Optional[set[str]] = None,
     canonical_section: str = "",
 ) -> Optional[Dict[str, Any]]:
+    # v1.9.9.8: deterministic UCC/checklist findings carry internal metadata
+    # such as checklist_code and verification_status. The strict public AI schema
+    # must validate only the actual AcademicIssue fields; otherwise these
+    # evidence-backed deterministic findings are silently discarded before they
+    # can reach the DOCX comments. Preserve the metadata after validation.
+    metadata_keys = {
+        "checklist_code",
+        "checklist_item",
+        "verification_status",
+        "manual_confirmation_required",
+    }
+    metadata = {key: issue.get(key) for key in metadata_keys if key in issue}
+    schema_fields = set(AcademicIssue.model_fields.keys())
+    candidate = {key: value for key, value in dict(issue).items() if key in schema_fields}
+    if candidate.get("guidance_type") not in {"direct_correction", "structural_guidance", "conditional_guidance", "source_verification", "language_pattern"}:
+        candidate["guidance_type"] = "structural_guidance"
     try:
-        parsed = AcademicIssue.model_validate(issue).model_dump()
+        parsed = AcademicIssue.model_validate(candidate).model_dump()
     except Exception:
         return None
+    parsed.update(metadata)
     parsed = sanitise_issue(parsed, context_lock)
+    parsed.update(metadata)
     evidence_ids = [
         pid for pid in parsed["evidence_paragraph_ids"]
         if pid in paragraph_index and (allowed_ids is None or pid in allowed_ids)
@@ -1566,7 +1588,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
     if table_reference:
         reference_label = f"{section}, {table_reference}"
 
-    return {
+    row = {
         "review_type": "academic_finding",
         "finding_id": issue.get("finding_id", ""),
         "category": issue.get("category", "other"),
@@ -1594,6 +1616,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "verification_status": issue.get("verification_status", "deterministic_or_primary"),
         "manual_confirmation_required": bool(issue.get("manual_confirmation_required")),
     }
+    return enrich_finding_row(row)
 
 
 
@@ -1785,15 +1808,24 @@ async def enrich_review_with_academic_ai(
     context_lock = build_context_lock(all_paragraphs, review.get("summary") or {})
     factual_index = build_factual_index(current)
 
-    groups = _section_groups(current)
-    max_section_chars = (
-        max(12000, min(22000, config.max_context_chars_per_rule * 2))
-        if depth == "light" else
-        max(8000, min(18000, config.max_context_chars_per_rule * 2))
-    )
-    sections: List[Dict[str, Any]] = []
-    for group in groups:
-        sections.extend(_split_group(group, max_section_chars))
+    if config.systematic_coverage_review_enabled:
+        sections = build_coverage_units(
+            current,
+            prose_paragraphs_per_unit=config.coverage_prose_paragraphs_per_unit,
+            context_paragraphs=config.coverage_context_paragraphs,
+            max_chars_per_unit=config.coverage_unit_max_chars,
+            table_rows_per_unit=config.coverage_table_rows_per_unit,
+        )
+    else:
+        groups = _section_groups(current)
+        max_section_chars = (
+            max(12000, min(22000, config.max_context_chars_per_rule * 2))
+            if depth == "light" else
+            max(8000, min(18000, config.max_context_chars_per_rule * 2))
+        )
+        sections: List[Dict[str, Any]] = []
+        for group in groups:
+            sections.extend(_split_group(group, max_section_chars))
 
     whole_audit = _selected_audit_paragraphs(current, max(config.max_map_input_chars, 28000))
     if whole_audit:
@@ -1874,13 +1906,23 @@ async def enrich_review_with_academic_ai(
             "The selected review service is not configured on the server."
         )
 
-    # Review complete chapters in parallel. A long chapter is split only at
-    # section boundaries when it exceeds the configured packet budget.
-    section_batches = _chapter_review_packets(
-        sections, config.chapter_packet_max_chars
-    )
+    # Systematic mode reviews small sequential paragraph/table units instead of
+    # sampling or sending a whole chapter as one broad request. Every substantive
+    # paragraph and table row belongs to one target unit. Context paragraphs help
+    # interpretation but are not substitute review targets.
+    if config.systematic_coverage_review_enabled:
+        section_batches = coverage_packets(
+            sections,
+            max_units_per_request=config.coverage_units_per_request,
+            high_risk_units_per_request=config.coverage_high_risk_units_per_request,
+            max_chars_per_request=config.coverage_request_max_chars,
+        )
+    else:
+        section_batches = _chapter_review_packets(
+            sections, config.chapter_packet_max_chars
+        )
 
-    await _notify(progress_callback, 35, "Reviewing chapters in parallel")
+    await _notify(progress_callback, 35, "Reviewing every paragraph and table in systematic coverage units")
 
     completed_primary_batches = 0
     progress_lock = asyncio.Lock()
@@ -1931,7 +1973,7 @@ async def enrich_review_with_academic_ai(
                     stage_key,
                     input_hash=input_hash,
                     progress=35,
-                    message=f"Reviewing chapter packet containing {len(batch)} section(s)",
+                    message=f"Reviewing coverage packet containing {len(batch)} unit(s)",
                 )
             result = await provider.complete_json(
                 model=model,
@@ -1964,7 +2006,7 @@ async def enrich_review_with_academic_ai(
                     result,
                     input_hash=input_hash,
                     progress=53,
-                    message="Academic chapter packet completed",
+                    message="Systematic coverage packet completed",
                 )
 
         if track_primary_progress:
@@ -1976,7 +2018,7 @@ async def enrich_review_with_academic_ai(
                 await _notify(
                     progress_callback,
                     min(progress, 53),
-                    f"Reviewed chapter packet {completed_primary_batches} of {len(section_batches)}",
+                    f"Reviewed coverage packet {completed_primary_batches} of {len(section_batches)}",
                 )
         return result
 
@@ -2080,7 +2122,9 @@ async def enrich_review_with_academic_ai(
                 continue
 
             used_ids.add(id(data))
-            allowed_ids = {_pid(paragraph) for paragraph in section.get("paragraphs") or []}
+            all_unit_ids = {_pid(paragraph) for paragraph in section.get("paragraphs") or []}
+            target_ids = set(section.get("target_paragraph_ids") or [])
+            allowed_ids = target_ids or all_unit_ids
             canonical_section = clean_text(section.get("heading", "Untitled section"))
             valid_issues = [
                 valid
@@ -2116,16 +2160,41 @@ async def enrich_review_with_academic_ai(
                 section.get("paragraphs") or [],
             )
             coverage_warning, _ = sanitise_generated_text(data.get("coverage_warning", ""), context_lock)
-            section_reviews.append({
+            assessed_ids = [
+                pid for pid in data.get("assessed_paragraph_ids") or []
+                if pid in allowed_ids
+            ]
+            # Compatibility with older providers and cached checkpoints: an exact
+            # review response for one coverage unit is treated as an assessment of
+            # all of that unit's targets when the model omitted the new bookkeeping
+            # field. New prompts explicitly require the field.
+            assessment_inferred = False
+            if section.get("coverage_unit") and not assessed_ids and section_assessment:
+                assessed_ids = list(section.get("target_paragraph_ids") or [])
+                assessment_inferred = True
+            assessed_ids = list(dict.fromkeys(assessed_ids))
+            coverage_complete = not target_ids or target_ids.issubset(set(assessed_ids))
+            review_row = {
                 "section_key": section["section_key"], "heading": clean_text(section.get("heading", "Untitled section")),
                 "chapter_number": section.get("chapter_number"),
                 "section_path": list(section.get("section_path") or []),
                 "part": section.get("part", 1), "paragraph_count": len(section.get("paragraphs") or []),
+                "target_paragraph_count": len(target_ids),
+                "assessed_paragraph_ids": assessed_ids,
+                "coverage_complete": coverage_complete,
+                "coverage_assessment_inferred": assessment_inferred,
                 "section_score": float(data.get("section_score") or 0),
                 "section_assessment": section_assessment,
                 "coverage_warning": coverage_warning,
                 "strengths": valid_strengths, "issues": valid_issues, "source_section": section,
-            })
+            }
+            # Recovery may return a more complete version of the same unit. Keep
+            # one canonical row per section_key and prefer complete coverage.
+            existing_index = next((i for i, row in enumerate(section_reviews) if row.get("section_key") == section["section_key"]), None)
+            if existing_index is None:
+                section_reviews.append(review_row)
+            elif coverage_complete or not section_reviews[existing_index].get("coverage_complete"):
+                section_reviews[existing_index] = review_row
 
     for idx, (batch, result) in enumerate(zip(section_batches, primary_results)):
         if isinstance(result, Exception):
@@ -2137,7 +2206,10 @@ async def enrich_review_with_academic_ai(
     # attempted grouped, single-section and focused recovery in sequence, which
     # could loop at 64 percent. One compact chapter retry preserves quality while
     # bounding latency and API calls.
-    reviewed_keys = {row["section_key"] for row in section_reviews}
+    reviewed_keys = {
+        row["section_key"] for row in section_reviews
+        if row.get("coverage_complete", True)
+    }
     missing_sections = [
         section for section in sections
         if section["section_key"] not in reviewed_keys
@@ -2169,9 +2241,18 @@ async def enrich_review_with_academic_ai(
         )
 
     if missing_sections:
-        recovery_packets = _chapter_review_packets(
-            missing_sections,
-            max(24000, config.chapter_packet_max_chars // 2),
+        recovery_packets = (
+            coverage_packets(
+                missing_sections,
+                max_units_per_request=max(1, config.coverage_units_per_request // 2),
+                high_risk_units_per_request=1,
+                max_chars_per_request=max(10000, config.coverage_request_max_chars // 2),
+            )
+            if config.systematic_coverage_review_enabled
+            else _chapter_review_packets(
+                missing_sections,
+                max(24000, config.chapter_packet_max_chars // 2),
+            )
         )
         recovery_tokens = min(
             primary_tokens, config.chapter_recovery_max_output_tokens
@@ -2195,7 +2276,7 @@ async def enrich_review_with_academic_ai(
                 await _notify(
                     progress_callback,
                     min(64, progress),
-                    f"Recovered chapter packet {completed_recovery_packets} of {len(recovery_packets)}",
+                    f"Recovered coverage packet {completed_recovery_packets} of {len(recovery_packets)}",
                 )
             return result
 
@@ -2213,7 +2294,10 @@ async def enrich_review_with_academic_ai(
                 continue
             consume_batch(packet, result)
 
-    reviewed_keys = {row["section_key"] for row in section_reviews}
+    reviewed_keys = {
+        row["section_key"] for row in section_reviews
+        if row.get("coverage_complete", True)
+    }
     still_missing = [
         section for section in sections
         if section["section_key"] not in reviewed_keys
@@ -2527,6 +2611,41 @@ async def enrich_review_with_academic_ai(
         if valid:
             raw_issues.append(valid)
 
+    # Professional methods-results-discussion accuracy layer. It detects the
+    # actual research route and applies only evidence-supported, method-specific
+    # checks before public cleaning and DOCX export.
+    for thorough_issue in thorough_review_deterministic_issues(
+        current,
+        academic_level=academic_level,
+        research_approach=(review.get("summary") or {}).get("research_approach"),
+    ):
+        valid = _valid_issue(thorough_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
+    # Convert deterministic statistical checks into evidence-anchored findings.
+    # Verified arithmetic inconsistencies are stated directly. Reporting omissions
+    # are labelled as matters requiring the original analytical output.
+    for statistical_issue in statistical_warnings_to_issues(
+        review.get("statistical_review") or {}, academic_level=academic_level
+    ):
+        valid = _valid_issue(statistical_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
+    # v1.9.9.8: UCC section-coverage contract. This deterministic layer
+    # ensures every relevant UCC thesis/dissertation section in the submitted
+    # chapter is assessed at the actual academic level. It is added before
+    # the evidence gate so it cannot bypass factual placement controls.
+    for ucc_issue in ucc_section_contract_issues(
+        current,
+        academic_level=academic_level,
+        depth=depth,
+    ):
+        valid = _valid_issue(ucc_issue, paragraph_index, context_lock)
+        if valid:
+            raw_issues.append(valid)
+
     raw_issues, accuracy_gate_stats = apply_accuracy_gate(
         raw_issues, paragraph_index, current
     )
@@ -2644,7 +2763,10 @@ async def enrich_review_with_academic_ai(
     # to the degree/depth floor. This protects the expected ordering: Light <
     # Standard Non-Research Master's < Standard MPhil/doctorate for the same
     # weak document, without inventing comments or making extra paid calls.
-    floor = _degree_comment_floor(academic_level, depth, config)
+    floor = max(
+        _degree_comment_floor(academic_level, depth, config),
+        ucc_comment_floor(current, academic_level, depth),
+    )
     if floor and len(all_issues) < floor and len(current) >= 12:
         existing_signatures = {_issue_signature(issue) for issue in all_issues}
         severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
@@ -2749,8 +2871,16 @@ async def enrich_review_with_academic_ai(
     # levels visibly cover their mandatory supervisory categories. This prevents
     # Bachelor's, Non-Research Master's, MPhil, Professional Doctorate and PhD
     # reviews from collapsing into a small proofreading-style comment set.
+    current_chapters = {
+        int(row.get("chapter_number"))
+        for row in current
+        if isinstance(row.get("chapter_number"), int)
+    }
+    derived_selected_chapter = summary.get("selected_chapter")
+    if not derived_selected_chapter and len(current_chapters) == 1:
+        derived_selected_chapter = next(iter(current_chapters))
     required_categories = _degree_required_public_categories(
-        academic_level, summary.get("selected_chapter"), depth
+        academic_level, derived_selected_chapter, depth
     )
     present_categories = {str(issue.get("category") or "") for issue in all_issues}
     if required_categories - present_categories or (floor and len(all_issues) < floor):
@@ -2806,8 +2936,93 @@ async def enrich_review_with_academic_ai(
                 public_quality_stats["kept"] = len(working)
                 all_issues = working
 
+    # v1.9.9.8: final UCC section preservation. The public de-duplication
+    # stage can still over-compress a weak chapter into a small set of comments.
+    # Re-test UCC section-contract findings after public cleaning and preserve
+    # evidence-backed comments until relevant sections and the level floor are
+    # adequately represented.
+    missing_ucc_sections = missing_section_labels_in_output(current, all_issues)
+    if missing_ucc_sections or (floor and len(all_issues) < floor):
+        ucc_pool: List[Dict[str, Any]] = []
+        for item in ucc_section_contract_issues(
+            current,
+            academic_level=academic_level,
+            depth=depth,
+            max_issues=max(96, floor * 4 if floor else 96),
+        ):
+            valid = _valid_issue(dict(item), paragraph_index, context_lock)
+            if valid:
+                valid["verification_status"] = "final_ucc_section_contract"
+                valid["manual_confirmation_required"] = False
+                ucc_pool.append(valid)
+        ucc_pool, _ucc_accuracy_stats = apply_accuracy_gate(ucc_pool, paragraph_index, current)
+        ucc_public, _ucc_public_stats = prepare_public_issues(ucc_pool)
+        existing_signatures = {_issue_signature(issue) for issue in all_issues}
+        existing_sections = {normalised(issue.get("section", "")) for issue in all_issues}
+        additions: List[Dict[str, Any]] = []
+
+        # First, guarantee that every present relevant UCC section with a
+        # supported issue receives at least one visible comment.
+        for candidate in ucc_public:
+            section_key = normalised(candidate.get("section", ""))
+            sig = _issue_signature(candidate)
+            if section_key in existing_sections or sig in existing_signatures:
+                continue
+            if clean_text(candidate.get("section", "")) not in missing_ucc_sections:
+                continue
+            additions.append(candidate)
+            existing_sections.add(section_key)
+            existing_signatures.add(sig)
+
+        # Then, fill the selected-level floor with remaining evidence-backed
+        # UCC contract comments. Distinct material issues in the same section
+        # should not be collapsed into one proofreading-style note.
+        if floor and len(all_issues) + len(additions) < floor:
+            for candidate in ucc_public:
+                sig = _issue_signature(candidate)
+                if sig in existing_signatures:
+                    continue
+                if str(candidate.get("severity") or "minor").lower() == "minor" and depth != "advanced":
+                    continue
+                additions.append(candidate)
+                existing_signatures.add(sig)
+                if len(all_issues) + len(additions) >= floor:
+                    break
+
+        if additions:
+            # prepare_public_issues is run again so all comments receive the
+            # same grammar, placeholder and internal-leak protections.
+            working, _ucc_working_stats = prepare_public_issues(list(all_issues) + additions)
+            if len(working) > len(all_issues):
+                public_quality_stats["final_ucc_section_contract_added"] = len(working) - len(all_issues)
+                public_quality_stats["kept"] = len(working)
+                all_issues = working
+
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
-    incomplete = verification_failed or len(section_reviews) < len(sections)
+    coverage_ledger = (
+        build_coverage_ledger(sections, section_reviews)
+        if config.systematic_coverage_review_enabled
+        else {
+            "mode": "legacy_section_review",
+            "complete": len(section_reviews) >= len(sections),
+            "unit_count": len(sections),
+            "completed_units": len(section_reviews),
+            "target_count": 0,
+            "assessed_target_count": 0,
+            "target_coverage_percent": 100.0 if len(section_reviews) >= len(sections) else 0.0,
+            "entries": [],
+            "chapters": {},
+        }
+    )
+    review["coverage_ledger"] = coverage_ledger
+    unresolved_sections_blocking = len(section_reviews) < len(sections)
+    coverage_blocking = bool(
+        config.systematic_coverage_review_enabled
+        and config.coverage_release_gate_enabled
+        and not coverage_ledger.get("complete")
+    )
+    verification_blocking = bool(verification_failed and config.strict_failure and not finding_rows)
+    incomplete = unresolved_sections_blocking or coverage_blocking or verification_blocking
     score = _academic_score(section_reviews, all_issues)
     readiness_label, readiness_meaning = (
         _light_readiness(score, all_issues, academic_level)
@@ -2869,11 +3084,23 @@ async def enrich_review_with_academic_ai(
         "degree_specific_review_contract": _degree_specific_review_contract(
             academic_level, summary.get("selected_chapter"), depth
         ),
-        "degree_calibrated_issue_ceiling": _degree_issue_limit(academic_level, depth),
-        "degree_calibrated_audit_capacity": _degree_audit_max_findings(academic_level, depth),
+        "degree_calibrated_issue_ceiling": None,
+        "degree_calibrated_audit_capacity": None,
+        "predetermined_comment_count_removed": True,
         "academic_review_score": score, "overall_score": overall,
         "readiness_label": readiness_label, "readiness_meaning": readiness_meaning,
         "academic_review_complete": not incomplete,
+        "verification_fallback_applied": bool(verification_failed),
+        "verification_blocking": bool(verification_blocking),
+        "unresolved_sections_blocking": bool(unresolved_sections_blocking),
+        "coverage_release_blocking": bool(coverage_blocking),
+        "systematic_coverage_review": bool(config.systematic_coverage_review_enabled),
+        "coverage_units_total": int(coverage_ledger.get("unit_count") or 0),
+        "coverage_units_completed": int(coverage_ledger.get("completed_units") or 0),
+        "coverage_targets_total": int(coverage_ledger.get("target_count") or 0),
+        "coverage_targets_assessed": int(coverage_ledger.get("assessed_target_count") or 0),
+        "coverage_percent": float(coverage_ledger.get("target_coverage_percent") or 0.0),
+        "comment_count_quota_used": False,
         "academic_sections_reviewed": len(actual_section_names),
         "academic_review_units_completed": len(section_reviews),
         "critical_issues": counts["critical"], "major_issues": counts["major"],
@@ -2911,9 +3138,11 @@ async def enrich_review_with_academic_ai(
         review["overall_academic_assessment"] = (
             (contextual_summary + " " if contextual_summary else "")
             + f"Every detected section and subsection was assessed concisely against the standard expected of a {benchmark['degree_label']}. "
-            + "The review reports the most material issues and provides context-aware guidance where revision is required."
+            + "The review reports every distinct material issue supported by the assessed passages and provides context-aware guidance where revision is required."
         ).strip()
     review["priority_actions"] = priority
+    review = attach_professional_review_package(review)
+    review = attach_articleready_quality_audit(review)
     review["ai_review"] = {
         "review_depth": depth,
         "review_benchmark": benchmark["degree_standard"],
@@ -2924,14 +3153,19 @@ async def enrich_review_with_academic_ai(
         "academic_review_complete": not incomplete,
         "active_provider": "cost_aware_router",
         "comment_accuracy_second_pass": bool(all_primary),
-        "comment_accuracy_audit_mode": "single_compact_evidence_audit" if all_primary else "not_required",
+        "comment_accuracy_audit_mode": "deterministic_evidence_fallback" if verification_failed else ("single_compact_evidence_audit" if all_primary else "not_required"),
         "advanced_second_pass": bool(depth == "advanced" and all_primary),
         "advanced_audit_mode": "single_compact_evidence_audit" if depth == "advanced" and all_primary else "not_applicable",
         "api_call_count": len(usage_records),
         "primary_batch_count": len(section_batches),
-        "primary_packet_mode": "chapter_level_parallel",
+        "primary_packet_mode": "systematic_paragraph_and_table_units" if config.systematic_coverage_review_enabled else "chapter_level_parallel",
         "chapter_packet_max_chars": config.chapter_packet_max_chars,
-        "coverage_recovery_mode": "single_chapter_packet_retry",
+        "coverage_request_max_chars": config.coverage_request_max_chars,
+        "coverage_units_per_request": config.coverage_units_per_request,
+        "coverage_high_risk_units_per_request": config.coverage_high_risk_units_per_request,
+        "coverage_recovery_mode": "unit_level_retry" if config.systematic_coverage_review_enabled else "single_chapter_packet_retry",
+        "coverage_percent": float(coverage_ledger.get("target_coverage_percent") or 0.0),
+        "comment_count_quota_used": False,
         "verification_batch_size": config.verification_batch_size,
         "context_guard_enabled": True,
     }
