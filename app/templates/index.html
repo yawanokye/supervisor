@@ -37,7 +37,7 @@
     {% if token_accounting_enabled %}
     <section class="workspace-token-banner">
       <div><span>Available review allocation</span><strong>{{ "{:,}".format(token_capacity.available_tokens) }} tokens</strong></div>
-      <p>Approximately {{ "{:,}".format(token_capacity.standard_pages) }} standard supervisory pages or {{ "{:,}".format(token_capacity.external_pages) }} external-examination pages. The exact reservation is calculated from the uploaded document and reconciled to actual AI usage.</p>
+      <p>Approximately {{ "{:,}".format(token_capacity.standard_pages) }} standard supervisory pages or {{ "{:,}".format(token_capacity.external_pages) }} external-examination pages. The exact reservation is calculated from the study or work and reconciled to actual AI usage.</p>
     </section>
     {% endif %}
 
@@ -174,8 +174,8 @@
               <label><input type="radio" name="review_depth" value="standard" checked><span>Standard review</span></label>
               <label><input type="radio" name="review_depth" value="advanced"><span>Advanced review</span></label>
             </div>
-            <p class="field-help" id="reviewDepthHelp">Standard Review gives a full section-by-section review at the selected academic level, with an independent comment-accuracy check.</p>
-            <div class="light-note hidden" id="lightReviewNote">Light Review remains tied to the selected academic level. It reviews every section and subsection but reports only the most material issues.</div>
+            <p class="field-help" id="reviewDepthHelp">Standard Review gives a full section-by-section review at the academic level shown above, with an independent comment-accuracy check.</p>
+            <div class="light-note hidden" id="lightReviewNote">Light Review remains tied to the academic level shown above. It reviews every section and subsection but reports only the most material issues.</div>
             <div class="doctoral-note hidden" id="doctoralNote">Professional Doctorate and PhD work is always assessed at doctoral standard. Review depth changes the intensity and amount of feedback, not the degree benchmark. Doctoral structures may use custom chapter numbers, order and titles.</div>
           </div>
 
