@@ -289,6 +289,12 @@ services:
         value: true
       - key: VPROF_UCC_SECTION_CONTRACT_MAX_ISSUES
         value: 500
+      - key: VPROF_HUMAN_SUPERVISORY_EDITOR
+        value: true
+      - key: VPROF_HUMAN_ROOT_CAUSE_CONSOLIDATION
+        value: true
+      - key: VPROF_HUMAN_JUDGEMENT_PASS
+        value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
       - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT

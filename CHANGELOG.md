@@ -733,3 +733,17 @@
 - Preserved the distinction between focused evidence integration in Chapter One and deep critical synthesis in Chapter Two.
 - Improved direct student-facing missing-section comments, insertion guidance and current-study examples without repetitive programme-level wording.
 - Retained evidence-led comment counts with no minimum or predetermined number of comments.
+
+## v1.9.9.27 — Final Human Supervisory and Examiner Editor
+
+- Added a final human-supervisor editorial pass after academic validation and before numbering/export.
+- Consolidates repeated findings by the underlying academic defect rather than by wording similarity alone.
+- Produces one natural, passage-specific comment per retained issue and does not impose a comment quota.
+- Uses study constructs and the confirmed setting in examples, while rejecting examples from the wrong chapter, method or study context.
+- Gives examples only when they genuinely help. Minor citation, language and presentation comments remain concise.
+- Adds conservative human-judgement checks for inconsistent population/scope, repeated citation presentation problems and visible language errors.
+- Keeps missing-section comments short and places them at the logical insertion point.
+- Prevents comment markers from splitting words, citations or statistical expressions.
+- Assigns final numbers only after validation, consolidation, anchoring and document-order sorting.
+- Keeps Chapter One background review focused, while retaining deeper synthesis requirements for Chapter Two.
+- Uses the same canonical human-edited finding ledger for native comments, inline annotations, correction tracking and the professional report.
