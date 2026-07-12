@@ -295,6 +295,16 @@ services:
         value: true
       - key: VPROF_HUMAN_JUDGEMENT_PASS
         value: true
+      - key: VPROF_SEMANTIC_EXAMPLE_GATE
+        value: true
+      - key: VPROF_CONTEXTUAL_ALIGNMENT_EXAMPLES
+        value: true
+      - key: VPROF_SCOPE_COMPLETENESS_AUDIT
+        value: true
+      - key: VPROF_MICRO_LANGUAGE_CITATION_AUDIT
+        value: true
+      - key: VPROF_EXPORT_ANCHOR_RECONCILIATION
+        value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
       - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT

@@ -747,3 +747,14 @@
 - Assigns final numbers only after validation, consolidation, anchoring and document-order sorting.
 - Keeps Chapter One background review focused, while retaining deeper synthesis requirements for Chapter Two.
 - Uses the same canonical human-edited finding ledger for native comments, inline annotations, correction tracking and the professional report.
+
+## v1.9.9.28 — Final Context-Guided Human Review
+
+- Added a section-aware semantic gate that removes statistical-output guidance from Chapter One problem, scope, significance and limitations comments.
+- Added study-specific examples derived from the title, objectives, questions, named setting and current constructs.
+- Added a deterministic scope-completeness audit covering setting, participant group or unit of analysis, constructs, period and exclusions.
+- Improved objective-question-hypothesis guidance by distinguishing descriptive, associational, predictive and causal intentions and by requiring operational definitions for rates and effectiveness.
+- Added a micro citation and language audit for repeated citations, missing citation spaces, fragmented citation groups, grammar, British spelling and capitalisation.
+- Added word-safe quotation clipping and final current-document anchor reconciliation so visible native comments begin at 1 and remain consecutive.
+- Kept Chapter One literature focused and selective while reserving deep critical synthesis for Chapter Two.
+- Examples are now optional and retained only when they match the exact section, issue family, study topic and required correction.
