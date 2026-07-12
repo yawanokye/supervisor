@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.25-final-review-reconciliation"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.27-human-supervisory-editor"
     after_paragraphs, after_tables = _visible_content(after)
     before_paragraphs, before_tables = _visible_content(before)
     assert after_tables == before_tables
