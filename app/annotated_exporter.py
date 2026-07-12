@@ -28,7 +28,7 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.27-human-supervisory-editor"
+ANNOTATION_EXPORT_VERSION = "1.9.9.28-context-guidance-editor"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)

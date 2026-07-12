@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -36,6 +37,13 @@ _EQUIVALENT_SECTIONS = {
     "delimitations of the study": {"delimitations of the study", "delimitation of the study", "scope and delimitations of the study", "scope and delimitation of the study", "scope of the study"},
     "chapter summary": {"chapter summary", "summary of the chapter", "chapter conclusion"},
 }
+
+
+def _env_enabled(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _clean(value: Any) -> str:
@@ -582,6 +590,132 @@ def _polish_row(row: Dict[str, Any], review: Dict[str, Any], terms: Sequence[str
     return output
 
 
+def _safe_excerpt(value: Any, limit: int = 260) -> str:
+    text = _clean(value)
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit]
+    sentence_end = max(clipped.rfind("."), clipped.rfind("?"), clipped.rfind("!"))
+    if sentence_end >= max(80, int(limit * 0.55)):
+        return clipped[: sentence_end + 1].strip()
+    word_end = clipped.rfind(" ")
+    if word_end >= max(50, int(limit * 0.65)):
+        clipped = clipped[:word_end]
+    return clipped.rstrip(" ,;:-") + "…"
+
+
+def _runtime_rows(review: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        row for row in ((review.get("_runtime_context") or {}).get("current_paragraphs") or [])
+        if isinstance(row, dict) and _clean(row.get("text"))
+    ]
+
+
+def _runtime_heading(row: Dict[str, Any]) -> str:
+    path = [value for value in (row.get("section_path") or []) if _clean(value)]
+    return _clean(row.get("heading") or row.get("section_reference") or (path[-1] if path else ""))
+
+
+def _row_has_current_evidence(row: Dict[str, Any]) -> bool:
+    return any(
+        item.get("document_role", "current") == "current" and item.get("paragraph") is not None
+        for item in (row.get("evidence") or [])
+    )
+
+
+def _last_matching_runtime_row(
+    rows: Sequence[Dict[str, Any]],
+    tokens: Sequence[str],
+    *,
+    chapter: int | None = None,
+) -> Dict[str, Any] | None:
+    wanted = tuple(_norm(token) for token in tokens if _norm(token))
+    matches: List[Dict[str, Any]] = []
+    for source in rows:
+        if chapter is not None and int(source.get("chapter_number") or 0) != chapter:
+            continue
+        heading = _norm(_runtime_heading(source))
+        path = _norm(" ".join(_clean(value) for value in (source.get("section_path") or [])))
+        if any(token in heading or token in path for token in wanted):
+            matches.append(source)
+    substantive = [row for row in matches if not row.get("is_heading") and len(_clean(row.get("text")).split()) >= 3]
+    return (substantive or matches or [None])[-1]
+
+
+def _best_export_anchor(row: Dict[str, Any], review: Dict[str, Any]) -> Dict[str, Any] | None:
+    rows = _runtime_rows(review)
+    if not rows:
+        return None
+    chapter = chapter_number(row)
+    missing = _norm(_missing_section_claim(row))
+    if missing:
+        insertion_map = {
+            "purpose of the study": ("problem statement", "statement of the problem"),
+            "research hypotheses": ("research questions", "research objectives", "specific objectives"),
+            "definition of terms": ("limitations of the study", "scope of the study", "delimitations of the study", "significance of the study"),
+            "limitations of the study": ("delimitations of the study", "scope of the study", "significance of the study"),
+            "chapter summary": ("discussion", "conceptual framework", "data analysis", "results"),
+        }
+        anchor = _last_matching_runtime_row(rows, insertion_map.get(missing, (missing,)), chapter=chapter)
+        if anchor:
+            return anchor
+
+    category_text = _norm(" ".join(_clean(row.get(field)) for field in (
+        "category", "item", "issue_title", "comment", "assessment", "required_action"
+    )))
+    if any(token in category_text for token in ("citation", "source", "reference integrity")):
+        candidates = [
+            source for source in rows
+            if (chapter is None or int(source.get("chapter_number") or 0) == chapter)
+            and re.search(r"\((?:[^()]*)\b(?:19|20)\d{2}[a-z]?(?:[^()]*)\)", _clean(source.get("text")))
+        ]
+        if candidates:
+            return candidates[0]
+
+    section = _norm(row.get("section_reference") or row.get("section") or row.get("reference_label"))
+    useful_tokens = [
+        token for token in re.split(r"[,/|]", section)
+        if len(_norm(token).split()) >= 1 and _norm(token) not in {"chapter one", "chapter two", "chapter three", "chapter four", "chapter five"}
+    ]
+    if useful_tokens:
+        anchor = _last_matching_runtime_row(rows, useful_tokens, chapter=chapter)
+        if anchor:
+            return anchor
+
+    chapter_rows = [
+        source for source in rows
+        if chapter is None or int(source.get("chapter_number") or 0) == chapter
+    ]
+    substantive = [source for source in chapter_rows if not source.get("is_heading") and len(_clean(source.get("text")).split()) >= 4]
+    return (substantive or chapter_rows or rows)[0]
+
+
+def _ensure_export_anchor(row: Dict[str, Any], review: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure every numbered actionable finding can appear beside the study text."""
+    output = dict(row)
+    if output.get("report_only") or not _env_enabled("VPROF_EXPORT_ANCHOR_RECONCILIATION", True):
+        return output
+    if not _row_has_current_evidence(output):
+        anchor = _best_export_anchor(output, review)
+        if anchor:
+            output["evidence"] = [{**anchor, "document_role": "current"}]
+            paragraph = anchor.get("paragraph")
+            if paragraph is not None:
+                ids = list(output.get("evidence_paragraph_ids") or [])
+                paragraph_id = _clean(anchor.get("paragraph_id") or anchor.get("id") or f"P{paragraph}")
+                if paragraph_id and paragraph_id not in ids:
+                    ids.insert(0, paragraph_id)
+                output["evidence_paragraph_ids"] = ids[:16]
+    if _row_has_current_evidence(output):
+        output["annotation_eligible"] = True
+        evidence = primary_evidence(output)
+        output["problematic_quote"] = _safe_excerpt(
+            output.get("problematic_quote") or evidence.get("text")
+        )
+        output["export_anchor_verified"] = True
+    return output
+
+
 def _raw_rows(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for source_key in ("academic_findings", "alignment_results", "revision_results"):
@@ -617,8 +751,12 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
     # removes irrelevant examples, adds conservative context checks and prepares
     # one natural student-facing comment for each retained issue.
     polished = edit_findings_for_human_review(polished, review, terms)
+    # Every numbered finding must have a current-document anchor. This prevents
+    # the correction register from beginning at 1 while visible Word comments
+    # begin at 2 or later.
+    polished = [_ensure_export_anchor(row, review) for row in polished]
     # Re-sanitise after every consolidation and editorial transformation, then
-    # assign numbers only once, after all filters and merges have completed.
+    # assign numbers only once, after all filters, merges and anchor repairs.
     polished = sanitise_finding_rows(polished)
     numbered = order_and_number_rows(polished)
     for row in numbered:
