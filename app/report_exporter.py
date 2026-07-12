@@ -1012,6 +1012,7 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
         doc.add_paragraph("No chapter-specific correction plan was generated.")
 
     coverage = spec.get("coverage") or {}
+    section_coverage = spec.get("section_coverage") or {}
     if coverage:
         _add_simple_heading(doc, "5. Review coverage assurance")
         counts = coverage.get("status_counts") or {}
@@ -1024,6 +1025,35 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
         next_number = 6
     else:
         next_number = 5
+
+    if section_coverage:
+        _add_simple_heading(doc, f"{next_number}. Required-section coverage")
+        entries = list(section_coverage.get("entries") or [])
+        material = [
+            item for item in entries
+            if _clean(item.get("status")) in {"MISSING", "PRESENT_BUT_INADEQUATE"}
+        ]
+        counts = section_coverage.get("counts") or {}
+        doc.add_paragraph(
+            f"The structural review assessed {section_coverage.get('applicable_section_count', 0)} applicable sections across the submitted chapters. "
+            f"Present or equivalent: {int(counts.get('PRESENT', 0)) + int(counts.get('EQUIVALENT_HEADING', 0))}; "
+            f"present but inadequate: {counts.get('PRESENT_BUT_INADEQUATE', 0)}; missing: {counts.get('MISSING', 0)}."
+        )
+        if material:
+            table = doc.add_table(rows=1, cols=4)
+            table.style = "Table Grid"
+            for cell, text in zip(table.rows[0].cells, ("Chapter", "Required section", "Status", "Correction")):
+                _set_cell_shading(cell, BRAND)
+                _set_cell_text(cell, text, True, "FFFFFF", 8.1)
+            for item in material:
+                cells = table.add_row().cells
+                location_label = "Whole study" if int(item.get("chapter_number") or 0) == 0 else f"Chapter {item.get('chapter_number')}"
+                _set_cell_text(cells[0], location_label, True, BRAND, 7.9)
+                _set_cell_text(cells[1], item.get("label"), False, INK, 7.9)
+                _set_cell_text(cells[2], item.get("status"), True, INK, 7.9)
+                correction = item.get("required_action") or f"Add a clearly labelled {item.get('label')} section in the appropriate position."
+                _set_cell_text(cells[3], correction, False, INK, 7.9)
+        next_number += 1
 
     _add_simple_heading(doc, f"{next_number}. Numbered comments and detailed corrections")
     include_details = _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False)

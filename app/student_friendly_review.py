@@ -54,9 +54,10 @@ _SECTION_PURPOSE = {
     "purpose of the study": "It should state the overall aim of the study in one clear sentence and cover the main constructs, population and setting.",
     "research objectives": "They should break the purpose into measurable tasks that can each be answered by the methods and analysis.",
     "research questions": "They should correspond directly to the objectives and use the same constructs, population and scope.",
+    "research hypotheses": "They should state the propositions tested by the inferential analysis and use the same constructs and direction as the objectives.",
     "significance of the study": "It should explain what the study may add to knowledge, practice and policy, rather than only listing beneficiaries.",
     "limitations of the study": "It should explain the main design, measurement, sampling or data constraints and how they limit interpretation of the findings.",
-    "scope / delimitation of the study": "It should state the population, setting, variables or themes, time period and boundaries deliberately covered by the study.",
+    "delimitations of the study": "It should state the population, setting, variables or themes, time period and boundaries deliberately covered by the study.",
     "definition of terms": "It should define the key concepts as they are used and measured in the study.",
     "organisation of the study": "It should give a brief and accurate account of what each chapter contains.",
     "organization of the study": "It should give a brief and accurate account of what each chapter contains.",
@@ -76,8 +77,9 @@ _SECTION_PLACEMENT = {
     "purpose of the study": "Place it after the statement of the problem.",
     "research objectives": "Place it immediately after the purpose of the study.",
     "research questions": "Place it after the research objectives.",
+    "research hypotheses": "Place it after the research questions, or immediately after the objectives where the approved format does not use research questions for inferential objectives.",
     "significance of the study": "Place it after the research questions or hypotheses.",
-    "scope / delimitation of the study": "Place it after the significance of the study.",
+    "delimitations of the study": "Place it after the significance of the study.",
     "limitations of the study": "Place it after the scope or delimitations section.",
     "definition of terms": "Place it near the end of Chapter One, before the organisation of the study.",
     "organisation of the study": "Place it at the end of Chapter One.",
@@ -242,9 +244,9 @@ def _normalise_label(label: str) -> str:
         "definition of key concepts": "definition of terms",
         "definition of concepts": "definition of terms",
         "operational definition of terms": "definition of terms",
-        "delimitation of the study": "scope / delimitation of the study",
-        "delimitations of the study": "scope / delimitation of the study",
-        "scope of the study": "scope / delimitation of the study",
+        "delimitation of the study": "delimitations of the study",
+        "scope / delimitation of the study": "delimitations of the study",
+        "scope of the study": "delimitations of the study",
         "organization of the study": "organisation of the study",
     }
     return aliases.get(low, low)
@@ -262,8 +264,16 @@ def _missing_section_example(label: str, issue: Dict[str, Any]) -> str:
         return "define the main constructs, abbreviations and study-specific terms in the same way they are used in the instrument and analysis"
     if key == "limitations of the study":
         return "explain how the design, sampling coverage, self-reported measures, data availability or study period limit the interpretation and generalisation of the findings, where applicable"
-    if key == "scope / delimitation of the study":
+    if key == "delimitations of the study":
         return "state the population, study setting, variables or themes, time period and aspects deliberately excluded from the work"
+    if key == "purpose of the study":
+        if joined:
+            return f"state in one sentence that the study examines {joined}, followed by the confirmed population and setting"
+        return "state the overall aim in one clear sentence using the same constructs, population and setting as the title and objectives"
+    if key == "research hypotheses":
+        if joined:
+            return f"formulate testable null hypotheses for the inferential relationships involving {joined}, using the same population and direction as the objectives"
+        return "formulate one testable null hypothesis for each inferential objective, or explain why the approved format uses research questions only"
     if key == "research questions":
         return "write one clear question for each objective and retain the same construct names, population and setting"
     if key == "sample size":
@@ -299,11 +309,16 @@ def _missing_section_rewrite(issue: Dict[str, Any], academic_level: Any = None) 
     placement = _SECTION_PLACEMENT.get(key, f"Add it under a clear {display_label} heading in the appropriate part of {chapter}.")
     output["issue_title"] = f"{display_label} is missing from {chapter}"
     output["item"] = output["issue_title"]
-    output["assessment"] = f"{display_label} is missing from {chapter}. This section is required under UCC thesis guidelines and the UCC thesis structure. {purpose}"
+    output["assessment"] = f"{display_label} is missing from {chapter}. This section is required under UCC thesis guidelines. {purpose}"
     output["comment"] = output["assessment"]
     output["academic_consequence"] = "Without this section, the reader cannot fully assess the structure, boundaries or interpretation of the study."
     output["required_action"] = f"Add a clearly labelled {display_label} section. {placement}"
-    output["illustrative_guidance"] = _missing_section_example(display_label, output)
+    example = _missing_section_example(display_label, output)
+    if example:
+        example = example[0].upper() + example[1:]
+        if example[-1] not in ".!?":
+            example += "."
+    output["illustrative_guidance"] = example
     output["missing_section_label"] = display_label
     return output
 

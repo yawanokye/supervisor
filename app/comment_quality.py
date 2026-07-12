@@ -439,7 +439,18 @@ def deduplicate_public_issues(issues: Sequence[Dict[str, Any]], *, threshold: Op
                 preserve_ucc_section_comments()
                 and _is_section_contract_issue(issue)
                 and _is_section_contract_issue(existing)
-                and normalised(issue.get("section", "")) != normalised(existing.get("section", ""))
+                and (
+                    int(issue.get("chapter_number") or 0) != int(existing.get("chapter_number") or 0)
+                    or normalised(
+                        issue.get("section_contract_label")
+                        or issue.get("missing_section_label")
+                        or issue.get("section", "")
+                    ) != normalised(
+                        existing.get("section_contract_label")
+                        or existing.get("missing_section_label")
+                        or existing.get("section", "")
+                    )
+                )
             ):
                 # UCC section-coverage findings must not be merged across
                 # different sections. Otherwise a Chapter One review can lose
@@ -536,6 +547,25 @@ def sanitise_finding_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 str(cleaned.get("category") or ""), str(existing.get("category") or "")
             } <= {"cross_section_coherence", "objectives_questions_hypotheses", "conceptual_clarity", "other"}
             if not (same_category or flexible_category):
+                continue
+
+            if (
+                preserve_ucc_section_comments()
+                and _is_section_contract_issue(cleaned)
+                and _is_section_contract_issue(existing)
+                and (
+                    int(cleaned.get("chapter_number") or 0) != int(existing.get("chapter_number") or 0)
+                    or normalised(
+                        cleaned.get("section_contract_label")
+                        or cleaned.get("missing_section_label")
+                        or cleaned.get("section", "")
+                    ) != normalised(
+                        existing.get("section_contract_label")
+                        or existing.get("missing_section_label")
+                        or existing.get("section", "")
+                    )
+                )
+            ):
                 continue
 
             cleaned_evidence = {

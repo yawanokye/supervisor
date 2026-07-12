@@ -392,6 +392,47 @@ def _is_structural_heading_row(row: Dict[str, Any]) -> bool:
     return bool(CHAPTER_MARKER_RE.fullmatch(text) or low in CHAPTER_TITLE_CONTAINERS)
 
 
+def _verified_missing_section(issue: Dict[str, Any]) -> bool:
+    return bool(
+        issue.get("section_contract_verified")
+        and normalised(str(issue.get("section_status") or "")) == "missing"
+        and clean_text(issue.get("missing_section_label") or issue.get("section_contract_label"))
+    )
+
+
+def _verified_missing_section_still_absent(issue: Dict[str, Any], facts: Dict[str, Any]) -> bool:
+    """Confirm a deterministic missing-section finding against chapter headings.
+
+    A missing section is anchored beside the nearest insertion point, so the
+    generic completeness guard must not interpret the anchor's substantive text
+    as evidence that the absent section exists.  We instead test the aliases
+    supplied by the section contract against headings in the relevant chapter.
+    """
+    try:
+        chapter = int(issue.get("chapter_number"))
+    except (TypeError, ValueError):
+        chapter = 0
+    aliases = [
+        normalised(value)
+        for value in (
+            list(issue.get("section_aliases") or [])
+            + [issue.get("missing_section_label"), issue.get("section_contract_label")]
+        )
+        if normalised(str(value or ""))
+    ]
+    if not aliases:
+        return False
+    headings = [
+        normalised(clean_text(row.get("text", "")))
+        for row in facts.get("chapter_rows", {}).get(chapter, [])
+        if row.get("is_heading") and clean_text(row.get("text", ""))
+    ]
+    for alias in aliases:
+        if any(alias == heading or alias in heading or heading in alias for heading in headings):
+            return False
+    return True
+
+
 
 def guard_section_assessment(
     assessment: str,
@@ -469,6 +510,21 @@ def guard_issue(
     if not ids:
         return None
     guarded["evidence_paragraph_ids"] = list(dict.fromkeys(ids))[:8]
+
+    if _verified_missing_section(guarded):
+        if not _verified_missing_section_still_absent(guarded, facts):
+            return None
+        anchor_row = paragraph_index[guarded["evidence_paragraph_ids"][0]]
+        # Preserve the deterministic section label while recording the real
+        # insertion anchor separately.  Missing-section findings are exported as
+        # chapter correction notes rather than pretending the absent section has
+        # an exact sentence anchor.
+        guarded["section"] = clean_text(guarded.get("section")) or source_section(anchor_row)
+        guarded["insertion_anchor_section"] = source_section(anchor_row)
+        guarded["confirmed_missing_section"] = True
+        guarded["problematic_quote"] = clean_text(anchor_row.get("text", ""))[:260]
+        _localise_universal_scope(guarded)
+        return guarded
 
     dominant_section = _dominant_evidence_section(guarded, paragraph_index)
     if not dominant_section:

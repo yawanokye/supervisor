@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import os
 import re
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -45,7 +46,9 @@ from .professional_review_pipeline import (
 )
 from .deterministic_supervisory_checklist import deterministic_supervisory_checklist_issues
 from .ucc_section_contract import (
+    build_section_coverage_ledger,
     missing_section_labels_in_output,
+    section_contract_key,
     present_relevant_sections,
     ucc_comment_floor,
     ucc_section_contract_issues,
@@ -272,16 +275,13 @@ def _is_research_masters_level(academic_level: Any) -> bool:
 
 
 def _degree_issue_limit(academic_level: Any, depth: str) -> int:
-    """Return a degree-calibrated per-section issue ceiling, never a quota."""
-    base = int(_review_profile(depth)["normal_issue_limit_per_section"])
-    increments = {
-        "bachelors": 0,
-        "non_research_masters": 1,
-        "research_masters": 2,
-        "professional_doctorate": 3,
-        "phd": 4,
-    }
-    return base + increments[_degree_key(academic_level)]
+    """No degree-specific comment ceiling.
+
+    Academic level changes the standard, specialist checks and explanatory
+    depth. It must not suppress a valid finding or require a fixed number of
+    comments in any section.
+    """
+    return 0
 
 
 def _degree_audit_max_findings(academic_level: Any, depth: str) -> int:
@@ -1411,6 +1411,13 @@ def _valid_issue(
         "manual_confirmation_required",
         "study_terms",
         "missing_section_label",
+        "section_contract_verified",
+        "section_status",
+        "section_contract_label",
+        "section_aliases",
+        "suggested_insertion_after",
+        "insertion_anchor_section",
+        "confirmed_missing_section",
         "chapter_number",
         "_academic_level",
     }
@@ -1627,6 +1634,14 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "annotation_eligible": bool(evidence),
         "verification_status": issue.get("verification_status", "deterministic_or_primary"),
         "manual_confirmation_required": bool(issue.get("manual_confirmation_required")),
+        "missing_section_label": clean_text(issue.get("missing_section_label", "")),
+        "section_contract_verified": bool(issue.get("section_contract_verified")),
+        "section_status": clean_text(issue.get("section_status", "")),
+        "section_contract_label": clean_text(issue.get("section_contract_label", "")),
+        "section_aliases": list(issue.get("section_aliases") or []),
+        "suggested_insertion_after": clean_text(issue.get("suggested_insertion_after", "")),
+        "insertion_anchor_section": clean_text(issue.get("insertion_anchor_section", "")),
+        "confirmed_missing_section": bool(issue.get("confirmed_missing_section")),
     }
     row = enrich_finding_row(row)
     return make_finding_student_friendly(
@@ -2956,7 +2971,27 @@ async def enrich_review_with_academic_ai(
     # Re-test UCC section-contract findings after public cleaning and preserve
     # evidence-backed comments until relevant sections and the level floor are
     # adequately represented.
-    missing_ucc_sections = missing_section_labels_in_output(current, all_issues)
+    submission_scope = (
+        summary.get("review_scope")
+        or summary.get("submission_scope")
+        or summary.get("selected_chapter")
+        or review.get("review_scope")
+        or ""
+    )
+    required_section_reconciliation = os.getenv(
+        "VPROF_REQUIRED_SECTION_RELEASE_RECONCILIATION", "true"
+    ).strip().lower() not in {"0", "false", "no", "off"}
+    missing_ucc_sections = (
+        missing_section_labels_in_output(
+            current,
+            all_issues,
+            academic_level=academic_level,
+            depth=depth,
+            submission_scope=submission_scope,
+        )
+        if required_section_reconciliation
+        else set()
+    )
     if missing_ucc_sections or (floor and len(all_issues) < floor):
         ucc_pool: List[Dict[str, Any]] = []
         for item in ucc_section_contract_issues(
@@ -2964,6 +2999,7 @@ async def enrich_review_with_academic_ai(
             academic_level=academic_level,
             depth=depth,
             max_issues=max(96, floor * 4 if floor else 96),
+            submission_scope=submission_scope,
         ):
             valid = _valid_issue(dict(item), paragraph_index, context_lock)
             if valid:
@@ -2973,17 +3009,30 @@ async def enrich_review_with_academic_ai(
         ucc_pool, _ucc_accuracy_stats = apply_accuracy_gate(ucc_pool, paragraph_index, current)
         ucc_public, _ucc_public_stats = prepare_public_issues(ucc_pool)
         existing_signatures = {_issue_signature(issue) for issue in all_issues}
-        existing_sections = {normalised(issue.get("section", "")) for issue in all_issues}
+        existing_sections = {
+            section_contract_key(
+                issue.get("chapter_number"),
+                issue.get("section_contract_label")
+                or issue.get("missing_section_label")
+                or issue.get("section", ""),
+            )
+            for issue in all_issues
+        }
         additions: List[Dict[str, Any]] = []
 
         # First, guarantee that every present relevant UCC section with a
         # supported issue receives at least one visible comment.
         for candidate in ucc_public:
-            section_key = normalised(candidate.get("section", ""))
+            candidate_label = clean_text(
+                candidate.get("section_contract_label")
+                or candidate.get("missing_section_label")
+                or candidate.get("section", "")
+            )
+            section_key = section_contract_key(candidate.get("chapter_number"), candidate_label)
             sig = _issue_signature(candidate)
             if section_key in existing_sections or sig in existing_signatures:
                 continue
-            if clean_text(candidate.get("section", "")) not in missing_ucc_sections:
+            if section_key not in missing_ucc_sections:
                 continue
             additions.append(candidate)
             existing_sections.add(section_key)
@@ -3014,6 +3063,13 @@ async def enrich_review_with_academic_ai(
                 all_issues = working
 
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
+    section_coverage_ledger = build_section_coverage_ledger(
+        current,
+        academic_level=academic_level,
+        depth=depth,
+        submission_scope=submission_scope,
+    )
+    review["section_coverage_ledger"] = section_coverage_ledger
     coverage_ledger = (
         build_coverage_ledger(sections, section_reviews)
         if config.systematic_coverage_review_enabled

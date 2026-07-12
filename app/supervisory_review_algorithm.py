@@ -36,7 +36,7 @@ Apply the programme standard silently rather than repeating “At PhD level” o
 
 
 SECTION_REVIEW_COMMAND = """
-Review each target in relation to the complete study map. Check clarity, scholarly tone, citation support, definitions, logic, evidence, theory, variables, alignment with objectives and consistency with preceding and subsequent chapters. For Chapter One, expect a focused broad-to-specific background that integrates only the evidence needed to establish the problem and gap. For Chapter Two, require deep critical synthesis across theory, context, design, measures, findings, contradictions and limitations. For every target, record one status: PASS, COMMENT, VERIFY SOURCE or RE-ANALYSE. Return no comment for PASS. A comment must be anchored to the exact target and must be written for the student, not for the software.
+Review each target in relation to the complete study map. Check clarity, scholarly tone, citation support, definitions, logic, evidence, theory, variables, alignment with objectives and consistency with preceding and subsequent chapters. Apply the deterministic required-section map at every academic level. Treat Purpose of the Study as distinct from General Objective, aggregate parent sections with their child subsections, and accept an equivalent heading only when the content performs the required function. For Chapter One, expect a focused broad-to-specific background that integrates only the evidence needed to establish the problem and gap. For Chapter Two, require deep critical synthesis across theory, context, design, measures, findings, contradictions and limitations. For every target, record one status: PASS, COMMENT, VERIFY SOURCE or RE-ANALYSE. Return no comment for PASS. A comment must be anchored to the exact target and must be written for the student, not for the software.
 """.strip()
 
 
@@ -53,6 +53,7 @@ Create the final supervisory or examiner report only from the completed coverage
 ALGORITHM_STAGES = (
     "Document ingestion and preservation",
     "Structural mapping",
+    "Required-section and subsection contract",
     "Coverage ledger",
     "Within-section review",
     "Cross-section alignment",
@@ -267,6 +268,7 @@ def build_supervisory_report_spec(review: Mapping[str, Any], professional_packag
         "chapter_plans": _chapter_plans(ledger),
         "evidence_required": list((professional_package.get("methods_results_discussion_audit") or {}).get("evidence_required") or []),
         "coverage": review.get("coverage_ledger") or {},
+        "section_coverage": review.get("section_coverage_ledger") or {},
         "finding_count": len(ledger),
         "algorithm": algorithm_contract(),
     }

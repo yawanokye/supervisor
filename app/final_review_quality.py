@@ -27,7 +27,12 @@ _EQUIVALENT_SECTIONS = {
     "references": {"references", "reference list", "bibliography", "works cited"},
     "organisation of the study": {"organisation of the study", "organization of the study", "organisation of the thesis", "organization of the thesis"},
     "research questions": {"research questions", "research question"},
-    "purpose of the study": {"purpose of the study", "aim of the study", "general objective", "main objective"},
+    # A general/main objective does not replace the distinct Purpose/Aim
+    # section required in the UCC Chapter One structure.
+    "purpose of the study": {"purpose of the study", "aim of the study", "general aim"},
+    "research objectives": {"research objectives", "objectives of the study", "general objective", "main objective", "specific objectives"},
+    "research hypotheses": {"research hypotheses", "research hypothesis", "hypotheses", "hypothesis"},
+    "delimitations of the study": {"delimitations of the study", "delimitation of the study", "scope and delimitations of the study", "scope and delimitation of the study", "scope of the study"},
     "chapter summary": {"chapter summary", "summary of the chapter", "chapter conclusion"},
 }
 
@@ -88,6 +93,9 @@ def _section_exists(label: str, headings: Sequence[str]) -> bool:
 
 
 def _missing_section_claim(row: Dict[str, Any]) -> str:
+    explicit = _clean(row.get("missing_section_label") or row.get("section_contract_label"))
+    if explicit:
+        return explicit
     text = _clean(" ".join(_clean(row.get(field)) for field in (
         "item", "issue_title", "comment", "assessment", "required_action", "section", "section_reference"
     )))
@@ -277,6 +285,8 @@ def _issue_family(row: Dict[str, Any]) -> str:
     text = _norm(" ".join(_clean(row.get(field)) for field in (
         "category", "item", "issue_title", "comment", "assessment", "required_action"
     )))
+    if _missing_section_claim(row):
+        return "missing_section"
     if any(term in text for term in ("regression", "anova", "coefficient", "r squared", "f statistic", "t statistic", "p value", "moderation", "mediation", "process", "sem", "statistical")):
         return "statistical_model"
     if any(term in text for term in ("instrument", "item allocation", "scale", "reliability", "validity", "scoring", "reverse cod", "measurement")):
@@ -293,8 +303,6 @@ def _issue_family(row: Dict[str, Any]) -> str:
         return "discussion"
     if any(term in text for term in ("grammar", "language", "spelling", "punctuation", "british english")):
         return "writing"
-    if _missing_section_claim(row):
-        return "missing_section"
     return _norm(row.get("category") or "other") or "other"
 
 
@@ -386,7 +394,11 @@ def _polish_row(row: Dict[str, Any], review: Dict[str, Any], terms: Sequence[str
     output["study_terms"] = list(terms)
     missing = _missing_section_claim(output)
     headings = _manifest_headings(review)
-    if missing and _section_exists(missing, headings):
+    verified_missing = bool(
+        output.get("section_contract_verified")
+        and _norm(output.get("section_status")) == "missing"
+    )
+    if missing and not verified_missing and _section_exists(missing, headings):
         return None
     if _is_brevity_only_false_positive(output):
         return None
