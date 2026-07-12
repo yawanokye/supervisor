@@ -28,7 +28,7 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.26-final-all-level-section-coverage"
+ANNOTATION_EXPORT_VERSION = "1.9.9.27-human-supervisory-editor"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -232,6 +232,11 @@ def _merge_comments_by_section() -> bool:
     older VPROF_EXPORT_ONE_COMMENT_PER_FINDING variable so deployments can move
     back to grouped comments with a single new env setting.
     """
+    # The final human-supervisor pipeline consolidates duplicate root causes
+    # before export. Grouping again at DOCX level would attach different issues
+    # to one sentence and make the review look mechanical.
+    if _env_bool("VPROF_HUMAN_SUPERVISORY_EDITOR", True):
+        return False
     style = _native_comment_style()
     if style in {"anchored_grouped", "evidence_grouped", "numbered_grouped", "grouped", "section_grouped", "professional"}:
         return True
@@ -407,12 +412,11 @@ def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
 
 
 def _expand_to_safe_text_span(text: str, start: int, end: int) -> Tuple[int, int]:
-    """Avoid inserting reference markers inside a word.
+    """Expand an evidence range to stable sentence or word boundaries.
 
-    When extracted evidence quotes are very short or align inside a word, the
-    previous exporter could create output such as "teache [6] r education".
-    Expand to a sentence where possible, otherwise at least expand to whole-word
-    boundaries before the native comment and red number are inserted.
+    Word comments look most natural when they sit beside the complete sentence
+    being discussed. Sentence anchoring also prevents red reference numbers from
+    splitting words when a model returns a truncated quotation.
     """
     if not text:
         return (0, 0)
@@ -420,21 +424,17 @@ def _expand_to_safe_text_span(text: str, start: int, end: int) -> Tuple[int, int
     end = max(start, min(len(text), int(end)))
     if start == end:
         return (0, len(text))
-    # Short spans are usually weak anchors. Use the containing sentence instead.
-    if end - start < 24:
-        for s, e, _sentence in _sentence_spans(text):
-            if s <= start and end <= e and e > s:
-                return (s, e)
+
+    spans = _sentence_spans(text)
+    first = next((span for span in spans if span[0] <= start < span[1]), None)
+    last = next((span for span in spans if span[0] < end <= span[1]), None)
+    if first and last:
+        return (first[0], last[1])
+
     while start > 0 and text[start - 1].isalnum() and text[start:start + 1].isalnum():
         start -= 1
     while end < len(text) and text[end - 1:end].isalnum() and text[end:end + 1].isalnum():
         end += 1
-    # Prefer the full sentence when the adjusted span is still fragmentary.
-    fragment = text[start:end].strip()
-    if len(fragment.split()) < 6:
-        for s, e, _sentence in _sentence_spans(text):
-            if s <= start and end <= e and e > s:
-                return (s, e)
     return start, end
 
 
@@ -516,6 +516,10 @@ def _comment_body(row: Dict[str, Any]) -> str:
         return ""
     row = safe_row
 
+    # The final editorial pass prepares a concise natural comment. Use it
+    # directly instead of rebuilding the same issue/why/action template here.
+    human_comment = _sanitise_guidance(row.get("student_comment", ""))
+
     reference = clean_text(
         row.get("reference_label")
         or row.get("section_reference")
@@ -533,6 +537,15 @@ def _comment_body(row: Dict[str, Any]) -> str:
             if title:
                 table_reference += f": {title}"
             reference = f"{reference}, {table_reference}" if reference else table_reference
+
+    if human_comment:
+        # Exact paragraph anchors already provide location. Prefix table
+        # comments only. Missing sections are placed at their logical insertion
+        # point, so repeating the preceding section name sounds mechanical.
+        table_comment = bool(row.get("table_reference"))
+        body = f"{reference}: {human_comment}" if reference and table_comment else human_comment
+        body = professionalise_reviewer_language(body, row.get("_academic_level") or row.get("academic_level"))
+        return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
 
     issue = _sanitise_guidance(row.get("item", ""))
     section_label = clean_text(row.get("section_reference") or row.get("section") or "")
@@ -1445,16 +1458,22 @@ def _comment_on_paragraph(
         return False
     if _export_one_comment_per_finding():
         added = False
-        prepared = _prepare_comment_list(comments)
+        prepared = sorted(
+            _prepare_comment_list(comments),
+            key=lambda value: _comment_reference_number(value) or 0,
+        )
         reference_numbers: List[int] = []
-        original_length = len(paragraph.text or "")
         for comment in prepared:
             reference_numbers.extend(_group_reference_numbers_from_comment(comment))
             if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
                 added = True
         if added and _native_group_location_markers_enabled() and reference_numbers:
-            _normalise_red_reference_markers_after_span(
-                paragraph, 0, original_length, reference_numbers
+            # Whole-paragraph anchoring is used when Word fields or hyperlinks
+            # make character offsets unreliable. Append one combined marker at
+            # the paragraph end rather than trying to calculate an internal
+            # position from incomplete run text.
+            _insert_red_reference_markers_after_span(
+                paragraph, runs[-1]._r, sorted(set(reference_numbers)), runs[-1]
             )
         return added
     if len(comments) == 1 and re.match(r"^\s*1\.\s+", comments[0]) and re.search(r"\b2\.\s+", comments[0]):
@@ -2332,18 +2351,29 @@ def build_annotated_docx(
             reference_number = 0
         if reference_number:
             numbered_rows.append((reference_number, row, comment))
-        if _is_missing_section_finding(row):
-            # A genuinely absent section has no sentence to anchor. Keep the
-            # finding in the numbered end-of-chapter correction tracker rather
-            # than attaching it to an unrelated heading or document-level range.
-            missing_section_rows.append(row)
-            continue
+        is_missing_section = _is_missing_section_finding(row)
         comment = _with_comment_reference(reference_number, comment) if reference_number else comment
         evidence = [
             item for item in (row.get("evidence") or [])
             if item.get("document_role", "current") == "current"
         ]
         evidence = _preferred_evidence(row, evidence)
+        if is_missing_section:
+            # Verified structural findings carry the paragraph after which the
+            # section should be inserted. A generic missing-section finding with
+            # no verified insertion point remains in the end-of-chapter tracker
+            # rather than being attached to an unrelated sentence.
+            insertion_paragraph = 0
+            if row.get("section_contract_verified") and evidence:
+                try:
+                    insertion_paragraph = int(evidence[0].get("paragraph"))
+                except (TypeError, ValueError):
+                    insertion_paragraph = 0
+            if insertion_paragraph and source_map.get(insertion_paragraph, {}).get("paragraph") is not None:
+                after_paragraph[insertion_paragraph].append(comment)
+                continue
+            missing_section_rows.append(row)
+            continue
         if evidence:
             best = evidence[0]
             try:
@@ -2361,7 +2391,14 @@ def build_annotated_docx(
                 if paragraph is not None:
                     quote = clean_text(row.get("problematic_quote", ""))
                     exact_start = paragraph.text.find(quote) if quote else -1
-                    if exact_start >= 0:
+                    # Word may store citations, hyperlinks and fields in nested
+                    # XML runs that python-docx does not expose through
+                    # ``paragraph.runs``. Character offsets are unsafe in that
+                    # case and previously split words such as ``challen[5]ges``.
+                    # Anchor to the complete paragraph instead.
+                    exposed_text = "".join(run.text or "" for run in paragraph.runs)
+                    offsets_are_safe = exposed_text == (paragraph.text or "")
+                    if exact_start >= 0 and offsets_are_safe:
                         by_paragraph[paragraph_number][
                             (exact_start, exact_start + len(quote))
                         ].append(comment)
@@ -2391,25 +2428,30 @@ def build_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        merged_groups = _merge_nearby_span_groups(span_groups)
+        merged_groups = _merge_nearby_span_groups(
+            span_groups, max_gap=0 if _export_one_comment_per_finding() else 24
+        )
         for (start, end), comments in reversed(merged_groups):
             if _export_one_comment_per_finding():
                 placed_any = False
-                prepared_comments = _prepare_comment_list(comments)
+                safe_start, safe_end = _expand_to_safe_text_span(paragraph.text or "", start, end)
+                prepared_comments = sorted(
+                    _prepare_comment_list(comments),
+                    key=lambda value: _comment_reference_number(value) or 0,
+                )
+                reference_numbers: List[int] = []
                 for comment in prepared_comments:
+                    reference_numbers.extend(_group_reference_numbers_from_comment(comment))
                     if _mark_span_and_insert_comment(
-                        document, paragraph, start, end, comment,
+                        document, paragraph, safe_start, safe_end, comment,
                         author=author, initials=initials,
                     ):
                         placed_any = True
                     else:
                         after_paragraph[paragraph_number].append(comment)
-                if placed_any:
-                    reference_numbers = []
-                    for comment in prepared_comments:
-                        reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+                if placed_any and reference_numbers:
                     _normalise_red_reference_markers_after_span(
-                        paragraph, start, end, reference_numbers
+                        paragraph, safe_start, safe_end, reference_numbers
                     )
                 elif comments:
                     after_paragraph[paragraph_number].extend(comments)

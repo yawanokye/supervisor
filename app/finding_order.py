@@ -77,9 +77,13 @@ def document_order_key(row: Dict[str, Any]) -> Tuple[int, int, int, int, str]:
         table_row = int(evidence.get("table_row"))
     except (TypeError, ValueError):
         table_row = 10**9
-    # Missing/unanchored section findings sit at the end of their own chapter,
-    # before the next chapter, rather than being scattered by severity.
-    if is_missing_section(row) or not evidence:
+    # A verified missing section normally carries the paragraph after which it
+    # should be inserted. Respect that insertion anchor so the correction number
+    # appears in the document's natural reading order. Only genuinely unanchored
+    # findings are placed at the end of their chapter.
+    if not evidence:
+        paragraph = 10**9
+    elif is_missing_section(row) and not row.get("section_contract_verified"):
         paragraph = 10**9
     return chapter, paragraph, table_index, table_row, _norm(row.get("item") or row.get("issue_title"))
 

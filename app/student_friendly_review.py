@@ -471,7 +471,10 @@ def make_issue_student_friendly(issue: Dict[str, Any], academic_level: Any = Non
     and keeps only examples that fit the current study.
     """
     output = dict(issue)
-    if _missing_label(output):
+    # The final human-supervisor editor has already resolved structure, wording
+    # and examples. Do not rebuild those fields during the final sanitation
+    # pass, because that can reintroduce generic examples or mechanical text.
+    if _missing_label(output) and not output.get("human_edited"):
         output = _missing_section_rewrite(output, academic_level)
 
     fields = (
@@ -498,7 +501,7 @@ def make_issue_student_friendly(issue: Dict[str, Any], academic_level: Any = Non
             output[assessment_field] = (current.rstrip(" .") + ". " + expectation).strip() if current else expectation
 
     example = _clean(output.get("illustrative_guidance"))
-    if not _example_relevant(example, output):
+    if not output.get("human_edited") and not _example_relevant(example, output):
         example = _generated_example(output) if _env_enabled("VPROF_CONTEXT_SPECIFIC_EXAMPLES", True) else ""
     output["illustrative_guidance"] = remove_app_language(example, academic_level)
 

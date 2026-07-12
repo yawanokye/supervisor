@@ -8,6 +8,7 @@ from .comment_quality import sanitise_finding_rows
 from .document_parser import clean_text, normalised
 from .finding_order import chapter_number, order_and_number_rows, primary_evidence
 from .student_friendly_review import make_finding_student_friendly
+from .human_supervisory_editor import edit_findings_for_human_review
 
 
 _LEVEL_SENTENCE_RE = re.compile(
@@ -93,9 +94,16 @@ def _section_exists(label: str, headings: Sequence[str]) -> bool:
 
 
 def _missing_section_claim(row: Dict[str, Any]) -> str:
-    explicit = _clean(row.get("missing_section_label") or row.get("section_contract_label"))
+    # ``section_contract_label`` is also present for sections classified as
+    # PRESENT_BUT_INADEQUATE. Treat it as a missing-section label only when the
+    # contract explicitly says the section is missing.
+    explicit = _clean(row.get("missing_section_label"))
     if explicit:
         return explicit
+    if _norm(row.get("section_status")) == "missing":
+        explicit = _clean(row.get("section_contract_label"))
+        if explicit:
+            return explicit
     text = _clean(" ".join(_clean(row.get(field)) for field in (
         "item", "issue_title", "comment", "assessment", "required_action", "section", "section_reference"
     )))
@@ -245,38 +253,133 @@ def _join_terms(terms: Sequence[str]) -> str:
 
 
 def _study_terms(review: Dict[str, Any]) -> List[str]:
+    """Return a short, clean set of constructs and the confirmed setting.
+
+    Examples sound human only when they use stable study entities rather than
+    n-grams assembled from nearby prose. Title and purpose statements therefore
+    take precedence. Repeated phrases are used only when no usable study focus
+    can be recovered from those sources.
+    """
     context = review.get("study_context") or {}
     title = _clean(context.get("title_or_opening_focus") or (review.get("summary") or {}).get("study_title"))
-    candidates: List[str] = []
+    primary_candidates: List[str] = []
+    fallback_candidates: List[str] = []
+
     patterns = (
         r"(?:effect|influence|impact|relationship)\s+of\s+(.+?)\s+on\s+(.+?)(?:\s+among|\s+in\s+|\s*:|$)",
         r"moderating\s+role\s+of\s+(.+?)(?:\s+among|\s+in\s+|\s*:|$)",
         r"relationship\s+between\s+(.+?)\s+and\s+(.+?)(?:\s+among|\s+in\s+|\s*:|$)",
+        r"(?:purpose|aim)\s+of\s+(?:this|the)\s+study\s+(?:is|was)\s+to\s+(?:examine|assess|investigate|determine|explore)\s+(.+?)(?:[.;]|$)",
+    )
+
+    setting_suffix = re.compile(
+        r"^(.+?)\s+(?:at|within)\s+((?:the\s+)?[A-Z][A-Za-z0-9&'’. -]{3,100}?(?:Bank|PLC|University|College|School|Hospital|Assembly|Company|Municipality|District|Region))$",
+        flags=re.I,
+    )
+
+    def add_candidate(value: Any, target: List[str]) -> None:
+        candidate = _clean(value).strip(" ,:-.")
+        if not candidate:
+            return
+        match = setting_suffix.match(candidate)
+        if match:
+            target.append(_clean(match.group(1)))
+            target.append(_clean(match.group(2)))
+        else:
+            target.append(candidate)
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, title, flags=re.I):
+            for value in match.groups():
+                add_candidate(value, primary_candidates)
+
+    # When a chapter is reviewed without its title page, recover the study focus
+    # from the purpose, objectives and problem statement. Do not use research-
+    # question lead-ins or other linking phrases as study entities.
+    runtime_rows = ((review.get("_runtime_context") or {}).get("current_paragraphs") or [])
+    focus_text = " ".join(
+        _clean(row.get("text")) for row in runtime_rows
+        if int(row.get("chapter_number") or 0) in {0, 1}
+        and any(token in _norm(row.get("heading") or row.get("section_reference") or "") for token in (
+            "title", "purpose", "objective", "background", "problem"
+        ))
     )
     for pattern in patterns:
-        match = re.search(pattern, title, flags=re.I)
-        if match:
-            candidates.extend(_clean(value) for value in match.groups() if _clean(value))
-    # Add repeated multi-word phrases from the title.
-    words = re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", title)
-    stop = {"effect", "influence", "impact", "relationship", "among", "role", "moderating", "ghana", "ghanaian", "study", "teachers", "students", "pre", "service"}
-    for size in (3, 2):
-        for idx in range(len(words) - size + 1):
-            phrase_words = words[idx:idx + size]
-            if any(word.lower() in stop for word in phrase_words):
-                continue
-            candidates.append(" ".join(phrase_words))
+        for match in re.finditer(pattern, focus_text, flags=re.I):
+            for value in match.groups():
+                add_candidate(value, fallback_candidates)
+
+    # Phrase recovery is a last resort only. It must never override clear title
+    # constructs with accidental combinations such as "internal controls fraud".
+    if not primary_candidates and not fallback_candidates:
+        words = re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", focus_text[:30000])
+        stop = {
+            "effect", "influence", "impact", "relationship", "among", "role", "moderating",
+            "ghana", "ghanaian", "study", "teachers", "students", "pre", "service", "attempts",
+            "respond", "following", "questions", "chapter", "research", "findings", "purpose",
+            "objective", "objectives", "commercial", "rural", "specifically", "general",
+        }
+        phrase_counts: Dict[str, int] = {}
+        for size in (3, 2):
+            for idx in range(len(words) - size + 1):
+                phrase_words = words[idx:idx + size]
+                if any(word.lower() in stop for word in phrase_words):
+                    continue
+                phrase = " ".join(phrase_words)
+                phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+        for phrase, count in sorted(phrase_counts.items(), key=lambda item: (-item[1], -len(item[0]))):
+            if count >= 2:
+                fallback_candidates.append(phrase)
+
+    # A clear title normally supplies the predictor, outcome and setting. Only
+    # supplement it from Chapter One when the title did not provide enough.
+    candidates = list(primary_candidates)
+    if len(candidates) < 3:
+        candidates.extend(fallback_candidates)
     output: List[str] = []
     seen = set()
+    reject = {
+        "the banking", "detection and", "fraudulent activities", "the study", "the banking sector",
+        "control systems", "internal controls fraud", "banking organizations", "financial system",
+    }
     for candidate in candidates:
         candidate = re.sub(r"\b(?:Ghana|Ghanaian|Colleges? of Education|pre-service teachers?)\b", "", candidate, flags=re.I)
-        candidate = _clean(candidate).strip(" ,:-")
-        key = _norm(candidate)
-        if len(candidate) < 5 or not key or key in seen:
+        candidate = re.sub(r"^(?:the|a|an)\s+", "", _clean(candidate), flags=re.I).strip(" ,:-")
+        words_in_candidate = candidate.lower().split()
+        if not words_in_candidate or words_in_candidate[-1] in {"and", "or", "the", "of", "in", "at"}:
             continue
+        key = _norm(candidate)
+        if len(candidate) < 5 or not key or key in seen or key in reject:
+            continue
+        # Reject accidental adjacent-construct n-grams without a connector.
+        if re.search(r"\binternal controls? fraud\b", key):
+            continue
+        replace_index = None
+        skip = False
+        for idx, old_value in enumerate(output):
+            old_key = _norm(old_value)
+            similarity = SequenceMatcher(None, key, old_key).ratio()
+            if key == old_key or similarity >= 0.82:
+                skip = True
+                break
+            if key in old_key:
+                skip = True
+                break
+            if old_key in key:
+                # Keep the longer phrase only when it remains a clean construct.
+                if len(candidate.split()) <= 7:
+                    replace_index = idx
+                else:
+                    skip = True
+                break
+        if skip:
+            continue
+        if replace_index is not None:
+            output[replace_index] = candidate
+        else:
+            output.append(candidate)
         seen.add(key)
-        output.append(candidate)
-        if len(output) >= 6:
+        if len(output) >= 4:
             break
     return output
 
@@ -389,6 +492,48 @@ def _consolidate(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return kept
 
 
+def _attach_runtime_evidence(row: Dict[str, Any], review: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve deterministic section-contract paragraph IDs to full evidence.
+
+    AI-generated findings normally arrive with an evidence list. Deterministic
+    section-contract findings may carry only IDs such as ``P24``. Resolving them
+    here keeps missing and inadequate-section comments anchored and actionable
+    even when the AI stage does not enrich them first.
+    """
+    output = dict(row)
+    if not _clean(output.get("status")):
+        if output.get("section_contract_verified"):
+            status = _norm(output.get("section_status"))
+            output["status"] = "does_not_meet_requirement" if status == "missing" else "partly_meets_requirement"
+        elif any(_clean(output.get(field)) for field in ("item", "issue_title", "comment", "assessment", "required_action")):
+            output["status"] = (
+                "does_not_meet_requirement"
+                if _norm(output.get("severity")) in {"critical", "major"}
+                else "partly_meets_requirement"
+            )
+        output.setdefault("annotation_eligible", True)
+    if output.get("evidence"):
+        return output
+    ids = {_clean(value) for value in output.get("evidence_paragraph_ids") or [] if _clean(value)}
+    if not ids:
+        return output
+    runtime_rows = ((review.get("_runtime_context") or {}).get("current_paragraphs") or [])
+    evidence = []
+    for source in runtime_rows:
+        paragraph = source.get("paragraph")
+        source_ids = {
+            _clean(source.get("paragraph_id")),
+            _clean(source.get("id")),
+            f"P{paragraph}" if paragraph is not None else "",
+        }
+        if ids.intersection(source_ids):
+            evidence.append({**source, "document_role": "current"})
+    if evidence:
+        output["evidence"] = evidence[:12]
+        output.setdefault("problematic_quote", _clean(evidence[0].get("text"))[:280])
+    return output
+
+
 def _polish_row(row: Dict[str, Any], review: Dict[str, Any], terms: Sequence[str]) -> Dict[str, Any] | None:
     output = dict(row)
     output["study_terms"] = list(terms)
@@ -461,14 +606,19 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
     terms = _study_terms(review)
     polished: List[Dict[str, Any]] = []
     for row in _raw_rows(review):
+        row = _attach_runtime_evidence(row, review)
         row = make_finding_student_friendly(row, level)
         row = _polish_row(row, review, terms)
         if row is not None:
             polished.append(row)
     polished = sanitise_finding_rows(polished)
     polished = _consolidate(polished)
-    # Re-sanitise after consolidation, then assign numbers only once, after every
-    # filter and merge has completed.
+    # A final human-supervisor editorial pass consolidates repeated root causes,
+    # removes irrelevant examples, adds conservative context checks and prepares
+    # one natural student-facing comment for each retained issue.
+    polished = edit_findings_for_human_review(polished, review, terms)
+    # Re-sanitise after every consolidation and editorial transformation, then
+    # assign numbers only once, after all filters and merges have completed.
     polished = sanitise_finding_rows(polished)
     numbered = order_and_number_rows(polished)
     for row in numbered:
@@ -477,7 +627,15 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
     # Reconcile the source rows for dashboards and any legacy consumers. The
     # canonical ledger remains the source of truth, but matching source records
     # receive the final number so no old model-generated numbers survive.
-    by_id = {_clean(row.get("finding_id")): int(row.get("finding_number")) for row in numbered if _clean(row.get("finding_id"))}
+    by_id = {}
+    for row in numbered:
+        number = int(row.get("finding_number"))
+        identifiers = [_clean(row.get("finding_id"))] + [
+            _clean(value) for value in (row.get("merged_finding_ids") or [])
+        ]
+        for identifier in identifiers:
+            if identifier:
+                by_id[identifier] = number
     for source_key in ("academic_findings", "alignment_results", "revision_results"):
         for source in review.get(source_key) or []:
             key = _clean(source.get("finding_id"))
