@@ -305,6 +305,12 @@ services:
         value: true
       - key: VPROF_EXPORT_ANCHOR_RECONCILIATION
         value: true
+      - key: VPROF_SCOPE_CONFLICT_AUDIT
+        value: true
+      - key: VPROF_STRICT_CONTEXT_EXAMPLE_VALIDATION
+        value: true
+      - key: VPROF_PROFESSIONAL_REVIEW_APPENDIX
+        value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
       - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT
