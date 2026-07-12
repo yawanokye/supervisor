@@ -40,6 +40,7 @@ from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
 INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.28-context-guidance-editor"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "1.9.9.29-professional-human-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 

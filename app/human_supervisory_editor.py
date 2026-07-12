@@ -114,56 +114,85 @@ def _table_reference(row: Dict[str, Any]) -> str:
 def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     chapter = chapter_number(row) or 999
     section = _section_text(row)
-    text = _finding_text(row)
+    finding_text = _finding_text(row)
+    finding_id = _norm(row.get("finding_id"))
+    category = _norm(row.get("category"))
     missing = _norm(_missing_label(row))
+    evidence = primary_evidence(row)
+    paragraph = evidence.get("paragraph")
+
     if missing:
         return (chapter, "missing_section", missing)
 
+    # Keep conservative human-judgement findings distinct from broader section
+    # findings. Otherwise a useful scope conflict, citation example or language
+    # example can disappear during root-cause consolidation.
+    if finding_id == "human scope consistency":
+        return (chapter, "scope_population_inconsistency")
+    if finding_id == "human scope completeness":
+        return (chapter, "scope_completeness")
+    if finding_id == "human citation presentation":
+        return (chapter, "citation_presentation_and_verification")
+    if finding_id == "human language editing":
+        return (chapter, "representative_language_editing")
+
+    if any(term in category for term in ("citation", "reference", "source")) or any(
+        term in finding_text for term in ("citation", "reference list", "source attribution", "source verification")
+    ):
+        return (chapter, "citation_presentation_and_verification")
+
     table = _norm(_table_reference(row))
-    if table and any(term in text for term in (
+    if table and any(term in finding_text for term in (
         "statistic", "regression", "anova", "coefficient", "r squared", "f statistic",
         "moderation", "mediation", "sem", "pls", "loading", "reliability", "validity",
     )):
         return (chapter, "table_model", table)
 
     if "significance" in section:
-        if any(term in text for term in ("research gap", "gap is placed", "move the research gap", "problem logic")):
+        if any(term in finding_text for term in ("research gap", "gap is placed", "move the research gap", "problem logic")):
             return (chapter, "significance_gap_placement")
-        if any(term in text for term in (
+        if any(term in finding_text for term in (
             "contribution", "theory", "theoretical", "practice", "practical", "policy",
             "stakeholder usefulness", "scholarly value", "research contribution",
         )):
             return (chapter, "significance_contribution")
 
     if "problem statement" in section:
-        if any(term in text for term in (
+        if any(term in finding_text for term in (
             "local evidence", "empirical evidence", "policy evidence", "magnitude", "scale",
             "research gap", "unresolved", "full purpose", "does not yet perform",
         )):
             return (chapter, "problem_evidence_and_gap")
 
+    if "limitation" in section:
+        if any(term in finding_text for term in (
+            "generalisation", "generalization", "single case", "transferability", "constraint",
+            "sampling", "measurement", "data collection", "access", "does not yet perform",
+        )):
+            return (chapter, "limitations_constraints_and_transferability", _norm(section))
+
     if any(term in section for term in ("scope", "delimitation")):
-        if _norm(row.get("category")) == "scope_completeness" or any(term in text for term in (
+        if category == "scope completeness" or any(term in finding_text for term in (
             "scope section is incomplete", "unit of analysis", "study period", "important exclusions",
         )):
             return (chapter, "scope_completeness")
-        if any(term in text for term in (
+        if any(term in finding_text for term in (
             "commercial bank", "rural bank", "case study", "population", "scope", "generalisation",
         )):
-            return (chapter, "scope_and_population")
+            return (chapter, "scope_and_population", paragraph)
 
     if any(term in section for term in ("question", "objective", "hypoth", "purpose")):
-        if any(term in text for term in ("align", "inferential", "relational", "impact", "effect", "hypoth")):
+        if any(term in finding_text for term in ("align", "inferential", "relational", "impact", "effect", "hypoth")):
             return (chapter, "objective_question_hypothesis_alignment")
 
-    evidence = primary_evidence(row)
     return (
         chapter,
-        evidence.get("paragraph"),
+        paragraph,
         evidence.get("table_index"),
         evidence.get("table_row"),
-        _norm(row.get("category") or "other"),
+        category or "other",
     )
+
 
 
 def _merge_evidence(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -289,8 +318,44 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
         output["required_action"] = (
             "State one study population and setting, then use that scope consistently in the title, problem, purpose, objectives, methods and conclusions."
         )
-        output["illustrative_guidance"] = (
-            "decide whether the work is a single-case study or a broader multi-institution study and revise every population reference accordingly"
+        output["illustrative_guidance"] = ""
+
+    elif family == "scope_population_inconsistency":
+        output["illustrative_guidance"] = ""
+
+    elif family == "limitations_constraints_and_transferability":
+        output["item"] = output["issue_title"] = "The limitations and limits of generalisation need clearer explanation"
+        output["comment"] = output["assessment"] = (
+            "The section mentions possible access difficulties but does not identify the main design, sampling, measurement and data-collection constraints or explain how they affect interpretation. It also claims broader generalisation than a single-case design can normally support."
+        )
+        output["academic_consequence"] = (
+            "Readers need to know both the practical constraints on the evidence and the boundaries within which the findings can reasonably be applied."
+        )
+        output["required_action"] = (
+            "Identify each material limitation and its consequence, then replace broad statistical generalisation with analytical or contextual transferability unless the sampling design supports wider inference."
+        )
+        output["illustrative_guidance"] = ""
+
+    elif family == "citation_presentation_and_verification":
+        identifiers = {_norm(output.get("finding_id"))} | {
+            _norm(value) for value in (output.get("merged_finding_ids") or [])
+        }
+        evidence_text = " ".join(_clean(item.get("text")) for item in (output.get("evidence") or []))
+        presentation_issue = (
+            "human citation presentation" in identifiers
+            or bool(re.search(r"\)\s*,\s*\(|[A-Za-z0-9]\((?:[A-Z][A-Za-z'’-]+|[A-Z]{2,})", evidence_text))
+        )
+        if not presentation_issue:
+            return output
+        output["item"] = output["issue_title"] = "The citation presentation and source attribution need systematic correction"
+        output["comment"] = output["assessment"] = (
+            "The chapter contains repeated citations, missing spaces before citation groups and fragmented parenthetical references. The accuracy and reference-list match of the retained sources also need verification."
+        )
+        output["academic_consequence"] = (
+            "These problems interrupt the argument and make it difficult to verify which source supports each claim."
+        )
+        output["required_action"] = (
+            "Correct the first marked example, apply the same citation format throughout, remove exact duplicates, combine sources supporting one claim into a single citation group and confirm that every in-text citation has a complete reference-list entry."
         )
 
     return output
@@ -378,6 +443,7 @@ def _natural_term(value: Any) -> str:
         return ""
     text = re.sub(r"\bbehavioral\b", "behavioural", text, flags=re.I)
     text = re.sub(r"\brationalization\b", "rationalisation", text, flags=re.I)
+    text = re.sub(r"\bpressures\b", "pressure", text, flags=re.I)
 
     match = re.match(
         r"^(.+?)\s+(at|within)\s+(.+?(?:Bank|PLC|University|College|School|Hospital|Assembly|Company|Municipality|District|Region)(?:\s+PLC)?)$",
@@ -442,27 +508,69 @@ def _first_sentence(value: Any) -> str:
 
 
 def _study_setting(review: Dict[str, Any], terms: Sequence[str]) -> str:
-    setting = _setting_term(terms)
-    if setting:
-        return setting
-    text = " ".join(_clean(row.get("text")) for row in _chapter_rows(review, 1))
-    patterns = (
-        r"\b((?:[A-Z][A-Za-z0-9&'’. -]+?\s+)?Rural\s+Bank(?:\s+PLC)?)\b",
-        r"\b([A-Z][A-Za-z0-9&'’. -]{3,90}?(?:Bank|University|College|School|Hospital|Assembly|Company|Municipality|District|Region)(?:\s+PLC)?)\b",
+    """Return the most specific verified study setting.
+
+    A country name is useful context but must not displace a named case such as
+    a bank, university or hospital. The document is scanned for an explicit case
+    first, then extracted study terms are used as a fallback.
+    """
+    chapter_text = " ".join(_clean(row.get("text")) for row in _chapter_rows(review, 1))
+    candidates: List[Tuple[int, str]] = []
+
+    def clean_candidate(value: Any) -> str:
+        candidate = _clean(value).strip(" ,.;:")
+        # Generic entity regexes can begin at a preceding heading or clause.
+        # Keep only the final named fragment following an explicit locator.
+        parts = re.split(
+            r"\b(?:specifically|case study(?:\s+of)?|focus(?:es|ed)?\s+on|conducted\s+at|undertaken\s+at|at)\b",
+            candidate,
+            flags=re.I,
+        )
+        if len(parts) > 1:
+            candidate = _clean(parts[-1]).strip(" ,.;:")
+        candidate = re.sub(r"^(?:the\s+)?study\s+(?:focuses|focused)\s+on\s+", "", candidate, flags=re.I)
+        words = candidate.split()
+        if len(words) > 12:
+            # Preserve the shortest suffix that still contains the institution
+            # type. Named institutional settings rarely need more than 12 words.
+            candidate = " ".join(words[-12:])
+        return candidate
+
+    explicit_patterns = (
+        r"\b(?:specifically|case study(?:\s+of)?|focus(?:es|ed)?\s+on|conducted\s+at|undertaken\s+at|at)\s+(?:the\s+)?([A-Z][A-Za-z0-9&'’. -]{2,100}?(?:Bank|University|College|School|Hospital|Assembly|Company|Municipality|District|Region)(?:\s+PLC)?)\b",
+        r"\b([A-Z][A-Za-z0-9&'’. -]{2,80}?(?:Rural\s+Bank|Commercial\s+Bank|University|College|School|Hospital|Assembly|Company)(?:\s+PLC)?)\b",
     )
-    candidates: List[str] = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            candidate = _clean(match.group(1)).strip(" ,.;:")
-            if candidate and not re.fullmatch(r"(?:Commercial|Rural) Banks?", candidate, flags=re.I):
-                candidates.append(candidate)
+    for index, pattern in enumerate(explicit_patterns):
+        for match in re.finditer(pattern, chapter_text):
+            candidate = clean_candidate(match.group(1))
+            if not candidate or re.fullmatch(r"(?:Commercial|Rural) Banks?", candidate, flags=re.I):
+                continue
+            score = 100 - index * 20
+            if re.search(r"\bPLC\b", candidate, flags=re.I):
+                score += 30
+            if re.search(r"\b(?:Bank|University|College|School|Hospital|Assembly|Company)\b", candidate, flags=re.I):
+                score += 20
+            candidates.append((score - min(len(candidate.split()), 12), candidate))
+
+    for value in terms:
+        candidate = clean_candidate(value)
+        if not candidate or not _is_setting_term(candidate):
+            continue
+        score = 10
+        if _norm(candidate) == "ghana":
+            score = 1
+        elif re.search(r"\bPLC\b", candidate, flags=re.I):
+            score = 125
+        elif re.search(r"\b(?:Bank|University|College|School|Hospital|Assembly|Company)\b", candidate, flags=re.I):
+            score = 95
+        candidates.append((score - min(len(candidate.split()), 12), candidate))
+
     if not candidates:
         return ""
-    # Prefer a named case that appears after "specifically" or "case study".
-    for candidate in candidates:
-        if re.search(rf"(?:specifically|case study(?: of)?|at)\s+(?:the\s+)?{re.escape(candidate)}", text, flags=re.I):
-            return candidate
-    return max(candidates, key=len)
+    candidates.sort(key=lambda item: (item[0], -len(item[1].split())), reverse=True)
+    return candidates[0][1]
+
+
 
 
 def _objective_texts(review: Dict[str, Any]) -> List[str]:
@@ -494,27 +602,102 @@ def _question_texts(review: Dict[str, Any]) -> List[str]:
     return list(dict.fromkeys(values))
 
 
+def _clean_relation_term(value: Any, setting: str = "") -> str:
+    text = _clean(value).strip(" ,.;:")
+    if setting:
+        text = re.sub(rf",?\s*(?:specifically|at|within)\s+(?:the\s+)?{re.escape(setting)}.*$", "", text, flags=re.I)
+    text = re.sub(r"\s+among\s+(?:commercial|rural)?\s*banks?.*$", "", text, flags=re.I)
+    text = re.sub(r"\s+among\s+[^,.;]{2,100}$", "", text, flags=re.I)
+    text = re.sub(r"\s+(?:at|within)\s+[A-Z][^,.;]{2,100}$", "", text, flags=re.I)
+    text = re.sub(r"\s+in\s+Ghana(?:ian)?\b.*$", "", text, flags=re.I)
+    return _clean(text).strip(" ,.;:")
+
+
 def _relation_pairs(review: Dict[str, Any]) -> List[Tuple[str, str]]:
-    sources = []
+    sources: List[str] = []
     context = review.get("study_context") or {}
     sources.append(_clean(context.get("title_or_opening_focus")))
     sources.append(_clean((review.get("summary") or {}).get("study_title")))
     sources.extend(_objective_texts(review))
+    setting = _study_setting(review, [])
     pairs: List[Tuple[str, str]] = []
-    for text in sources:
-        if not text:
+    seen = set()
+    for source in sources:
+        if not source:
             continue
         for pattern in (
             r"(?:effect|impact|influence)\s+of\s+(.+?)\s+on\s+(.+?)(?:[.;]|$)",
             r"relationship\s+between\s+(.+?)\s+and\s+(.+?)(?:[.;]|$)",
         ):
-            for match in re.finditer(pattern, text, flags=re.I):
-                left = _clean(match.group(1)).strip(" ,.;:")
-                right = _clean(match.group(2)).strip(" ,.;:")
-                right = re.sub(r"\s+(?:at|within)\s+[A-Z].*$", "", right).strip(" ,.;:")
-                if left and right:
-                    pairs.append((left, right))
+            for match in re.finditer(pattern, source, flags=re.I):
+                left = _clean_relation_term(match.group(1), setting)
+                right = _clean_relation_term(match.group(2), setting)
+                if not left or not right:
+                    continue
+                key = (_norm(left), _norm(right))
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append((left, right))
     return pairs
+
+
+def _specific_objectives(review: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    for value in _objective_texts(review):
+        if re.search(r"(?:primary|general|main) objective", value, flags=re.I):
+            continue
+        if re.match(r"^To\s+", value, flags=re.I):
+            values.append(_clean(value))
+    return values
+
+
+def _named_dimensions(review: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    source_text = " ".join(_specific_objectives(review) + _question_texts(review))
+    setting_norm = _norm(_study_setting(review, []))
+    for match in re.finditer(r"\(([^()]{3,120})\)", source_text):
+        parenthetical = _clean(match.group(1))
+        # A single parenthetical institution alias such as “(Assinman)” is not
+        # a construct dimension. Analytical dimensions are usually a list or a
+        # recognised multi-part factor description.
+        parts = [part for part in re.split(r",|\band\b", parenthetical, flags=re.I) if _clean(part)]
+        if len(parts) == 1 and setting_norm and _norm(parts[0]) in setting_norm:
+            continue
+        for part in parts:
+            value = _natural_term(part.strip(" ,.;:"))
+            key = _norm(value)
+            if setting_norm and key and key in setting_norm:
+                continue
+            if value and 1 <= len(value.split()) <= 5 and key not in {"rural banks", "commercial banks"}:
+                values.append(value)
+    low = _norm(source_text)
+    if all(term in low for term in ("pressure", "opportunity", "rational")):
+        values.extend(["pressure", "opportunity", "rationalisation"])
+    output: List[str] = []
+    seen = set()
+    for value in values:
+        key = _norm(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(value)
+    return output[:6]
+
+
+def _inferential_outcome(review: Dict[str, Any]) -> str:
+    for value in reversed(_specific_objectives(review) + _objective_texts(review)):
+        match = re.search(r"(?:effect|impact|influence)\s+of\s+.+?\s+on\s+(.+?)(?:\s+(?:at|among|within|in)\s+|[.;]|$)", value, flags=re.I)
+        if match:
+            outcome = _clean_relation_term(match.group(1), _study_setting(review, []))
+            if outcome:
+                return _natural_term(outcome)
+    for value in reversed(_question_texts(review)):
+        match = re.search(r"(?:occurrence|incidence|level|rate)\s+of\s+(.+?)(?:\s+(?:at|within|among|in)\s+|[?;.]|$)", value, flags=re.I)
+        if match:
+            return _natural_term(_clean_relation_term(match.group(1), _study_setting(review, [])))
+    return ""
+
 
 
 def _profile_constructs(review: Dict[str, Any], terms: Sequence[str]) -> List[str]:
@@ -538,7 +721,11 @@ def _profile_constructs(review: Dict[str, Any], terms: Sequence[str]) -> List[st
         value = re.sub(r"\b(?:at|within)\s+[A-Z].*$", "", value).strip(" ,.;:")
         value = re.sub(r"\bbehavioral\b", "behavioural", value, flags=re.I)
         value = re.sub(r"\brationalization\b", "rationalisation", value, flags=re.I)
+        value = re.sub(r"\bpressures\b", "pressure", value, flags=re.I)
         key = _norm(value)
+        setting_key = _norm(setting)
+        if setting_key and key and key in setting_key:
+            continue
         if not key or len(value) < 3 or key in seen or _is_setting_term(value):
             continue
         if key in {"study", "research", "banking sector", "financial system"}:
@@ -553,14 +740,30 @@ def _profile_constructs(review: Dict[str, Any], terms: Sequence[str]) -> List[st
 def _purpose_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
     setting = _study_setting(review, terms)
     pairs = _relation_pairs(review)
+    objectives = _objective_texts(review)
+    dimensions = _named_dimensions(review)
+    outcome = _inferential_outcome(review)
+
+    main_clause = ""
     if pairs:
-        left, right = pairs[0]
-        left = _natural_term(left)
-        right = _natural_term(right)
-        tail = f" at {setting}" if setting else " in the confirmed study setting"
-        return f"write: “The purpose of the study is to examine the relationship between {left} and {right}{tail}. ”".replace(". ”", ".”")
-    for text in _objective_texts(review):
-        sentence = _first_sentence(text)
+        left, right = (_natural_term(pairs[0][0]), _natural_term(pairs[0][1]))
+        effectiveness = any("effectiveness" in _norm(value) for value in objectives + _question_texts(review))
+        if effectiveness and any(token in _norm(right) for token in ("detect", "prevent")):
+            main_clause = f"examine the effectiveness of {left} in {right}"
+        else:
+            main_clause = f"examine the relationship between {left} and {right}"
+
+    secondary = ""
+    if dimensions and outcome:
+        verb = "predict" if len(dimensions) > 1 else "relates to"
+        secondary = f" and assess whether {_join_terms(dimensions)} {verb} {outcome}"
+
+    if main_clause:
+        where = f" at {setting}" if setting else " in the confirmed study setting"
+        return f"write: “The purpose of the study is to {main_clause}{secondary}{where}.”"
+
+    for source in objectives:
+        sentence = _first_sentence(source)
         if not sentence:
             continue
         if re.search(r"(?:primary|general|main) objective of (?:this|the) study is to", sentence, flags=re.I):
@@ -570,53 +773,84 @@ def _purpose_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
                 sentence,
                 flags=re.I,
             )
-            if setting:
-                sentence = re.sub(r"\s+among\s+(?:commercial|rural)\s+banks?.*?(?=[,.;]|$)", f" at {setting}", sentence, flags=re.I)
-                sentence = re.sub(r",?\s*specifically\s+" + re.escape(setting), "", sentence, flags=re.I)
+            sentence = _clean_relation_term(sentence, setting)
+            if setting and _norm(setting) not in _norm(sentence):
+                sentence += f" at {setting}"
             return f"write: “{sentence.rstrip('.')}.”"
-        if re.match(r"^To\s+", sentence, flags=re.I):
-            return f"write: “The purpose of the study is {sentence[0].lower() + sentence[1:].rstrip('.')}.”"
+
     constructs = [_natural_term(value) for value in _profile_constructs(review, terms)]
     joined = _join_terms(constructs[:4])
     return f"state that the study examines {joined}" + (f" at {setting}" if setting else " using the confirmed population and setting") if joined else ""
 
+
 def _hypothesis_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
+    setting = _study_setting(review, terms)
+    dimensions = _named_dimensions(review)
+    outcome = _inferential_outcome(review)
+    where = f" at {setting}" if setting else ""
+
+    if dimensions and outcome:
+        subject = _join_terms(dimensions)
+        verb = "do not significantly predict" if len(dimensions) > 1 else "is not significantly associated with"
+        return f"a matching null hypothesis could read: “H₀: {subject.capitalize()} {verb} {outcome}{where}.”"
+
     inferential = [
-        text for text in _objective_texts(review)
-        if re.search(r"\b(effect|impact|influence|relationship|association|predict|contribut)\b", text, flags=re.I)
+        value for value in _specific_objectives(review) + _objective_texts(review)
+        if re.search(r"\b(effect|impact|influence|relationship|association|predict|contribut)\b", value, flags=re.I)
     ]
-    source = inferential[-1] if inferential else ""
-    match = re.search(r"(?:effect|impact|influence)\s+of\s+(.+?)\s+on\s+(.+?)(?:[.;]|$)", source, flags=re.I)
-    if match:
-        left = _clean(match.group(1)).strip(" ,.;:")
-        parenthetical = re.search(r"\(([^()]+)\)", left)
-        if parenthetical:
-            left = parenthetical.group(1)
-        left = _natural_term(left)
-        right = _natural_term(_clean(match.group(2)).strip(" ,.;:"))
-        return f"a matching null hypothesis could read: “H0: There is no statistically significant relationship between {left} and {right}.”"
+    for source in reversed(inferential):
+        match = re.search(r"(?:effect|impact|influence)\s+of\s+(.+?)\s+on\s+(.+?)(?:[.;]|$)", source, flags=re.I)
+        if not match:
+            continue
+        left = _natural_term(_clean_relation_term(match.group(1), setting))
+        right = _natural_term(_clean_relation_term(match.group(2), setting))
+        if left and right:
+            return f"a matching null hypothesis could read: “H₀: {left.capitalize()} is not significantly associated with {right}{where}.”"
+
     pairs = _relation_pairs(review)
     if pairs:
         left, right = pairs[-1]
-        return f"a matching null hypothesis could read: “H0: There is no statistically significant relationship between {_natural_term(left)} and {_natural_term(right)}.”"
-    constructs = [_natural_term(value) for value in _profile_constructs(review, terms)]
-    return f"formulate one testable null hypothesis for each inferential relationship involving {_join_terms(constructs[:4])}" if constructs else ""
+        return f"a matching null hypothesis could read: “H₀: {_natural_term(left).capitalize()} is not significantly associated with {_natural_term(right)}{where}.”"
+    return "formulate one concise, testable null hypothesis for each inferential objective and use the same constructs, population and direction stated in the objective"
+
 
 def _definition_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
     constructs: List[str] = []
-    for value in _profile_constructs(review, terms):
-        match = re.search(r"\(([^()]+)\)", value)
-        if match:
-            for part in re.split(r",|\band\b", match.group(1), flags=re.I):
-                part = _natural_term(part.strip(" ,.;:"))
-                if part:
-                    constructs.append(part)
+    for left, right in _relation_pairs(review):
+        constructs.extend([_natural_term(left), _natural_term(right)])
+    constructs.extend(_named_dimensions(review))
+    outcome = _inferential_outcome(review)
+    if outcome:
+        constructs.append(outcome)
+    constructs.extend(_natural_term(value) for value in _profile_constructs(review, terms))
+
+    expanded: List[str] = []
+    dimensions = {_norm(value) for value in _named_dimensions(review)}
+    for value in constructs:
+        low = _norm(value)
+        if "fraud detection and prevention" in low:
+            expanded.extend(["fraud detection", "fraud prevention"])
+        elif dimensions and all(dimension in low for dimension in dimensions):
+            # Prefer the named dimensions themselves over a broad composite
+            # label such as “behavioural and institutional factors (...)”.
             continue
-        constructs.append(_natural_term(value))
-    constructs = list(dict.fromkeys(value for value in constructs if value))
-    if not constructs:
+        else:
+            expanded.append(value)
+    output: List[str] = []
+    seen = set()
+    for value in expanded:
+        value = _clean(value).strip(" ,.;:")
+        key = _norm(value)
+        if not value or not key or key in seen or _is_setting_term(value):
+            continue
+        if any(bad in key for bad in ("most significantly contribute", "contribute the occurrence", "study findings")):
+            continue
+        seen.add(key)
+        output.append(value)
+    if not output:
         return "define the main constructs exactly as they are measured or applied in the study"
-    return f"define {_join_terms(constructs[:7])} according to how each concept will be measured or applied in the study"
+    return f"define {_join_terms(output[:8])} according to how each concept will be measured or applied in the study"
+
 
 def _problem_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
     setting = _study_setting(review, terms) or "the study context"
@@ -681,31 +915,34 @@ def _limitations_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
 
 
 def _objective_alignment_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
-    objectives = _objective_texts(review)
+    objectives = _specific_objectives(review)
     questions = _question_texts(review)
     clauses: List[str] = []
-    descriptive = next((text for text in objectives if re.search(r"\b(assess|describe|identify|establish the level|determine the extent)\b", text, flags=re.I) and not re.search(r"\b(effect|impact|influence|relationship)\b", text, flags=re.I)), "")
-    constructs = [_natural_term(value) for value in _profile_constructs(review, terms)]
-    if descriptive:
-        focus = next((value for value in constructs if _norm(value) in _norm(descriptive)), "the first objective")
-        clauses.append(f"treat the objective on {focus} as descriptive")
-    if any(re.search(r"\b(effectiveness|rate of|successful)\b", text, flags=re.I) for text in objectives + questions):
-        clauses.append("define exactly how effectiveness or a successful detection or prevention rate will be calculated")
-    inferential = next((text for text in reversed(objectives) if re.search(r"\b(effect|impact|influence|relationship|predict|contribut)\b", text, flags=re.I)), "")
-    if inferential:
-        parenthetical = re.search(r"\(([^()]+)\)", inferential)
-        if parenthetical:
-            subject = _natural_term(parenthetical.group(1))
-        else:
-            pair = re.search(r"(?:effect|impact|influence)\s+of\s+(.+?)\s+on\s+", inferential, flags=re.I)
-            subject = _natural_term(pair.group(1)) if pair else "the inferential objective"
-        clauses.append(f"treat the objective involving {subject} as associational or predictive unless the design supports a causal claim")
-    clauses = clauses[:3]
-    if len(clauses) <= 1:
-        return clauses[0] if clauses else ""
-    if len(clauses) == 2:
-        return f"{clauses[0]}; and {clauses[1]}"
-    return f"{clauses[0]}; {clauses[1]}; and {clauses[2]}"
+
+    for index, objective in enumerate(objectives, start=1):
+        low = _norm(objective)
+        if len(clauses) >= 3:
+            break
+        if re.search(r"\b(assess|describe|identify|establish the level|determine the extent)\b", low) and not re.search(r"\b(effect|impact|influence|relationship|predict)\b", low):
+            focus = re.sub(r"^to\s+(?:assess|describe|identify|establish|determine)\s+", "", objective, flags=re.I).strip(" .")
+            focus = _clean_relation_term(focus, _study_setting(review, terms))
+            clauses.append(f"treat Objective {index} on {_natural_term(focus) or 'the stated condition'} as descriptive")
+        elif re.search(r"\b(effect|impact|influence|predict|contribut)\b", low):
+            dimensions = _named_dimensions(review)
+            subject = _join_terms(dimensions) if dimensions else "the stated predictors"
+            clauses.append(f"treat Objective {index} on {subject} as associational or predictive unless the design can support a causal claim")
+
+    if any(re.search(r"\b(effectiveness|rate of|successful)\b", value, flags=re.I) for value in objectives + questions):
+        rate_clause = "define how any detection or prevention rate will be calculated, including its numerator, denominator and data source, and state how effectiveness will be measured"
+        clauses.insert(1 if clauses else 0, rate_clause)
+
+    clauses = list(dict.fromkeys(value for value in clauses if value))[:4]
+    if not clauses:
+        return "match each objective to one question or hypothesis and to the analysis that will answer it"
+    if len(clauses) == 1:
+        return clauses[0]
+    return "; ".join(clauses[:-1]) + f"; and {clauses[-1]}"
+
 
 def _scope_completeness_finding(review: Dict[str, Any], terms: Sequence[str]) -> Dict[str, Any] | None:
     if not _env_enabled("VPROF_SCOPE_COMPLETENESS_AUDIT", True):
@@ -749,48 +986,42 @@ def _scope_completeness_finding(review: Dict[str, Any], terms: Sequence[str]) ->
 
 
 def _scope_inconsistency_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
+    if not _env_enabled("VPROF_SCOPE_CONFLICT_AUDIT", True):
+        return None
     rows = [row for row in _current_paragraphs(review) if int(row.get("chapter_number") or 0) == 1]
     if not rows:
         return None
-    text = " ".join(_clean(row.get("text")) for row in rows)
-    low = _norm(text)
-    # Conservative deterministic rule. This avoids inventing population conflicts
-    # while catching the recurring single-bank case that alternates between
-    # commercial banks and rural banks.
-    commercial = "commercial banks" in low or "commercial bank" in low
-    rural = "rural banks" in low or "rural bank" in low
-    named_case = re.search(r"\b(?:specifically(?:\s+uses?|\s+focuses?\s+on)?|case study(?:\s+of)?|uses?)\s+(?:the\s+)?([A-Z][A-Za-z0-9&'’. -]{3,70}?(?:Bank|School|College|Hospital|Assembly|Company|PLC))\b", text)
-    if not (commercial and rural and named_case):
+    full_text = " ".join(_clean(row.get("text")) for row in rows)
+    low = _norm(full_text)
+    commercial = bool(re.search(r"\bcommercial banks?\b", low))
+    rural = bool(re.search(r"\brural banks?\b", low))
+    case_name = _study_setting(review, [])
+    if not (commercial and rural and case_name and _norm(case_name) not in {"ghana", "rural bank", "commercial bank"}):
         return None
-    anchor = next((row for row in rows if "commercial bank" in _norm(row.get("text")) and "rural bank" in low), rows[0])
-    case_name = _clean(named_case.group(1))
+
+    anchor = next((row for row in rows if "commercial bank" in _norm(row.get("text"))), None)
+    if anchor is None:
+        anchor = next((row for row in rows if "rural bank" in _norm(row.get("text"))), rows[0])
     return {
         "finding_id": "HUMAN-SCOPE-CONSISTENCY",
         "status": "does_not_meet_requirement",
         "severity": "major",
-        "confidence": 0.98,
+        "confidence": 0.99,
         "chapter_number": 1,
         "section": _clean(anchor.get("heading") or "Background to the Study"),
         "section_reference": _clean(anchor.get("heading") or "Background to the Study"),
         "category": "scope_alignment",
-        "item": "The study population and institutional scope are not used consistently",
-        "comment": (
-            f"The chapter alternates between commercial banks, rural banks and the specific case of {case_name}. These are not interchangeable populations."
-        ),
-        "academic_consequence": (
-            "The inconsistency affects the sampling frame, interpretation and the extent to which the findings may be generalised."
-        ),
-        "required_action": (
-            f"Decide whether the work is a single-case study of {case_name} or a broader study of rural banks, then align the title, problem, purpose, objectives and methods with that decision."
-        ),
-        "illustrative_guidance": (
-            f"if {case_name} is the sole case, refer to the institution consistently and avoid conclusions about all commercial or rural banks unless the design supports them"
-        ),
-        "problematic_quote": _clean(anchor.get("text"))[:220],
+        "item": "The study population and institutional scope are inconsistent",
+        "comment": f"The chapter alternates between commercial banks, rural banks and the specific case of {case_name}. These are different study populations and should not be used interchangeably.",
+        "academic_consequence": "The inconsistency affects the title, sampling frame, interpretation and the extent to which the findings may be generalised.",
+        "required_action": f"Decide whether the work is a single-case study of {case_name} or a broader study of rural banks, then use that decision consistently in the title, problem, purpose, objectives, questions, methods and conclusions.",
+        "illustrative_guidance": "",
+        "problematic_quote": _safe_excerpt(anchor.get("text")),
         "evidence": [{**anchor, "document_role": "current"}],
         "annotation_eligible": True,
         "human_deterministic_finding": True,
     }
+
 
 
 
@@ -910,19 +1141,25 @@ def add_human_judgement_findings(
         _citation_presentation_finding(review),
         _language_editing_finding(review),
     ]
-    existing = " ".join(_finding_text(row) for row in output)
+    existing_ids = {_norm(row.get("finding_id")) for row in output if _norm(row.get("finding_id"))}
     for finding in additions:
         if not finding:
             continue
-        finding_text = _finding_text(finding)
-        if any(SequenceMatcher(None, finding_text, _finding_text(row)).ratio() >= 0.72 for row in output):
+        fid = _norm(finding.get("finding_id"))
+        if fid and fid in existing_ids:
             continue
-        if finding.get("finding_id") == "HUMAN-SCOPE-CONSISTENCY" and (
-            "commercial bank" in existing and "rural bank" in existing and "scope" in existing
+        new_key = _root_cause_key(finding)
+        if any(
+            _root_cause_key(row) == new_key
+            and SequenceMatcher(None, _finding_text(finding), _finding_text(row)).ratio() >= 0.80
+            for row in output
         ):
             continue
         output.append(finding)
+        if fid:
+            existing_ids.add(fid)
     return output
+
 
 
 _BAD_EXAMPLE_PATTERNS = (
@@ -930,7 +1167,23 @@ _BAD_EXAMPLE_PATTERNS = (
     r"\brespond the following\b",
     r"\bso that it (?:where|present|reorganise|move|add|state|report)\b",
     r"\bloading, reliability or validity statistic\b",
+    r"\bmost significantly contribute, significantly contribute\b",
+    r"\bsignificantly contribute the\b",
+    r"\bcontribute the occurrence\b",
+    r"\bthe study context\b",
 )
+
+
+def _has_repeated_phrase(value: str) -> bool:
+    words = [word for word in re.findall(r"[a-z0-9]+", _norm(value)) if word]
+    for size in (3, 4):
+        grams = [tuple(words[index:index + size]) for index in range(max(0, len(words) - size + 1))]
+        seen = set()
+        for gram in grams:
+            if gram in seen and not all(word in {"the", "study", "of", "and", "in"} for word in gram):
+                return True
+            seen.add(gram)
+    return False
 
 _STATISTICAL_OUTPUT_TOKENS = (
     "coefficient", "standard error", "test statistic", "degrees of freedom", "p value",
@@ -1030,8 +1283,11 @@ def _example_is_appropriate(row: Dict[str, Any], example: str, terms: Sequence[s
     if not _env_enabled("VPROF_SEMANTIC_EXAMPLE_GATE", True):
         return True
     low = _norm(example)
-    if any(re.search(pattern, low, flags=re.I) for pattern in _BAD_EXAMPLE_PATTERNS):
-        return False
+    if _env_enabled("VPROF_STRICT_CONTEXT_EXAMPLE_VALIDATION", True):
+        if any(re.search(pattern, low, flags=re.I) for pattern in _BAD_EXAMPLE_PATTERNS):
+            return False
+        if _has_repeated_phrase(example):
+            return False
     domain = _issue_domain(row)
     if low.startswith("rewrite the sentence beginning") and domain not in {"general", "language", "references"}:
         return False
@@ -1227,6 +1483,11 @@ def _contextualise_finding(
     if domain == "problem_statement" and any(token in core for token in (
         "evidence", "research gap", "unresolved", "magnitude", "scale", "full purpose", "does not yet perform",
     )):
+        setting = _study_setting(review, terms)
+        if setting:
+            output["comment"] = output["assessment"] = (
+                f"The section discusses the problem generally, but it does not yet demonstrate its nature or scale at {setting} or identify clearly what previous research has left unresolved."
+            )
         output["illustrative_guidance"] = _problem_example(review, terms)
 
     elif domain == "objective_alignment":
@@ -1272,8 +1533,12 @@ def _contextualise_finding(
         output["required_action"] = (
             "Add one short paragraph explaining the expected relationship among the main constructs and identify the framework that supports that expectation."
         )
+        dimensions = _named_dimensions(review)
+        outcome = _inferential_outcome(review)
+        if dimensions and outcome:
+            relationship = f"{relationship}, and how {_join_terms(dimensions)} may relate to {outcome}"
         output["illustrative_guidance"] = (
-            f"briefly explain how the selected framework links {relationship}, then reserve the full theory review and critical synthesis for Chapter Two"
+            f"briefly explain how the chosen framework links {relationship}; keep the detailed theory review and critical synthesis in Chapter Two"
         )
 
     return output

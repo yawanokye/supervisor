@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import RGBColor
+from docx.shared import Pt, RGBColor
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from docx.table import Table
@@ -29,6 +29,7 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
 ANNOTATION_EXPORT_VERSION = "1.9.9.28-context-guidance-editor"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "1.9.9.29-professional-human-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -82,6 +83,10 @@ def _specific_corrections_required_enabled() -> bool:
     return _env_bool("VPROF_SPECIFIC_CORRECTIONS_REQUIRED_BOTTOM", True)
 
 
+def _professional_review_appendix_enabled() -> bool:
+    return _env_bool("VPROF_PROFESSIONAL_REVIEW_APPENDIX", True)
+
+
 def _missing_section_haystack(row: Dict[str, Any]) -> str:
     return normalised(" ".join(
         clean_text(str(row.get(field, "")))
@@ -93,27 +98,37 @@ def _missing_section_haystack(row: Dict[str, Any]) -> str:
 
 
 def _is_missing_section_finding(row: Dict[str, Any]) -> bool:
-    """Return True for findings about an absent chapter section.
+    """Return True only for a genuinely absent structural section.
 
-    These findings should not be attached to an unrelated existing section. A
-    missing section has no exact anchor in the document, so it is handled as a
-    blue inline note at the bottom of the reviewed chapter.
+    Words such as ``missing spaces`` or ``missing reference-list entries`` are
+    correction issues, not missing sections. Verified section-contract metadata
+    is preferred, with a conservative textual fallback for legacy findings.
     """
+    if clean_text(row.get("missing_section_label")):
+        return True
+    if normalised(row.get("section_status")) == "missing":
+        return True
+    if row.get("section_contract_verified") and normalised(row.get("section_status")) in {"missing", "absent"}:
+        return True
+
     text = _missing_section_haystack(row)
     if not text:
         return False
-    missing_tokens = (
-        "missing", "not evident", "not present", "absent", "add or clearly label",
-        "expected ucc thesis section", "no references", "reference list is missing",
-        "bibliography section", "definition of terms",
-    )
-    section_tokens = (
-        "section", "definition of terms", "operational definition", "references",
-        "reference list", "bibliography", "glossary",
-    )
-    if "too thin" in text or "underdeveloped" in text or "not explicit" in text:
+    # Do not confuse citation/formatting language with an absent References
+    # section or other structural omission.
+    if any(token in text for token in (
+        "missing spaces", "missing space", "missing citation", "missing reference list entry",
+        "missing reference-list entry", "missing source detail", "missing punctuation",
+    )):
         return False
-    return any(token in text for token in missing_tokens) and any(token in text for token in section_tokens)
+
+    structural_patterns = (
+        r"\b(?:the\s+)?[a-z][a-z /&-]{2,70}\s+section\s+(?:is\s+)?(?:missing|absent|not present|not evident)\b",
+        r"\b(?:purpose of the study|research hypotheses|definition of terms|limitations of the study|delimitations of the study|chapter summary|references)\s+(?:is|are)\s+missing\b",
+        r"\bexpected\s+(?:ucc\s+)?(?:thesis|dissertation|project)?\s*section\s+(?:is\s+)?not evident\b",
+    )
+    return any(re.search(pattern, text, flags=re.I) for pattern in structural_patterns)
+
 
 
 def _missing_section_name(row: Dict[str, Any]) -> str:
@@ -2090,40 +2105,123 @@ def _add_specific_corrections_required(
     document,
     numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
 ) -> None:
-    """Append a blue end-of-chapter checklist that matches red body numbers."""
-    if not _specific_corrections_required_enabled() or not numbered_rows:
+    """Append a compact professional supervisory summary and correction register.
+
+    Native comments remain beside the exact passages. The appendix gives the
+    student a decision-led overview, a priority order and a readable register
+    without repeating the full Word comments in blue italic text.
+    """
+    if not _specific_corrections_required_enabled() or not _professional_review_appendix_enabled() or not numbered_rows:
         return
-    anchor = _last_chapter_body_paragraph(document)
-    if anchor is None:
-        return
-    entries: List[Tuple[int, str]] = []
+
+    entries: List[Tuple[int, Dict[str, Any], str]] = []
     seen = set()
     for number, row, comment in numbered_rows:
         text = _correction_tracker_text(row, comment)
-        key = (number, normalised(text))
+        key = (int(number or 0), normalised(text))
         if not text or key in seen:
             continue
         seen.add(key)
-        entries.append((number, text))
+        entries.append((int(number or 0), row, text))
+    entries.sort(key=lambda item: item[0])
+    entries = [item for item in entries if item[0] > 0]
     if not entries:
         return
-    entries.sort(key=lambda item: item[0])
-    for number, text in reversed(entries):
-        note = _insert_blue_paragraph_after(anchor)
-        run = note.add_run(f"{number}. {text}")
-        run.font.color.rgb = INLINE_BLUE
-        run.font.italic = True
-        try:
-            note.paragraph_format.left_indent = anchor.paragraph_format.left_indent
-            note.paragraph_format.space_before = anchor.paragraph_format.space_after
-            note.paragraph_format.space_after = anchor.paragraph_format.space_after
-        except Exception:
-            pass
-    heading = _insert_blue_paragraph_after(anchor)
+
+    severities = [normalised(row.get("severity") or "moderate") for _, row, _ in entries]
+    critical_count = sum(value == "critical" for value in severities)
+    major_count = sum(value == "major" for value in severities)
+    moderate_count = sum(value == "moderate" for value in severities)
+    if critical_count or major_count >= 2:
+        decision = "MAJOR REVISION REQUIRED"
+    elif major_count or moderate_count >= 3:
+        decision = "SUBSTANTIVE REVISION REQUIRED"
+    else:
+        decision = "MINOR REVISION REQUIRED"
+
+    # Start the review summary on a clean page so it reads as a formal appendix
+    # rather than as blue text inserted into the student's final paragraph.
+    document.add_page_break()
+    title = document.add_paragraph()
+    title.alignment = 1
+    run = title.add_run("SUPERVISORY REVIEW SUMMARY")
+    run.bold = True
+    run.font.size = Pt(15)
+    run.font.color.rgb = INLINE_BLUE
+
+    decision_p = document.add_paragraph()
+    decision_p.paragraph_format.space_after = Pt(5)
+    lead = decision_p.add_run("Overall decision: ")
+    lead.bold = True
+    lead.font.size = Pt(10.5)
+    verdict = decision_p.add_run(decision)
+    verdict.bold = True
+    verdict.font.size = Pt(10.5)
+    verdict.font.color.rgb = COMMENT_RED if decision == "MAJOR REVISION REQUIRED" else INLINE_BLUE
+
+    major_rows = [(number, row, text) for number, row, text in entries if normalised(row.get("severity")) in {"critical", "major"}]
+    top_issues: List[str] = []
+    for _, row, _ in major_rows:
+        issue = clean_text(row.get("item") or row.get("issue_title"))
+        if issue and normalised(issue) not in {normalised(value) for value in top_issues}:
+            top_issues.append(issue)
+        if len(top_issues) >= 4:
+            break
+
+    assessment = document.add_paragraph()
+    assessment.paragraph_format.space_after = Pt(7)
+    assessment.add_run(
+        f"The review identified {len(entries)} actionable matter{'s' if len(entries) != 1 else ''}. "
+        "The work contains a recognisable research structure, but the corrections below should be addressed before the chapter is accepted for the next stage."
+    )
+    if top_issues:
+        assessment.add_run(" The main priorities are ")
+        assessment.add_run("; ".join(value[0].lower() + value[1:] if value else value for value in top_issues) + ".")
+
+    priority_heading = document.add_paragraph()
+    priority_heading.paragraph_format.space_before = Pt(5)
+    priority_heading.paragraph_format.space_after = Pt(3)
+    priority_run = priority_heading.add_run("Priority corrections")
+    priority_run.bold = True
+    priority_run.font.size = Pt(11.5)
+    priority_run.font.color.rgb = INLINE_BLUE
+
+    priority_source = major_rows or entries[:5]
+    for number, row, text in priority_source[:6]:
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.left_indent = Pt(14)
+        paragraph.paragraph_format.first_line_indent = Pt(-10)
+        paragraph.paragraph_format.space_after = Pt(2)
+        bullet = paragraph.add_run("• ")
+        bullet.font.color.rgb = INLINE_BLUE
+        number_run = paragraph.add_run(f"Correction {number}: ")
+        number_run.bold = True
+        issue = clean_text(row.get("item") or row.get("issue_title"))
+        action = clean_text(row.get("required_action"))
+        paragraph.add_run((issue.rstrip(" .") + ". " if issue else "") + action.rstrip(" .") + ".")
+
+    heading = document.add_paragraph()
+    heading.paragraph_format.space_before = Pt(8)
+    heading.paragraph_format.space_after = Pt(4)
     lead = heading.add_run("Specific corrections required")
     lead.bold = True
+    lead.font.size = Pt(11.5)
     lead.font.color.rgb = INLINE_BLUE
-    lead.font.italic = True
+
+    for number, row, text in entries:
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.left_indent = Pt(12)
+        paragraph.paragraph_format.first_line_indent = Pt(-12)
+        paragraph.paragraph_format.space_after = Pt(5)
+        number_run = paragraph.add_run(f"{number}. ")
+        number_run.bold = True
+        number_run.font.color.rgb = INLINE_BLUE
+        severity = clean_text(row.get("severity") or "moderate").capitalize()
+        severity_run = paragraph.add_run(f"[{severity}] ")
+        severity_run.bold = True
+        severity_run.font.color.rgb = COMMENT_RED if normalised(severity) in {"critical", "major"} else INLINE_BLUE
+        paragraph.add_run(text)
+
 
 def _build_grouped_annotated_docx(
     document,

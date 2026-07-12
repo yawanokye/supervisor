@@ -1287,7 +1287,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run(f"AI Professor | {profile.get('role', 'Professional academic reviewer')}")
+    footer_run = footer.add_run(f"VProfessor | {profile.get('role', 'Professional academic reviewer')}")
     footer_run.italic = True
     footer_run.font.size = Pt(7.5)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
