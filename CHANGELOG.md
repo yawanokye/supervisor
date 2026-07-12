@@ -719,3 +719,17 @@
 - Consolidated repeated statistical findings concerning the same table or model while preserving deterministic calculation and model-appropriateness checks.
 - Reworked the professional report as a concise, decision-led summary that refers students to the sequential native comments for detailed corrections.
 - Corrected red marker order when several distinct comments apply to the same passage.
+
+## v1.9.9.26 — Final All-Level Supervisor and Examiner Coverage
+
+- Added a deterministic required-section and subsection ledger for Bachelor’s, Non-Research Master’s, MPhil, Professional Doctorate and PhD reviews.
+- Made Purpose of the Study distinct from General Objective and Main Objective so a missing purpose section is no longer hidden by objective headings.
+- Aggregated parent sections with their child subsections, including General Objective and Specific Objectives under Research Objectives.
+- Protected verified missing-section findings from generic accuracy and de-duplication filters and made final rescue keys chapter-specific.
+- Added conditional hypothesis checks for inferential objectives and conditional research-question checks for descriptive objectives.
+- Treated Scope as equivalent to Delimitations only when it states the study setting, population or unit, variables or themes, period and meaningful exclusions.
+- Expanded coverage across Chapters One to Five, including theory, concepts, empirical synthesis, framework, sampling, measurement, screening, analysis, diagnostics, results, discussion, conclusions, contributions and recommendations.
+- Added whole-document checks for complete submissions: title page, declaration, abstract, table of contents, conditional lists of tables and figures, references and supporting appendices or instruments.
+- Preserved the distinction between focused evidence integration in Chapter One and deep critical synthesis in Chapter Two.
+- Improved direct student-facing missing-section comments, insertion guidance and current-study examples without repetitive programme-level wording.
+- Retained evidence-led comment counts with no minimum or predetermined number of comments.
