@@ -29,6 +29,8 @@ let currentReview = null;
 let showAll = false;
 const ACTIVE_REVIEW_JOB_KEY = "ai-professor-active-review-job";
 const academicLevelSelect = form.querySelector('select[name="academic_level"]');
+const phdChapterOptions = [...chapterSelect.querySelectorAll(".phd-chapter-option")];
+const phdRangeOptions = [...combinedChapterEnd.querySelectorAll(".phd-range-option")];
 const doctoralNote = document.getElementById("doctoralNote");
 const reviewDepthHelp = document.getElementById("reviewDepthHelp");
 const lightReviewNote = document.getElementById("lightReviewNote");
@@ -147,7 +149,18 @@ function selectedStage() {
   return document.querySelector('input[name="submission_stage"]:checked')?.value || "initial";
 }
 
+function updatePhdChapterOptions() {
+  const isPhd = academicLevelSelect.value === "PhD";
+  [...phdChapterOptions, ...phdRangeOptions].forEach(option => {
+    option.hidden = !isPhd;
+    option.disabled = !isPhd;
+  });
+  if (!isPhd && Number(chapterSelect.value || 0) > 5) chapterSelect.value = "";
+  if (!isPhd && Number(combinedChapterEnd.value || 0) > 5) combinedChapterEnd.value = "";
+}
+
 function updateUploadWorkflow() {
+  updatePhdChapterOptions();
   const external = selectedWorkflow() === "external_assessment";
   if (external) {
     const fullScope = form.querySelector('input[name="review_scope"][value="full_thesis"]');
@@ -163,6 +176,7 @@ function updateUploadWorkflow() {
   const doctoral = ["Professional Doctorate", "PhD"].includes(
     academicLevelSelect.value
   );
+  const phd = academicLevelSelect.value === "PhD";
 
   assessmentMetadataFields.classList.toggle("hidden", !external);
   assessmentStage.disabled = !external;
@@ -195,9 +209,9 @@ function updateUploadWorkflow() {
       scopeStructureHelp.textContent =
         "Professional combined-chapter review assesses every chapter in the selected range separately, then checks sequential alignment across the chapters.";
     } else if (fullThesis) {
-      scopeStructureHelp.textContent = doctoral
-        ? "Professional examiner mode reviews every submitted chapter, tests whole-thesis integration and contribution, audits methods and results, and gives an examiner-style recommendation without forcing a five-chapter structure."
-        : "Professional examiner mode reviews every chapter, checks the standard research functions and justified additional chapters, audits methods and results, and gives a whole-thesis recommendation.";
+      scopeStructureHelp.textContent = phd
+        ? "PhD examiner mode accepts custom chapter numbers, order and titles, then verifies that all prescribed doctoral elements are present, integrated and supported across the complete thesis."
+        : "Examiner mode applies the standard five-chapter structure, checks all required research functions, audits methods and results, and gives a whole-thesis recommendation.";
     } else {
       scopeStructureHelp.textContent =
         "Professional chapter review assesses every section and subsection of the selected chapter and uses other supplied chapters only for relevant alignment checks.";
