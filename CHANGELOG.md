@@ -1,3 +1,17 @@
+# v1.9.9.30, all-level structure and review-integrity release
+
+- Enforces the standard five-chapter research structure for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil and Professional Doctorate complete-thesis review.
+- Permits variable PhD chapter titles, sequence and count only when every prescribed doctoral research element is present and traceable.
+- Adds dynamic PhD chapter-role mapping and an objective-to-conclusion alignment matrix.
+- Removes hardcoded earlier-study constructs, institutions, populations and examples from generic review generators.
+- Applies institution-specific section contracts only when the relevant profile is selected.
+- Balances complete-thesis auditing across chapters and directs method, result and discussion checks to the chapters that actually perform those functions.
+- Uses GPT-5.6 Terra for routine analysis and GPT-5.6 Sol for final PhD synthesis and external adjudication, with bounded selective escalation.
+- Disables visible body markers by default and protects decimals, DOI strings, abbreviations and citations during native Word comment anchoring.
+- Raises finding-merger safeguards so distinct academic concerns remain separate.
+- Adds startup reporting for effective model routes and unsupported environment variables.
+- Adds 73 passing release tests covering structure, contamination prevention, routing, alignment and DOCX safety.
+
 # v1.9.9.23 — Clear Student-Facing Review and Statistical Table Audit
 
 - Replaced checklist and app-facing language with clear supervisor comments.

@@ -1,16 +1,18 @@
-# ProjectReady AI Supervisor Assistant 1.9.8.6
+# V-Professor Supervisory Review 1.9.9.30
 
-## v1.9.8.6 final review-quality update
+## v1.9.9.30 all-level structure and review-integrity update
 
-This release finalises the MPhil Standard review behaviour. It preserves depth after duplicate filtering, prevents duplicate native comments for unresolved placeholders, adds deterministic checks for uncited empirical sample claims and citation-name mismatches, and keeps comments in a natural supervisor style without visible labels.
+This release makes the supervisory architecture explicit across all supported academic levels. Bachelor’s, Non-Research Master’s, Research Master’s/MPhil and Professional Doctorate reviews use the standard five-chapter research structure as the default. PhD submissions may vary the number, titles and sequence of chapters, but the review cannot be released as structurally complete until every prescribed doctoral research element is present and integrated.
 
+The update also removes earlier-study content from generic review rules, maps each PhD chapter by its actual function, traces objectives from Chapter One through the final conclusions, applies institutional rules only when selected, balances complete-thesis scrutiny across chapters, uses GPT-5.6 Sol for final PhD synthesis and external adjudication, and prevents Word comment anchors from splitting decimals, DOI strings or citations.
 
-Version 1.9.8.6 adds developmental comment depth. Native Word comments now explain the issue, why it matters and the specific revision action, while the review orchestrator preserves the expected ordering between Light, Standard Non-Research Master’s and Standard MPhil reviews for the same weak chapter.
-ProjectReady AI Supervisor Assistant provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
+The production source of truth is the `app/` package. Render starts `app.main:app`, and background jobs run through `app.worker`.
 
-Version 1.9.8.6 applies substantive degree-calibrated depth to **all five programme levels**. Bachelor’s review focuses on foundational research coherence and correct method application. Non-Research Master’s review tests advanced application and professional usefulness. Research Master’s/MPhil review requires critical synthesis, theory, methodological defensibility and a clear research contribution. Professional Doctorate review requires doctoral scholarship, reflexivity and an original contribution to practice or policy. PhD review requires authoritative positioning, robustness and an original contribution to knowledge.
+V-Professor provides Light, Standard and Advanced academic review of thesis and dissertation chapters, research proposals, revised chapters and complete theses.
 
-Each level now has its own issue ceiling, audit capacity, output allowance, chapter-specific checks and contribution standard. Research Master’s/MPhil, Professional Doctorate and PhD use the research-intensive route. Bachelor’s and Non-Research Master’s retain the lower-cost route but no longer share the same academic contract. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery, public-comment quality controls and token accounting remain active.
+Version 1.9.9.30 applies substantive degree-calibrated depth to **all five programme levels**. Bachelor’s review focuses on foundational research coherence and correct method application. Non-Research Master’s review tests advanced application and professional usefulness. Research Master’s/MPhil review requires critical synthesis, theory, methodological defensibility and a clear research contribution. Professional Doctorate review requires doctoral scholarship, reflexivity and an original contribution to practice or policy. PhD review requires authoritative positioning, robustness and an original contribution to knowledge.
+
+Each level has its own academic contract, prompt depth, audit capacity, output allowance, chapter-function checks and contribution standard. Research Master’s/MPhil, Professional Doctorate and PhD use the research-intensive route. Strict schemas, native Microsoft Word comments, durable checkpoints, automatic recovery, public-comment quality controls and token accounting remain active.
 
 ## Review philosophy
 
@@ -72,16 +74,16 @@ Examples are illustrative and must be adapted to the actual study and verified e
 
 ## Model routing
 
-The routing profile is controlled by `VPROF_ROUTING_PROFILE`.
+The production route is OpenAI-only and separates routine analysis from final expert judgement.
 
-- **Balanced**, recommended: Bachelor’s and Non-Research Master’s Light/Standard review use DeepSeek V4 Flash with GPT-5.6 Terra as the low-cost fallback and one GPT-5.6 Terra audit. Research Master’s/MPhil review uses DeepSeek V4 Pro for the scholarly first pass and one bounded GPT-5.6 Terra expert audit. Advanced review remains eligible for GPT-5.6 Terra expert judgement.
-- **Economy**: DeepSeek V4 Flash handles Light and Standard review, with DeepSeek V4 Pro as the provider fallback. DeepSeek V4 Pro also handles Advanced review.
-- **Quality**: OpenAI leads normal review. DeepSeek provides provider-failure fallback, while GPT-5.6 Terra remains available for expert escalation.
-- Non-Research Master’s Light and Standard final audits use one GPT-5.6 Terra request. Research Master’s/MPhil Standard review uses one bounded GPT-5.6 Terra expert audit. Neither route duplicates the complete first pass.
-- External Assessment remains OpenAI-led for the final degree recommendation. DeepSeek V4 Pro is used only if an OpenAI request fails.
-- The first pass is not duplicated by automatic router escalation. The independent audit is the only normal second-model call.
-- Every accepted response still passes strict Pydantic validation, exact evidence-ID checks, deterministic factual gates and native-comment placement checks.
-- Routed calls aggregate both providers’ reported tokens and costs into the existing internal usage ledger. Model names are not displayed in student-facing reports.
+- GPT-5.6 Terra handles extraction support, cleaning, chapter and section analysis, deterministic-evidence verification and ordinary recovery.
+- GPT-5.6 Sol handles final complete-thesis synthesis, PhD-level final judgement and external-examiner adjudication.
+- Low-confidence section findings may be escalated selectively. The router does not duplicate every first-pass request.
+- The fallback model is used only for provider or validation recovery. It does not replace the independent final judgement stage during normal operation.
+- Every response passes structured-output validation, evidence-anchor checks, deterministic factual gates and native-comment reconciliation before release.
+- The startup log records the effective route and warns about unsupported legacy environment variables.
+
+For cost control, do not assign Sol to every section. The main quality gain comes from using the stronger model at the synthesis and adjudication stages after the thesis structure, evidence and alignment matrix have been assembled.
 
 ## Automatic recovery and speed
 
@@ -264,7 +266,7 @@ External Assessment produces four DOCX files:
 3. Confidential recommendation to the university
 4. Oral examination question bank
 
-The workflow supports initial examination, re-examination and corrected-thesis verification. Chapter One, or the equivalent foundational chapter, is treated as a critical examination gate. Professional Doctorate and PhD theses may use custom chapter titles, sequence and architecture.
+The workflow supports initial examination, re-examination and corrected-thesis verification. Chapter One, or the equivalent foundational chapter, is treated as a critical examination gate. Bachelor’s, Master’s and Professional Doctorate submissions use the standard five-chapter research architecture as the default, with justified additional chapters permitted. PhD submissions may use custom chapter titles, sequence and architecture, but every prescribed doctoral research element must be present and integrated.
 
 
 
