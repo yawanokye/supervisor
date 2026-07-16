@@ -31,8 +31,7 @@ def flexible_doctoral_thesis():
             1,
         ),
         row(
-            "The statement of the problem, research objectives and research "
-            "questions define the practice challenge.",
+            "The background to the study, study context and rationale lead to the statement of the problem. Research objectives and research questions define the practice challenge. The significance of the study, scope of the study and definition of terms are stated.",
             "CHAPTER ONE ORIENTATION TO THE PRACTICE PROBLEM",
             1,
             2,
@@ -57,8 +56,7 @@ def flexible_doctoral_thesis():
             5,
         ),
         row(
-            "The research methodology explains the research design, data "
-            "collection, sampling procedure and analysis method.",
+            "The research methodology explains the research philosophy, research design, data collection, sampling procedure, measurement of variables and analysis method. Diagnostic tests, robustness, software and code support reproducibility. Ethical considerations and research integrity are addressed.",
             "CHAPTER THREE DESIGN OF THE INQUIRY",
             3,
             6,
@@ -117,15 +115,15 @@ def test_phd_custom_six_chapter_structure_is_accepted():
     assert partition["doctoral_coverage"]["complete"] is True
 
 
-def test_professional_doctorate_custom_structure_is_accepted():
-    partition = _partition_submission_for_review(
-        flexible_doctoral_thesis(),
-        selected_chapter=None,
-        full_thesis=True,
-        filename="professional-doctorate.docx",
-        academic_level="Professional Doctorate",
-    )
-    assert partition["structure_mode"] == "flexible_doctoral"
+def test_professional_doctorate_custom_structure_is_rejected():
+    with pytest.raises(ValueError, match="Missing standard coverage"):
+        _partition_submission_for_review(
+            flexible_doctoral_thesis(),
+            selected_chapter=None,
+            full_thesis=True,
+            filename="professional-doctorate.docx",
+            academic_level="Professional Doctorate",
+        )
 
 
 def test_same_nonstandard_structure_does_not_override_masters_rules():
@@ -166,7 +164,7 @@ def test_incomplete_doctoral_upload_is_rejected_by_function_not_chapter_count():
             4,
         ),
     ]
-    with pytest.raises(ValueError, match="core research functions"):
+    with pytest.raises(ValueError, match="prescribed doctoral research elements"):
         _partition_submission_for_review(
             incomplete,
             selected_chapter=None,

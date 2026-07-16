@@ -90,7 +90,7 @@ def test_examples_are_clean_and_specific_to_the_bank_study():
     assert "pressure" in purpose and "fraud incidence" in purpose
     assert "h₀" in hypothesis and "do not significantly predict" in hypothesis
     assert "pressure" in hypothesis and "opportunity" in hypothesis and "rationalisation" in hypothesis
-    assert "fraud detection" in definitions and "fraud prevention" in definitions
+    assert "fraud detection and prevention" in definitions
     assert not any(bad in " ".join(comments.values()).lower() for bad in (
         "most significantly contribute, significantly contribute",
         "contribute the occurrence",

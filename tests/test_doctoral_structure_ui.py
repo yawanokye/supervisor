@@ -13,8 +13,10 @@ def test_doctoral_upload_workflow_mentions_custom_structure():
     assert "Choose the complete doctoral thesis" in js
 
 
-def test_ai_prompt_does_not_force_five_chapters_for_doctorates():
+def test_ai_prompt_only_allows_flexible_structure_for_phd():
     prompt = Path("app/ai_prompts.py").read_text(encoding="utf-8")
-    assert "do not require a fixed five-chapter sequence" in prompt
+    assert "Only PhD theses may use a fully variable chapter architecture" in prompt
+    assert "Professional Doctorate complete theses" in prompt
+    assert "standard five-chapter research structure" in prompt
     assert "article-based" in prompt
     assert "practice-based" in prompt

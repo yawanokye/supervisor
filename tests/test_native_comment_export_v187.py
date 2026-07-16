@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "1.9.9.28-context-guidance-editor"
+    assert ANNOTATION_EXPORT_VERSION == "1.9.9.30-structure-safe-editor"
     after_paragraphs, after_tables = _visible_content(after)
     before_paragraphs, before_tables = _visible_content(before)
     assert after_tables == before_tables
@@ -113,7 +113,7 @@ def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native
     source = _docx_bytes(document)
 
     review = {
-        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong"},
+        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong", "study_title": "Population scope in banking institutions"},
         "academic_findings": [
             {
                 "status": "does_not_meet_requirement",
@@ -178,7 +178,7 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
     rows = extract_docx(source)
     evidence = next(row for row in rows if "Commercial banks" in row.get("text", ""))
     review = {
-        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong"},
+        "summary": {"reviewer_name": "Dr Priscilla Boafowaa Oppong", "study_title": "Population scope in banking institutions"},
         "academic_findings": [
             {
                 "status": "does_not_meet_requirement",
@@ -187,7 +187,7 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
                 "item": "The study population and case setting are not consistently stated",
                 "comment": "The chapter alternates between commercial banks, rural banks and Assinman Rural Bank PLC.",
                 "required_action": "State the target population and case setting consistently across the title, problem, objectives, questions, scope and significance.",
-                "illustrative_guidance": "state whether the study is a case study of Assinman Rural Bank PLC within Ghana's rural banking sector",
+                "illustrative_guidance": "state whether commercial banks, rural banks or both form the target population and unit of analysis",
                 "evidence": [{**evidence, "document_role": "current"}],
                 "headings": ["1.3 Problem Statement"],
                 "annotation_eligible": True,
@@ -199,7 +199,7 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
                 "item": "The problem statement lacks local evidence",
                 "comment": "The problem is argued generally without concrete Ghana rural banking evidence.",
                 "required_action": "Support the problem with verifiable sector, policy or institutional evidence.",
-                "illustrative_guidance": "use Bank of Ghana, ARB Apex Bank or permitted institutional records as evidence types without inventing figures",
+                "illustrative_guidance": "use regulatory, institutional or empirical evidence from the confirmed study setting without inventing figures",
                 "evidence": [{**evidence, "document_role": "current"}],
                 "headings": ["1.3 Problem Statement"],
                 "annotation_eligible": True,
