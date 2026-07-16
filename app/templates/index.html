@@ -157,6 +157,15 @@
           </label>
 
           <label class="field">
+            <span>Institutional structure profile</span>
+            <select name="institutional_profile" id="institutionalProfile">
+              <option value="generic" selected>Generic degree-appropriate structure</option>
+              <option value="ucc">University of Cape Coast structure</option>
+            </select>
+            <small class="field-help">Use the generic profile unless the work must be assessed against the UCC thesis structure.</small>
+          </label>
+
+          <label class="field">
             <span>Research approach</span>
             <select name="research_approach" required>
               <option value="quantitative">Quantitative</option>
@@ -176,7 +185,7 @@
             </div>
             <p class="field-help" id="reviewDepthHelp">Standard Review gives a full section-by-section review at the academic level shown above, with an independent comment-accuracy check.</p>
             <div class="light-note hidden" id="lightReviewNote">Light Review remains tied to the academic level shown above. It reviews every section and subsection but reports only the most material issues.</div>
-            <div class="doctoral-note hidden" id="doctoralNote">Professional Doctorate and PhD work is always assessed at doctoral standard. Review depth changes the intensity and amount of feedback, not the degree benchmark. Doctoral structures may use custom chapter numbers, order and titles.</div>
+            <div class="doctoral-note hidden" id="doctoralNote">Professional Doctorate and PhD work is assessed at doctoral standard. Professional Doctorate submissions normally follow the five-chapter structure. PhD submissions may use custom chapter numbers, order and titles, but every prescribed doctoral research element must be present and integrated.</div>
           </div>
 
           <div class="field" id="reviewScopeField">
@@ -207,6 +216,21 @@
               <option value="3">Chapter Three: Research Methods</option>
               <option value="4">Chapter Four: Results and Discussion</option>
               <option value="5">Chapter Five: Conclusions and Recommendations</option>
+              <option value="6" class="phd-chapter-option" hidden disabled>Chapter 6: PhD custom structure</option>
+              <option value="7" class="phd-chapter-option" hidden disabled>Chapter 7: PhD custom structure</option>
+              <option value="8" class="phd-chapter-option" hidden disabled>Chapter 8: PhD custom structure</option>
+              <option value="9" class="phd-chapter-option" hidden disabled>Chapter 9: PhD custom structure</option>
+              <option value="10" class="phd-chapter-option" hidden disabled>Chapter 10: PhD custom structure</option>
+              <option value="11" class="phd-chapter-option" hidden disabled>Chapter 11: PhD custom structure</option>
+              <option value="12" class="phd-chapter-option" hidden disabled>Chapter 12: PhD custom structure</option>
+              <option value="13" class="phd-chapter-option" hidden disabled>Chapter 13: PhD custom structure</option>
+              <option value="14" class="phd-chapter-option" hidden disabled>Chapter 14: PhD custom structure</option>
+              <option value="15" class="phd-chapter-option" hidden disabled>Chapter 15: PhD custom structure</option>
+              <option value="16" class="phd-chapter-option" hidden disabled>Chapter 16: PhD custom structure</option>
+              <option value="17" class="phd-chapter-option" hidden disabled>Chapter 17: PhD custom structure</option>
+              <option value="18" class="phd-chapter-option" hidden disabled>Chapter 18: PhD custom structure</option>
+              <option value="19" class="phd-chapter-option" hidden disabled>Chapter 19: PhD custom structure</option>
+              <option value="20" class="phd-chapter-option" hidden disabled>Chapter 20: PhD custom structure</option>
             </select>
           </label>
 
@@ -218,6 +242,21 @@
               <option value="3">Chapters One to Three</option>
               <option value="4">Chapters One to Four</option>
               <option value="5">Chapters One to Five</option>
+              <option value="6" class="phd-range-option" hidden disabled>Chapters One to 6</option>
+              <option value="7" class="phd-range-option" hidden disabled>Chapters One to 7</option>
+              <option value="8" class="phd-range-option" hidden disabled>Chapters One to 8</option>
+              <option value="9" class="phd-range-option" hidden disabled>Chapters One to 9</option>
+              <option value="10" class="phd-range-option" hidden disabled>Chapters One to 10</option>
+              <option value="11" class="phd-range-option" hidden disabled>Chapters One to 11</option>
+              <option value="12" class="phd-range-option" hidden disabled>Chapters One to 12</option>
+              <option value="13" class="phd-range-option" hidden disabled>Chapters One to 13</option>
+              <option value="14" class="phd-range-option" hidden disabled>Chapters One to 14</option>
+              <option value="15" class="phd-range-option" hidden disabled>Chapters One to 15</option>
+              <option value="16" class="phd-range-option" hidden disabled>Chapters One to 16</option>
+              <option value="17" class="phd-range-option" hidden disabled>Chapters One to 17</option>
+              <option value="18" class="phd-range-option" hidden disabled>Chapters One to 18</option>
+              <option value="19" class="phd-range-option" hidden disabled>Chapters One to 19</option>
+              <option value="20" class="phd-range-option" hidden disabled>Chapters One to 20</option>
             </select>
             <small class="field-help">
               The range always starts with Chapter One. Upload one composite
