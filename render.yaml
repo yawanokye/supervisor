@@ -66,13 +66,17 @@ services:
       - key: OPENAI_FINAL_AUDIT_MODEL
         value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-sol
       - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
         value: gpt-5.6-terra
+      - key: OPENAI_PHD_FINAL_SYNTHESIS_MODEL
+        value: gpt-5.6-sol
+      - key: OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT
+        value: high
       - key: OPENAI_EXTERNAL_DOMAIN_MODEL
         value: gpt-5.6-terra
       - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-sol
       - key: PRICE_OPENAI_TERRA_INPUT
         value: "2.50"
       - key: PRICE_OPENAI_TERRA_CACHED_INPUT
@@ -152,11 +156,19 @@ services:
       - key: AI_FAST_REQUEST_TIMEOUT_SECONDS
         value: 180
       - key: AI_FAST_REQUEST_MAX_RETRIES
-        value: 0
+        value: 1
+      - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
+        value: 1
       - key: AI_MAX_RETRIES
-        value: 0
+        value: 1
       - key: AI_STRUCTURED_OUTPUT_RETRIES
-        value: 0
+        value: 1
+      - key: AI_STRICT_FAILURE
+        value: true
+      - key: AI_FAST_AUDIT_MAX_BATCHES
+        value: 8
+      - key: AI_MAX_MAP_INPUT_CHARS
+        value: 90000
       - key: AI_JOB_MAX_SECONDS
         value: 5400
       - key: AI_ADVANCED_SECOND_PASS
@@ -190,7 +202,7 @@ services:
       - key: VPROF_COMMENT_MAX_CHARS
         value: 1100
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
-        value: 0.58
+        value: 0.82
       - key: VPROF_DEVELOPMENTAL_COMMENTS
         value: true
       - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
@@ -209,13 +221,7 @@ services:
         value: true
       - key: VPROF_SPEC_ALIGNED_SUPERVISORY_REPORT
         value: true
-      - key: VPROF_COVERAGE_STATUS_LEDGER
-        value: true
       - key: VPROF_MEASUREMENT_AUDIT
-        value: true
-      - key: VPROF_REFERENCE_RECONCILIATION_AUDIT
-        value: true
-      - key: VPROF_REQUIRE_STATISTICAL_AUDIT_FOR_RESULTS
         value: true
       - key: VPROF_COVERAGE_PARAGRAPHS_PER_UNIT
         value: 7
@@ -267,10 +273,6 @@ services:
         value: false
       - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS
         value: true
-      - key: VPROF_VERIFY_DOCX_COMMENT_COUNT
-        value: true
-      - key: VPROF_SHOW_FINDING_COMMENT_RECONCILIATION
-        value: true
       - key: VPROF_ADD_QUALITY_EXPECTATION_TO_COMMENTS
         value: false
       - key: VPROF_INCLUDE_DEGREE_LABEL_IN_COMMENTS
@@ -313,10 +315,8 @@ services:
         value: true
       - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
-      - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT
-        value: true
-      - key: VPROF_PRESERVE_UCC_SECTION_COMMENTS
-        value: true
+      - key: VPROF_NATIVE_GROUP_LOCATION_MARKERS
+        value: false
       - key: TOKEN_ACCOUNTING_ENABLED
         value: true
       - key: TOKEN_QUOTA_ENFORCEMENT
