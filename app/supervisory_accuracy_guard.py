@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .document_parser import clean_text, normalised
+from .study_semantics import contains_uncited_empirical_count, omitted_objective_focuses
 
 SYNTHETIC_SECTION_MARKERS = (
     "whole chapter coherence",
@@ -834,9 +835,9 @@ def deterministic_expert_issues(
             confidence=0.99,
             evidence_ids=[paragraph_id(target)],
             quote="The study revolve",
-            assessment="The singular subject 'study' is paired with the plural verb form 'revolve'. The sentence is also awkwardly framed as the study revolving around global environmental issues.",
+            assessment="The singular subject 'study' is paired with the plural verb form 'revolve', and the sentence is awkwardly framed.",
             consequence="A grammatical error in the opening sentence weakens the chapter's first academic impression.",
-            action="Rewrite the opening sentence in a direct form and use the correct singular verb, for example by stating that climate change, pollution and resource depletion have intensified concern about environmental sustainability.",
+            action="Rewrite the opening sentence in a direct form and use the correct singular verb. State the central research concern in terms drawn from the current study.",
         ))
 
 
@@ -874,33 +875,10 @@ def deterministic_expert_issues(
             and not row.get("is_heading")
         ]
         if purpose_rows and objective_rows:
-            stop = {
-                "the", "this", "study", "research", "purpose", "objective", "objectives",
-                "to", "examine", "assess", "determine", "investigate", "explore", "analyse",
-                "analyze", "evaluate", "identify", "establish", "current", "adopted", "level",
-                "relationship", "effect", "impact", "influence", "among", "within", "between",
-                "regarding", "practices", "practice", "firms", "firm", "companies", "company",
-                "organisations", "organizations", "manufacturing", "central", "region", "ghana",
-                "and", "of", "on", "in", "by", "for", "with", "from", "as", "a", "an",
-            }
-            purpose_tokens = {
-                token for token in re.findall(r"[a-z][a-z-]{2,}", normalised(" ".join(clean_text(row.get("text", "")) for row in purpose_rows)))
-                if token not in stop
-            }
-            objective_tokens = {
-                token for token in re.findall(r"[a-z][a-z-]{2,}", normalised(" ".join(clean_text(row.get("text", "")) for row in objective_rows)))
-                if token not in stop
-            }
-            missing_tokens = sorted(objective_tokens - purpose_tokens)
-            # Require either two omitted substantive tokens or a recognised
-            # construct word. This avoids flagging one incidental adjective.
-            recognised = {
-                "awareness", "performance", "satisfaction", "adoption", "intention",
-                "productivity", "efficiency", "profitability", "resilience", "innovation",
-                "compliance", "quality", "behaviour", "behavior", "capability", "risk",
-            }
-            material_missing = [token for token in missing_tokens if token in recognised]
-            if len(missing_tokens) >= 2 and material_missing:
+            purpose_text = " ".join(clean_text(row.get("text", "")) for row in purpose_rows)
+            objectives_text = " ".join(clean_text(row.get("text", "")) for row in objective_rows)
+            missing_focuses = omitted_objective_focuses(purpose_text, objectives_text)
+            if missing_focuses:
                 target = purpose_rows[0]
                 output.append(_make_issue(
                     finding_id="DET-DEGREE-PURPOSE-OBJECTIVE-COVERAGE",
@@ -912,7 +890,7 @@ def deterministic_expert_issues(
                     evidence_ids=[paragraph_id(target)] + [paragraph_id(row) for row in objective_rows[:5]],
                     quote=clean_text(target.get("text", ""))[:260],
                     assessment=(
-                        f"At {degree_label} level, the purpose statement is narrower than the objectives. The objectives introduce additional substantive constructs or outcomes that are not represented in the stated purpose."
+                        f"The purpose statement is narrower than the objectives. The objectives introduce additional substantive focuses not represented in the purpose, including {', '.join(missing_focuses)}."
                     ),
                     consequence=(
                         "The study's central intent is unclear, and the later methodology and conclusions may not be traceable to one coherent purpose."
@@ -964,9 +942,7 @@ def deterministic_expert_issues(
             if "reference" in section_name:
                 continue
             text = clean_text(row.get("text", ""))
-            if not re.search(r"\b\d{2,}\s+(?:manufacturing\s+)?(?:firms?|enterprises?|companies|organisations|organizations|respondents?|participants?|employees?)\b", text, flags=re.I):
-                continue
-            if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", text):
+            if not any(contains_uncited_empirical_count(sentence) for sentence in re.split(r"(?<=[.!?])\s+", text)):
                 continue
             uncited_numeric_rows.append(row)
         if uncited_numeric_rows:
@@ -1003,9 +979,7 @@ def deterministic_expert_issues(
                 continue
             text = clean_text(row.get("text", ""))
             for sentence in re.split(r"(?<=[.!?])\s+", text):
-                if not re.search(r"\b\d{2,}\s+(?:manufacturing\s+)?(?:firms?|enterprises?|companies|organisations|organizations|respondents?|participants?|employees?)\b", sentence, flags=re.I):
-                    continue
-                if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", sentence):
+                if not contains_uncited_empirical_count(sentence):
                     continue
                 candidate = dict(row)
                 candidate["_sentence_quote"] = sentence[:260]
@@ -1034,63 +1008,42 @@ def deterministic_expert_issues(
             ))
 
         # Circular or absolute definitions are unsuitable for core study
-        # constructs and should be operationally precise.
-        circular_awareness = find_rows(r"\bAwareness\s+means\s+the\s+extent\s+of\s+awareness\b", chapters={1})
-        absolute_sustainability = find_rows(r"\bwithout\s+causing\s+any\s+harm\s+to\s+the\s+environment\b", chapters={1})
-        definition_rows = circular_awareness + absolute_sustainability
+        # constructs and should be operationally precise. Detect the pattern
+        # generically rather than using constructs from a previous review.
+        definition_rows = []
+        circular_pattern = re.compile(
+            r"\b([A-Za-z][A-Za-z -]{2,40})\s+(?:means|refers to|is defined as)\s+(?:the\s+)?(?:extent|degree|level|state)\s+of\s+\1\b",
+            flags=re.I,
+        )
+        absolute_pattern = re.compile(
+            r"\b(?:without|with no)\s+(?:causing|creating|producing)\s+(?:any|all)\s+(?:harm|damage|risk)\b|\bcompletely eliminates?\b",
+            flags=re.I,
+        )
+        for row in current:
+            if row.get("chapter_number") != 1 or row.get("is_heading"):
+                continue
+            text = clean_text(row.get("text", ""))
+            if circular_pattern.search(text) or absolute_pattern.search(text):
+                definition_rows.append(row)
         if definition_rows:
             target = definition_rows[0]
             output.append(_make_issue(
                 finding_id="DET-DEGREE-WEAK-CORE-DEFINITIONS",
                 category="conceptual_clarity",
                 section=source_section(target),
-                title="Core constructs are defined circularly or in unrealistically absolute terms",
+                title="A core construct is defined circularly or in unrealistically absolute terms",
                 severity="moderate",
                 confidence=0.96,
                 evidence_ids=[paragraph_id(row) for row in definition_rows[:4]],
                 quote=clean_text(target.get("text", ""))[:260],
                 assessment=(
-                    "At least one central construct repeats the term being defined, while another is framed as the complete absence of environmental harm. These formulations are not conceptually discriminating or readily measurable."
+                    "The marked definition repeats the construct being defined or uses absolute wording that does not establish a discriminating, measurable conceptual boundary."
                 ),
                 consequence=(
                     "Weak conceptual definitions make operationalisation and interpretation of the variables uncertain."
                 ),
                 action=(
-                    "Replace circular and absolute wording with concise scholarly definitions that state the construct's dimensions and boundaries, then align each definition with the proposed indicators or measurement scale."
-                ),
-            ))
-
-        terminology_rows = [
-            row for row in current
-            if row.get("chapter_number") == 1
-            and not row.get("is_heading")
-            and re.search(r"\benvironmental\s+sustainability\b", clean_text(row.get("text", "")), flags=re.I)
-        ]
-        performance_rows = [
-            row for row in current
-            if row.get("chapter_number") == 1
-            and not row.get("is_heading")
-            and re.search(r"\benvironmental\s+performance\b", clean_text(row.get("text", "")), flags=re.I)
-        ]
-        if terminology_rows and performance_rows:
-            target = performance_rows[0]
-            output.append(_make_issue(
-                finding_id="DET-DEGREE-ENVIRONMENTAL-SUSTAINABILITY-PERFORMANCE-TERMS",
-                category="construct_alignment",
-                section=source_section(target),
-                title="Environmental sustainability and environmental performance are not clearly distinguished",
-                severity="moderate",
-                confidence=0.92,
-                evidence_ids=[paragraph_id(terminology_rows[0]), paragraph_id(target)],
-                quote=clean_text(target.get("text", ""))[:260],
-                assessment=(
-                    "The chapter alternates between environmental sustainability and environmental performance without explaining whether these are the same construct, related dimensions or separate outcomes."
-                ),
-                consequence=(
-                    "Unclear construct terminology can weaken the conceptual framework, measurement plan and interpretation of results."
-                ),
-                action=(
-                    "Define the preferred construct consistently, explain any distinction between sustainability and performance, and align the title, purpose, objectives, questions, definitions and later measures with that decision."
+                    "Replace circular or absolute wording with a concise scholarly definition that states the construct's dimensions and boundaries, then align it with the proposed indicators or measurement scale."
                 ),
             ))
 
@@ -1117,35 +1070,6 @@ def deterministic_expert_issues(
                     "Correct the spacing and insert the required comma between the author expression and year, then apply the same citation style consistently throughout the chapter."
                 ),
             ))
-
-        body_text_original = " ".join(clean_text(row.get("text", "")) for row in current if "reference" not in normalised(source_section(row)))
-        reference_text_original = " ".join(clean_text(row.get("text", "")) for row in current if "reference" in normalised(source_section(row)))
-        if re.search(r"\bAsha[- ]Mari\s*&\s*Daud\b", body_text_original, flags=re.I) and re.search(r"\bAsha['’]ari,\s*M\.", reference_text_original, flags=re.I):
-            target = next((row for row in current if "reference" not in normalised(source_section(row)) and re.search(r"\bAsha[- ]Mari\s*&\s*Daud\b", clean_text(row.get("text", "")), flags=re.I)), None)
-            ref_row = next((row for row in current if "reference" in normalised(source_section(row)) and re.search(r"\bAsha['’]ari,\s*M\.", clean_text(row.get("text", "")), flags=re.I)), None)
-            if target is not None:
-                evidence_ids = [paragraph_id(target)]
-                if ref_row is not None:
-                    evidence_ids.append(paragraph_id(ref_row))
-                output.append(_make_issue(
-                    finding_id="DET-DEGREE-IN-TEXT-REFERENCE-AUTHOR-MISMATCH",
-                    category="source_traceability",
-                    section=source_section(target),
-                    title="An in-text citation does not match the reference-list author name",
-                    severity="major",
-                    confidence=0.96,
-                    evidence_ids=evidence_ids,
-                    quote=clean_text(target.get("text", ""))[:260],
-                    assessment=(
-                        "The in-text author name differs from the corresponding reference-list entry, which suggests either a spelling error or a mismatched source."
-                    ),
-                    consequence=(
-                        "This weakens citation integrity because the reader cannot confidently trace the cited claim to the correct source."
-                    ),
-                    action=(
-                        "Correct the in-text citation or the reference-list entry after checking the original source, and then run a full author-year reconciliation across the chapter."
-                    ),
-                ))
 
         # Detect a reference-list entry that is not cited in the chapter body.
         body_rows = [

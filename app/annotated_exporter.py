@@ -28,8 +28,8 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.28-context-guidance-editor"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "1.9.9.29-professional-human-review"
+ANNOTATION_EXPORT_VERSION = "1.9.9.30-structure-safe-editor"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "1.9.9.30-professional-supervisory-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -72,7 +72,7 @@ def _missing_section_inline_bottom_enabled() -> bool:
 
 
 def _native_group_location_markers_enabled() -> bool:
-    return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", True)
+    return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", False)
 
 
 def _sequential_reference_numbers_enabled() -> bool:
@@ -416,13 +416,84 @@ def _run_element(text: str, source_run=None, colour: Optional[str] = None, itali
 
 
 def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
+    """Return sentence-like spans without splitting decimals, DOIs or initials.
+
+    The former punctuation-only expression split values such as ``11.4`` and
+    ``1.2°C`` and could place a visible comment reference inside the number.
+    This scanner treats full stops as boundaries only when they are not part of
+    a protected numeric, bibliographic or abbreviation pattern.
+    """
+    value = text or ""
+    if not value:
+        return []
+
+    abbreviations = {
+        "al", "e.g", "i.e", "etc", "fig", "no", "pp", "p", "prof",
+        "dr", "mr", "mrs", "ms", "st", "vs", "vol", "ed", "eds",
+    }
     spans: List[Tuple[int, int, str]] = []
-    for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|$)", text or ""):
-        start, end = match.span()
-        if match.group(0).strip():
-            spans.append((start, end, match.group(0)))
-    if not spans and text:
-        spans.append((0, len(text), text))
+    start = 0
+    i = 0
+    length = len(value)
+
+    def protected_period(index: int) -> bool:
+        prev = value[index - 1] if index > 0 else ""
+        nxt = value[index + 1] if index + 1 < length else ""
+        if prev.isdigit() and nxt.isdigit():
+            return True
+        left = value[max(0, index - 12):index]
+        token_match = re.search(r"([A-Za-z](?:[A-Za-z.]*)?)$", left)
+        token = token_match.group(1).lower().rstrip(".") if token_match else ""
+        if token in abbreviations:
+            return True
+        next_nonspace = ""
+        for candidate in value[index + 1:]:
+            if not candidate.isspace():
+                next_nonspace = candidate
+                break
+        token_start = index - len(token)
+        token_preceding = value[token_start - 1] if token_start > 0 else ""
+        if (
+            len(token) == 1
+            and token.isalpha()
+            and next_nonspace.isupper()
+            and (not token_preceding or token_preceding.isspace() or token_preceding in "([{'\"")
+        ):
+            return True
+        current_lexeme = value[max(value.rfind(" ", 0, index), value.rfind("\n", 0, index)) + 1:index + 2]
+        if nxt.isalnum() and ("://" in current_lexeme or current_lexeme.lower().startswith(("www.", "doi."))):
+            return True
+        # DOI prefixes and version-like identifiers, for example 10.1108.
+        if re.search(r"(?:^|\s)10$", left) and nxt.isdigit():
+            return True
+        return False
+
+    while i < length:
+        char = value[i]
+        boundary = False
+        if char in "!?":
+            boundary = True
+        elif char == "." and not protected_period(i):
+            boundary = True
+        elif char == "\n":
+            boundary = True
+
+        if boundary:
+            end = i + 1
+            while end < length and value[end] in "\"'’”)]}":
+                end += 1
+            segment = value[start:end]
+            if segment.strip():
+                spans.append((start, end, segment))
+            start = end
+            i = end
+            continue
+        i += 1
+
+    if start < length and value[start:].strip():
+        spans.append((start, length, value[start:]))
+    if not spans:
+        spans.append((0, length, value))
     return spans
 
 
@@ -1167,12 +1238,10 @@ def _insert_red_reference_markers_after_span(
         return
     marker_text = " " + " ".join(f"[{number}]" for number in reference_numbers)
     marker = _run_element(marker_text, source_run=source_run, colour="C00000")
-    parent = trailing_element.getparent() if trailing_element is not None else paragraph._p
-    if trailing_element is not None and trailing_element.getparent() is not None:
-        index = parent.index(trailing_element) + 1
-        parent.insert(index, marker)
-    else:
-        paragraph._p.append(marker)
+    # Visible markers are disabled by default. When explicitly enabled, append
+    # them at the paragraph end so they cannot split decimals, equations, DOIs,
+    # URLs, citations or words inside the student's original text.
+    paragraph._p.append(marker)
 
 
 def _normalise_red_reference_markers_after_span(

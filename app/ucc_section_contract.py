@@ -6,6 +6,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .document_parser import clean_text, normalised
 from .supervisory_accuracy_guard import paragraph_id, source_section
+from .study_semantics import (
+    contains_uncited_empirical_count,
+    has_traceable_context_evidence,
+    omitted_objective_focuses,
+)
 
 
 def enabled() -> bool:
@@ -692,13 +697,13 @@ def _section_content_dimensions(label: str, text: str, degree: str = "") -> Tupl
     if key == "delimitations of the study":
         dimensions = 0
         dimensions += int(any(term in low for term in (
-            "ghana", "region", "district", "municipality", "institution", "bank", "school", "company", "study area", "location"
+            "country", "region", "district", "municipality", "institution", "organisation", "organization", "study area", "location"
         )))
         dimensions += int(any(term in low for term in (
             "participant", "respondent", "employee", "student", "teacher", "population", "sample", "unit of analysis"
         )))
         dimensions += int(any(term in low for term in (
-            "variable", "construct", "theme", "internal control", "fraud", "scope", "focus"
+            "variable", "construct", "theme", "phenomenon", "outcome", "scope", "focus"
         )))
         dimensions += int(
             any(term in low for term in ("academic year", "study period", "data collection period", "time period", "financial year"))
@@ -1269,11 +1274,6 @@ def _thin_section_issue(label: str, rows: Sequence[Dict[str, Any]], category: st
     )
 
 
-def _reference_author_mismatch(text: str) -> bool:
-    low = text.lower()
-    return "asha-mari" in low and ("asha'ari" in low or "asha’ari" in low)
-
-
 def _citation_tokens(text: str) -> Set[str]:
     hits: Set[str] = set()
     for match in re.finditer(r"\(([A-Z][A-Za-z'’\-]+(?:\s+et\s+al\.)?|[A-Z][A-Za-z'’\-]+\s*&\s*[A-Z][A-Za-z'’\-]+)[^)]*?,\s*(?:19|20)\d{2}\)", text):
@@ -1346,26 +1346,11 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
     defs = _plain(definitions)
     refs = _plain(references)
 
-    title = _title_anchor(paragraphs)
-    if title and any(term in normalised(obj) for term in ("awareness", "operational performance")):
-        title_low = normalised(clean_text(title.get("text", "")))
-        if not all(term in title_low for term in ("awareness", "operational performance")):
-            issues.append(_issue(
-                code="CH1-TITLE-SCOPE",
-                section="Title",
-                title="The title does not cover all substantive constructs in the objectives",
-                assessment="The title does not fully reflect all substantive constructs, population boundaries or case-setting elements introduced in the objectives.",
-                action="Align the title, purpose and objectives by either adding the omitted constructs, population and case setting to the title or narrowing the objectives to match the title.",
-                anchor=title,
-                category="cross_section_coherence",
-                degree=degree,
-                severity="major",
-            ))
 
     if background:
         low_bg = normalised(bg)
-        theory_terms = ("theoretical framework", "conceptual framework", "institutional theory", "stakeholder theory", "natural resource based", "resource based", "triple bottom line theory")
-        if degree in {"research_masters", "professional_doctorate", "phd"} and not any(t in low_bg for t in theory_terms):
+        has_theory_or_framework = bool(re.search(r"\b(?:theor(?:y|ies|etical)|conceptual|framework)\b", low_bg))
+        if degree in {"research_masters", "professional_doctorate", "phd"} and not has_theory_or_framework:
             issues.append(_issue(
                 code="CH1-BACKGROUND-THEORY",
                 section="Background to the Study",
@@ -1377,27 +1362,34 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 degree=degree,
                 severity="major",
             ))
-        if "central region" in low_bg and not any(t in low_bg for t in ("epa", "ghana statistical", "manufacturing association", "policy", "report", "statistics", "regulatory")):
+        context_claim = bool(re.search(
+            r"\b(?:in|within|among|at)\s+(?:the\s+)?[A-Z][A-Za-z0-9&'’., -]{3,80}\b",
+            bg,
+        ))
+        if context_claim and len(bg.split()) >= 80 and not has_traceable_context_evidence(bg):
             issues.append(_issue(
                 code="CH1-BACKGROUND-LOCAL-EVIDENCE",
                 section="Background to the Study",
-                title="The background does not adequately evidence the local UCC study context",
-                assessment="The section names Ghana and the Central Region but does not provide strong local policy, industry or empirical evidence showing why this context requires investigation.",
-                action="Add traceable Ghanaian or Central Region evidence, such as policy documents, industry data, regulatory reports or recent local empirical findings, and link it to the study problem.",
+                title="The study context is named but not adequately evidenced",
+                assessment="The section identifies a specific context but does not provide traceable local empirical, institutional or policy evidence showing why that context requires investigation.",
+                action="Add recent evidence from the confirmed study setting, such as official data, policy or regulatory documents, institutional records or relevant empirical studies, and connect it directly to the problem.",
                 anchor=_first_substantive(background),
                 category="research_gap_and_problem",
                 degree=degree,
                 severity="major",
             ))
-        if re.search(r"\b100\s+manufacturing\s+enterprises\s+in\s+Ghana\b", bg, flags=re.I):
-            anchor = next((row for row in background if re.search(r"\b100\s+manufacturing\s+enterprises", clean_text(row.get("text", "")), flags=re.I)), _first_substantive(background))
+        uncited_count_anchor = next(
+            (row for row in background if any(contains_uncited_empirical_count(sentence) for sentence in re.split(r"(?<=[.!?])\s+", clean_text(row.get("text", ""))))),
+            None,
+        )
+        if uncited_count_anchor:
             issues.append(_issue(
                 code="CH1-BACKGROUND-SAMPLE-CLAIM",
                 section="Background to the Study",
-                title="A specific empirical sample claim is not clearly sourced",
-                assessment="The section refers to 100 manufacturing enterprises in Ghana, but the citation supporting that exact sample claim is not attached clearly enough.",
-                action="Attach the exact source to the numerical sample claim or remove the claim if it cannot be verified from the cited study.",
-                anchor=anchor,
+                title="A specific empirical count is not clearly sourced",
+                assessment="The section reports a numerical sample, population or empirical count without an adjacent citation supporting that exact claim.",
+                action="Attach the authentic source in the same sentence as the numerical claim and verify the full reference, or remove or qualify the claim if it cannot be confirmed.",
+                anchor=uncited_count_anchor,
                 category="citations_and_sources",
                 degree=degree,
                 severity="major",
@@ -1417,34 +1409,44 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
 
     if problem:
         low_prob = normalised(prob)
-        local_evidence_terms = (
-            "statistics", "statistical service", "ghana statistical", "environmental protection agency",
-            "epa", "ministry", "regulatory report", "industry report", "manufacturing association",
-            "survey findings", "data show", "central region report", "regional data"
-        )
-        if not any(t in low_prob for t in local_evidence_terms):
+        if len(prob.split()) >= 45 and not has_traceable_context_evidence(prob):
             issues.append(_issue(
                 code="CH1-PROBLEM-EVIDENCE",
                 section="Statement of the Problem",
-                title="The problem statement lacks concrete local empirical or policy evidence",
-                assessment="The problem is argued mainly through broad statements and literature rather than direct empirical, institutional or policy evidence from the specific study context.",
-                action="Insert credible local evidence showing the existence, scale or consequence of the problem, then connect that evidence to the study variables and context.",
+                title="The problem statement lacks concrete empirical, institutional or policy evidence",
+                assessment="The problem is argued mainly through broad statements rather than traceable evidence showing its existence, scale or consequences in the confirmed study context.",
+                action="Insert credible evidence from the confirmed setting, explain what remains unresolved and connect that gap directly to the study constructs and purpose.",
                 anchor=_first_substantive(problem),
                 category="research_gap_and_problem",
                 degree=degree,
                 severity="major",
             ))
-        if any(country in low_prob for country in ("pakistan", "india", "portugal", "europe")) and "central region" in low_prob:
+        if re.search(r"\b(?:cannot|may not|should not)\s+be\s+(?:extrapolated|generalised|generalized|transferred|applied)\b", prob, flags=re.I):
             issues.append(_issue(
                 code="CH1-PROBLEM-GAP-LOGIC",
                 section="Statement of the Problem",
                 title="The practical problem, empirical gap and contextual gap are not clearly separated",
-                assessment="The section moves from foreign studies to the Ghanaian context, but it does not clearly distinguish the practical problem from the empirical and contextual research gap.",
-                action="Rewrite the problem statement in clear moves: practical problem, evidence of seriousness, weakness in existing studies, Central Region gap and exact research focus.",
+                assessment="The section argues that evidence from another context cannot simply be transferred, but it does not clearly separate the practical problem from the empirical, contextual and methodological gaps.",
+                action="Rewrite the section in connected moves: practical problem, evidence of seriousness, unresolved issue in earlier studies, relevance of the confirmed context and exact research focus.",
                 anchor=_first_substantive(problem),
                 category="research_gap_and_problem",
                 degree=degree,
                 severity="major",
+            ))
+
+    if purpose and objectives:
+        missing_focuses = omitted_objective_focuses(purp, obj)
+        if missing_focuses:
+            issues.append(_issue(
+                code="CH1-PURPOSE-OBJECTIVE-COVERAGE",
+                section="Purpose of the study",
+                title="The purpose statement is narrower than the objectives",
+                assessment=f"The purpose does not represent all substantive focuses introduced in the objectives, including {', '.join(missing_focuses)}.",
+                action="Broaden the purpose to cover every principal construct and outcome, or remove objectives that fall outside the intended study purpose. Then recheck alignment with the questions, hypotheses and methods.",
+                anchor=_first_substantive(purpose),
+                category="objectives_questions_hypotheses",
+                degree=degree,
+                severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
             ))
 
     if objectives:
@@ -1462,21 +1464,7 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
                 severity="major" if degree in {"research_masters", "professional_doctorate", "phd"} else "moderate",
             ))
 
-    if purpose and objectives:
-        missing = [term for term in ("awareness", "operational performance", "current green procurement practices") if term in normalised(obj) and term not in normalised(purp)]
-        if missing:
-            issues.append(_issue(
-                code="CH1-PURPOSE-SCOPE",
-                section="Purpose of the study",
-                title="The purpose statement is narrower than the objectives",
-                assessment="The purpose does not cover all substantive constructs and outcomes introduced in the objectives.",
-                action="Revise the purpose so that it covers every principal construct and outcome in the objectives, or remove objectives that fall outside the intended scope.",
-                anchor=_first_substantive(purpose),
-                category="objectives_questions_hypotheses",
-                degree=degree,
-                severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
-            ))
-        if any(t in normalised(purp) for t in ("effect", "impact", "influence")):
+        if purpose and "cross sectional" in normalised(full_text) and any(t in normalised(purp) for t in ("effect", "impact", "influence")):
             issues.append(_issue(
                 code="CH1-PURPOSE-CAUSAL-LANGUAGE",
                 section="Purpose of the study",
@@ -1606,55 +1594,21 @@ def _chapter_one_specific(paragraphs: Sequence[Dict[str, Any]], grouped: Dict[st
 
     if definitions:
         low_defs = normalised(defs)
-        if "awareness means the extent of awareness" in low_defs or "without causing any harm" in low_defs:
+        circular_match = re.search(r"\b([a-z][a-z -]{2,40})\s+(?:means|refers to|is defined as)\s+(?:the\s+)?(?:extent|degree|level|state)\s+of\s+\1\b", low_defs, flags=re.I)
+        absolute_match = re.search(r"\b(?:without|with no)\s+(?:causing|creating|producing)\s+(?:any|all)\s+(?:harm|damage|risk)\b|\bcompletely eliminates?\b", low_defs, flags=re.I)
+        if circular_match or absolute_match:
+            matched_phrase = circular_match.group(0) if circular_match else absolute_match.group(0)
             issues.append(_issue(
                 code="CH1-DEFINITIONS-CIRCULAR",
                 section="Definition of Terms",
-                title="Core terms are defined circularly or in unrealistically absolute language",
-                assessment="Awareness repeats the term being defined, while environmental sustainability is described as complete absence of harm.",
-                action="Replace circular and absolute wording with definitions that state dimensions, boundaries and measurable indicators.",
-                anchor=next((row for row in definitions if "Awareness means" in clean_text(row.get("text", ""))), _first_substantive(definitions)),
+                title="A core term is defined circularly or in unrealistically absolute language",
+                assessment=f"The wording ‘{matched_phrase}’ does not establish a measurable conceptual boundary.",
+                action="Replace circular or absolute wording with a definition that states the construct's dimensions, boundaries and measurable indicators.",
+                anchor=next((row for row in definitions if matched_phrase.lower() in normalised(clean_text(row.get("text", "")))), _first_substantive(definitions)),
                 category="objectives_questions_hypotheses",
                 degree=degree,
                 severity="major",
             ))
-        if "environmental sustainability" in low_defs and "environmental performance" in low_defs:
-            issues.append(_issue(
-                code="CH1-DEFINITIONS-OVERLAP",
-                section="Definition of Terms",
-                title="Environmental sustainability and environmental performance are not sufficiently distinguished",
-                assessment="The two constructs are defined in overlapping terms, which may confuse the dependent construct and related performance construct.",
-                action="Differentiate the constructs by specifying the main outcome, the indicators for each construct and how they will be measured separately.",
-                anchor=next((row for row in definitions if "Environmental Performance" in clean_text(row.get("text", ""))), _first_substantive(definitions)),
-                category="objectives_questions_hypotheses",
-                degree=degree,
-                severity="major",
-            ))
-        if "( sijm" in low_defs or re.search(r"\(\s*Sijm[-‑]Eeken\s+et\s+al\.\s+20\d{2}\)", defs, flags=re.I):
-            issues.append(_issue(
-                code="CH1-DEFINITIONS-CITATION-PUNCTUATION",
-                section="Definition of Terms",
-                title="An in-text citation in the definitions section is incorrectly punctuated",
-                assessment="The citation for Sijm-Eeken et al. contains incorrect spacing and lacks the required comma before the year.",
-                action="Correct the citation punctuation and apply the same referencing style consistently across the chapter.",
-                anchor=next((row for row in definitions if "Sijm" in clean_text(row.get("text", ""))), _first_substantive(definitions)),
-                category="citations_and_sources",
-                degree=degree,
-                severity="moderate",
-            ))
-
-    if background and _reference_author_mismatch(full_text):
-        issues.append(_issue(
-            code="CH1-CITATION-AUTHOR-MISMATCH",
-            section="Background to the Study",
-            title="An in-text author name does not match the reference-list author name",
-            assessment="The chapter cites Asha-Mari and Daud, while the reference list records Asha'ari and Daud.",
-            action="Verify the source and make the in-text citation and reference-list entry identical.",
-            anchor=next((row for row in background if "Asha-Mari" in clean_text(row.get("text", ""))), _first_substantive(background)),
-            category="citations_and_sources",
-            degree=degree,
-            severity="major",
-        ))
 
     if any(w in full_text for w in ("behavior", "organization", "labor")) and any(w in full_text for w in ("behaviour", "organisation", "labour")):
         anchor = next((row for row in _current_rows(paragraphs) if any(w in clean_text(row.get("text", "")) for w in ("behavior", "organization", "labor"))), _first_substantive(background))

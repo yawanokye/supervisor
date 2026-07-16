@@ -4,6 +4,8 @@ import io
 import re
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+from .thesis_structure import build_chapter_role_map
+
 try:
     import fitz
 except Exception:
@@ -110,6 +112,84 @@ DOCTORAL_ESSENTIAL_FUNCTIONS = {
     "methodology_and_research_design",
     "evidence_results_or_findings",
     "conclusions_contribution_and_implications",
+}
+
+
+PHD_PRESCRIBED_ELEMENTS = {
+    "background_and_context": {
+        "label": "Background, context and rationale",
+        "terms": ["background to the study", "background of the study", "study context", "contextual framework", "rationale for the study"],
+    },
+    "problem_statement": {
+        "label": "Clearly evidenced research problem",
+        "terms": ["statement of the problem", "problem statement", "research problem"],
+    },
+    "purpose_objectives_questions": {
+        "label": "Purpose, objectives and research questions or hypotheses",
+        "terms": ["purpose of the study", "aim of the study", "research objectives", "specific objectives", "research questions", "research hypotheses", "hypothesis development"],
+    },
+    "significance_scope_and_definitions": {
+        "label": "Significance, scope and key definitions",
+        "terms": ["significance of the study", "scope of the study", "delimitations of the study", "definition of terms", "key concepts"],
+    },
+    "critical_literature_synthesis": {
+        "label": "Critical literature synthesis and scholarly positioning",
+        "terms": ["literature review", "empirical review", "critical synthesis", "state of the art", "research gap"],
+    },
+    "theory_and_conceptual_framework": {
+        "label": "Theoretical and conceptual framework",
+        "terms": ["theoretical framework", "theoretical review", "conceptual framework", "conceptual model"],
+    },
+    "originality_and_gap": {
+        "label": "Defensible research gap and originality claim",
+        "terms": ["research gap", "originality", "novelty", "original contribution", "contribution to knowledge"],
+    },
+    "methodology_design_and_philosophy": {
+        "label": "Methodology, design and philosophical justification",
+        "terms": ["research methodology", "methodology", "research design", "research philosophy", "research paradigm", "research approach"],
+    },
+    "data_sampling_measurement": {
+        "label": "Data sources, sampling and measurement",
+        "terms": ["population of the study", "sampling procedure", "sample size", "data sources", "data collection", "measurement of variables", "operationalisation of variables", "research instrument"],
+    },
+    "analysis_diagnostics_and_reproducibility": {
+        "label": "Analysis strategy, diagnostics and reproducibility",
+        "terms": ["data analysis", "model specification", "estimation strategy", "diagnostic tests", "assumption tests", "robustness", "software", "syntax", "code"],
+    },
+    "ethics_and_integrity": {
+        "label": "Ethics and research integrity",
+        "terms": ["ethical considerations", "research ethics", "ethics approval", "informed consent", "confidentiality", "research integrity"],
+    },
+    "results_and_evidence": {
+        "label": "Results, findings and analytical evidence",
+        "terms": ["results", "research findings", "empirical findings", "model estimates", "thematic findings", "analysis of evidence"],
+    },
+    "discussion_and_rival_explanations": {
+        "label": "Discussion, theory integration and rival explanations",
+        "terms": ["discussion of findings", "discussion of results", "integrative discussion", "alternative explanations", "rival explanations", "unexpected findings"],
+    },
+    "conclusions_and_contribution": {
+        "label": "Conclusions and original contribution to knowledge",
+        "terms": ["conclusions", "conclusion", "contribution to knowledge", "theoretical contribution", "methodological contribution", "original contribution"],
+    },
+    "implications_limitations_and_future_research": {
+        "label": "Implications, recommendations, limitations and future research",
+        "terms": ["recommendations", "policy implications", "practical implications", "limitations of the study", "future research", "directions for future research"],
+    },
+}
+
+PHD_ESSENTIAL_PRESCRIBED_ELEMENTS = {
+    "problem_statement",
+    "purpose_objectives_questions",
+    "critical_literature_synthesis",
+    "theory_and_conceptual_framework",
+    "methodology_design_and_philosophy",
+    "data_sampling_measurement",
+    "analysis_diagnostics_and_reproducibility",
+    "ethics_and_integrity",
+    "results_and_evidence",
+    "discussion_and_rival_explanations",
+    "conclusions_and_contribution",
 }
 
 CHAPTER_WORD_NUMBERS = {
@@ -578,6 +658,8 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
             record("summary_conclusions_recommendations", "Strong Chapter Five component profile")
 
     missing_keys = [key for key in STANDARD_CHAPTER_FUNCTIONS if not evidence[key]]
+    required_chapters = {1, 2, 3, 4, 5}
+    missing_chapter_numbers = sorted(required_chapters - detected)
     return {
         "detected_chapter_numbers": profile["detected_chapters"],
         "detected_chapter_labels": profile["detected_labels"],
@@ -585,9 +667,11 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
         "function_evidence": evidence,
         "missing_function_keys": missing_keys,
         "missing_functions": [STANDARD_CHAPTER_FUNCTIONS[key] for key in missing_keys],
+        "required_chapter_numbers": sorted(required_chapters),
+        "missing_chapter_numbers": missing_chapter_numbers,
         "optional_chapters": [number for number in profile["detected_chapters"] if number > 5],
         "chapter_profile": profile,
-        "complete": not missing_keys,
+        "complete": not missing_keys and not missing_chapter_numbers,
     }
 
 
@@ -595,12 +679,12 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
 def detect_doctoral_functional_coverage(
     paragraphs: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Validate a flexible doctoral thesis by research function, not chapter order.
+    """Validate a flexible PhD thesis by research function, not chapter order.
 
-    Professional Doctorate and PhD theses may use article-based, essay-based,
-    portfolio, monograph, practice-based or discipline-specific architectures.
-    The chapter names and sequence are therefore unrestricted. The document
-    must still demonstrate the core research functions.
+    PhD theses may use article-based, essay-based, portfolio, monograph,
+    practice-based or discipline-specific architectures. Chapter names, order
+    and number may vary, but every prescribed doctoral research element must be
+    demonstrably present and integrated in the complete thesis.
     """
     searchable_rows = [
         row for row in paragraphs
@@ -644,6 +728,25 @@ def detect_doctoral_functional_coverage(
             if len(evidence[key]) >= 5:
                 break
 
+    prescribed_evidence: Dict[str, List[Dict[str, Any]]] = {
+        key: [] for key in PHD_PRESCRIBED_ELEMENTS
+    }
+    for key, specification in PHD_PRESCRIBED_ELEMENTS.items():
+        for row in searchable_rows:
+            row_text = normalised(row.get("text", ""))
+            hits = [term for term in specification["terms"] if normalised(term) in row_text]
+            if not hits:
+                continue
+            prescribed_evidence[key].append({
+                "heading": clean_text(row.get("heading") or row.get("text", ""))[:240],
+                "paragraph": row.get("paragraph"),
+                "page": row.get("page"),
+                "chapter_number": row.get("chapter_number"),
+                "matched_terms": hits[:5],
+            })
+            if len(prescribed_evidence[key]) >= 5:
+                break
+
     covered_keys = [
         key for key, rows in evidence.items() if rows
     ]
@@ -656,13 +759,28 @@ def detect_doctoral_functional_coverage(
         if key not in covered_keys
     ]
 
-    # A flexible doctoral thesis must contain every essential function and at
-    # least five of the six broad research functions. The expert review still
-    # examines the adequacy and integration of each function.
+    prescribed_covered_keys = [
+        key for key, rows in prescribed_evidence.items() if rows
+    ]
+    missing_prescribed_keys = [
+        key for key in PHD_PRESCRIBED_ELEMENTS if key not in prescribed_covered_keys
+    ]
+    essential_prescribed_missing = [
+        key for key in PHD_ESSENTIAL_PRESCRIBED_ELEMENTS
+        if key not in prescribed_covered_keys
+    ]
+
+    # A PhD may use any defensible chapter architecture, but the architecture
+    # must still cover every broad research function and every prescribed
+    # doctoral element. Chapter variation must never become a reason to omit
+    # problem, theory, methods, ethics, evidence, discussion or contribution.
     complete = (
         not essential_missing
-        and len(covered_keys) >= 5
+        and len(covered_keys) == len(DOCTORAL_RESEARCH_FUNCTIONS)
+        and not missing_prescribed_keys
     )
+
+    role_map = build_chapter_role_map(paragraphs, "PhD")
 
     return {
         "covered_function_keys": covered_keys,
@@ -681,8 +799,16 @@ def detect_doctoral_functional_coverage(
             for key in essential_missing
         ],
         "function_evidence": evidence,
+        "prescribed_element_evidence": prescribed_evidence,
+        "covered_prescribed_element_keys": prescribed_covered_keys,
+        "covered_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in prescribed_covered_keys],
+        "missing_prescribed_element_keys": missing_prescribed_keys,
+        "missing_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in missing_prescribed_keys],
+        "essential_missing_prescribed_element_keys": essential_prescribed_missing,
+        "essential_missing_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in essential_prescribed_missing],
+        "chapter_role_map": role_map,
         "functions_covered_count": len(covered_keys),
-        "functions_required_minimum": 5,
+        "functions_required_minimum": len(DOCTORAL_RESEARCH_FUNCTIONS),
         "fixed_chapter_sequence_required": False,
         "custom_chapter_titles_allowed": True,
         "complete": complete,

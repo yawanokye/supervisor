@@ -8,16 +8,17 @@ from .finding_order import chapter_number as ordered_chapter_number, document_or
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .final_review_quality import build_canonical_finding_rows
 from .supervisory_review_algorithm import build_supervisory_report_spec
+from .thesis_structure import ROLE_SPECIALISTS, infer_chapter_role
 
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
-CHAPTER_NAMES = {
-    1: "Chapter One",
-    2: "Chapter Two",
-    3: "Chapter Three",
-    4: "Chapter Four",
-    5: "Chapter Five",
-}
+CHAPTER_NAMES = {number: f"Chapter {number}" for number in range(1, 21)}
+CHAPTER_NAMES.update({
+    1: "Chapter One", 2: "Chapter Two", 3: "Chapter Three",
+    4: "Chapter Four", 5: "Chapter Five", 6: "Chapter Six",
+    7: "Chapter Seven", 8: "Chapter Eight", 9: "Chapter Nine",
+    10: "Chapter Ten",
+})
 
 
 def _clean(value: Any) -> str:
@@ -45,7 +46,7 @@ def _legacy_chapter_number(row: Dict[str, Any]) -> int | None:
     match = re.search(r"\bchapter\s+(\d+)\b", section)
     if match:
         return int(match.group(1))
-    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
     for word, number in words.items():
         if f"chapter {word}" in section:
             return number
@@ -153,23 +154,19 @@ def professional_scope_profile(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def specialist_role_for_chapter(chapter_number: Any, heading: str = "") -> str:
-    try:
-        chapter = int(chapter_number) if chapter_number is not None else None
-    except (TypeError, ValueError):
-        chapter = None
-    heading_norm = _norm(heading)
-    if chapter == 1 or any(term in heading_norm for term in ("problem statement", "research objective", "introduction")):
-        return "Research problem, framing and alignment specialist"
-    if chapter == 2 or any(term in heading_norm for term in ("literature review", "theoretical framework", "empirical review")):
-        return "Theory, evidence synthesis and research-gap specialist"
-    if chapter == 3 or any(term in heading_norm for term in ("methodology", "research methods", "sampling", "instrument")):
-        return "Research design, measurement, ethics and reproducibility specialist"
-    if chapter == 4 or any(term in heading_norm for term in ("results", "findings", "discussion", "analysis")):
-        return "Results, statistical or qualitative analysis, and interpretation specialist"
-    if chapter == 5 or any(term in heading_norm for term in ("conclusion", "recommendation", "summary of findings")):
-        return "Synthesis, contribution, conclusion and recommendation specialist"
-    return "Discipline-sensitive thesis reviewer"
+def specialist_role_for_chapter(
+    chapter_number: Any,
+    heading: str = "",
+    content: str = "",
+    academic_level: Any = "",
+) -> str:
+    role = infer_chapter_role(
+        chapter_number,
+        heading,
+        content,
+        academic_level=academic_level,
+    )
+    return ROLE_SPECIALISTS.get(role, ROLE_SPECIALISTS["other"])
 
 
 def professional_scope_contract(summary: Dict[str, Any]) -> str:
@@ -345,10 +342,16 @@ def build_chapter_judgements(review: Dict[str, Any], ledger: Sequence[Dict[str, 
         chapter_rows = [row for row in ledger if row.get("chapter_number") == chapter]
         counts = Counter(row.get("severity") for row in chapter_rows)
         score = _chapter_score(review, chapter)
+        role_row = (summary.get("chapter_role_map") or {}).get(chapter) or (summary.get("chapter_role_map") or {}).get(str(chapter)) or {}
         output.append({
             "chapter_number": chapter,
-            "chapter": CHAPTER_NAMES.get(chapter, f"Chapter {chapter}"),
-            "specialist_role": specialist_role_for_chapter(chapter),
+            "chapter": role_row.get("heading") or CHAPTER_NAMES.get(chapter, f"Chapter {chapter}"),
+            "chapter_role": role_row.get("role"),
+            "chapter_roles": list(role_row.get("roles") or []),
+            "specialist_role": (
+                role_row.get("specialist_role")
+                or specialist_role_for_chapter(chapter, academic_level=summary.get("academic_level"))
+            ),
             "score": score,
             "decision": _chapter_decision(counts, score, level_label),
             "severity_counts": dict(counts),
@@ -361,27 +364,37 @@ def build_chapter_judgements(review: Dict[str, Any], ledger: Sequence[Dict[str, 
 
 def _is_methods_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""))))
-    return row.get("chapter_number") == 3 or any(term in text for term in (
+    return row.get("chapter_role") == "methodology" or any(term in text for term in (
         "method", "design", "sampling", "instrument", "validity", "reliability", "ethics", "trustworthiness", "data collection",
     ))
 
 
 def _is_results_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""), row.get("assessment", ""))))
-    return row.get("chapter_number") == 4 or any(term in text for term in (
+    return (row.get("chapter_role") in {"results", "article_or_study"} or "results" in (row.get("chapter_roles") or [])) or any(term in text for term in (
         "result", "analysis", "statistic", "coefficient", "p value", "table", "regression", "anova", "sem", "theme", "moderation", "mediation",
     ))
 
 
 def _is_discussion_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""))))
-    return any(term in text for term in ("discussion", "interpretation", "theory", "prior studies", "implication", "unexpected finding"))
+    return (row.get("chapter_role") == "discussion" or "discussion" in (row.get("chapter_roles") or [])) or any(term in text for term in ("discussion", "interpretation", "theory", "prior studies", "implication", "unexpected finding"))
 
 
-def build_methods_results_discussion_audit(ledger: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    methods = [row for row in ledger if _is_methods_row(row)]
-    results = [row for row in ledger if _is_results_row(row)]
-    discussion = [row for row in ledger if _is_discussion_row(row)]
+def build_methods_results_discussion_audit(review: Dict[str, Any], ledger: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = review.get("summary") or {}
+    role_map = summary.get("chapter_role_map") or {}
+    enriched: List[Dict[str, Any]] = []
+    for row in ledger:
+        copy = dict(row)
+        chapter = copy.get("chapter_number")
+        role_row = role_map.get(chapter) or role_map.get(str(chapter)) or {}
+        copy["chapter_role"] = role_row.get("role")
+        copy["chapter_roles"] = list(role_row.get("roles") or [])
+        enriched.append(copy)
+    methods = [row for row in enriched if _is_methods_row(row)]
+    results = [row for row in enriched if _is_results_row(row)]
+    discussion = [row for row in enriched if _is_discussion_row(row)]
     evidence_required = []
     for row in ledger:
         if row.get("requires_original_output"):
@@ -465,7 +478,7 @@ def build_professional_review_package(review: Dict[str, Any]) -> Dict[str, Any]:
     profile = professional_scope_profile(summary)
     ledger = build_finding_ledger(review)
     chapter_judgements = build_chapter_judgements(review, ledger)
-    audit = build_methods_results_discussion_audit(ledger)
+    audit = build_methods_results_discussion_audit(review, ledger)
     package = {
         "profile": profile,
         "scope_contract": professional_scope_contract(summary),

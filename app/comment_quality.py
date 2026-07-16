@@ -52,7 +52,7 @@ _GENERIC_BRACKET_PLACEHOLDER_RE = re.compile(
 
 _DANGLING_END_RE = re.compile(
     r"(?:\b(?:and|or|of|to|for|with|among|between|while|including|such as|the|a|an|this|that|these|those|its|their|on|at|by|from)"
-    r"|\b(?:assessing|examining|including|manufacturing|Ghanaian|write|describe|explain|state|show|demonstrate|provide))\s*[.!?]?$",
+    r"|\b(?:assessing|examining|including|write|describe|explain|state|show|demonstrate|provide))\s*[.!?]?$",
     flags=re.I,
 )
 
@@ -390,8 +390,8 @@ def _similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
     intent_bonus = 0.0
     duplicate_intents = (
         {"hypotheses", "objectives"},
-        {"purpose", "operational", "performance"},
-        {"environmental", "sustainability", "performance"},
+        {"purpose", "objective", "alignment"},
+        {"statistical", "model", "diagnostic"},
         {"citation", "source", "verify"},
     )
     if any(len(shared & intent) >= 2 for intent in duplicate_intents):

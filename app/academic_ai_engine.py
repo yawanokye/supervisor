@@ -7,6 +7,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -37,6 +38,7 @@ from .student_friendly_review import make_issue_student_friendly, make_finding_s
 from .supervisory_review_algorithm import algorithm_contract
 from .statistical_review import statistical_warnings_to_issues
 from .thorough_review import thorough_review_deterministic_issues
+from .thesis_structure import uses_flexible_phd_structure
 from .articleready_review_bridge import attach_articleready_quality_audit
 from .professional_review_pipeline import (
     attach_professional_review_package,
@@ -559,9 +561,11 @@ def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConf
         else ReviewStage.FINAL_AUDIT
     )
     if depth == "advanced":
+        final_model = config.openai_phd_final_synthesis_model if key == "phd" else config.openai_final_audit_model
+        final_effort = config.openai_phd_final_synthesis_reasoning_effort if key == "phd" else config.openai_final_audit_reasoning_effort
         return (
-            config.openai_final_audit_model,
-            config.openai_final_audit_reasoning_effort,
+            final_model,
+            final_effort,
             max(config.advanced_audit_max_output_tokens, min(config.advanced_max_output_tokens, 8000)),
             research_stage,
         )
@@ -578,7 +582,7 @@ def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConf
             "non_research_masters": (config.openai_chapter_model, "medium", max(config.light_audit_max_output_tokens, 3200)),
             "research_masters": (config.openai_expert_model, "medium", max(config.light_audit_max_output_tokens, 4200)),
             "professional_doctorate": (config.openai_expert_model, "high", max(config.light_audit_max_output_tokens, 5000)),
-            "phd": (config.openai_expert_model, "high", max(config.light_audit_max_output_tokens, 5500)),
+            "phd": (config.openai_phd_final_synthesis_model, config.openai_phd_final_synthesis_reasoning_effort, max(config.light_audit_max_output_tokens, 5500)),
         }
     else:
         settings = {
@@ -586,7 +590,7 @@ def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConf
             "non_research_masters": (config.openai_chapter_model, config.non_research_masters_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.non_research_masters_audit_max_output_tokens)),
             "research_masters": (config.openai_expert_model, config.research_masters_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.research_masters_audit_max_output_tokens)),
             "professional_doctorate": (config.openai_expert_model, config.professional_doctorate_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.professional_doctorate_audit_max_output_tokens)),
-            "phd": (config.openai_expert_model, config.phd_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.phd_audit_max_output_tokens)),
+            "phd": (config.openai_phd_final_synthesis_model, config.phd_audit_reasoning_effort, max(config.standard_audit_max_output_tokens, config.phd_audit_max_output_tokens)),
         }
     model, effort, tokens = settings[key]
     return model, effort, tokens, research_stage
@@ -861,6 +865,14 @@ def _chapter_dimensions(review: Dict[str, Any]) -> List[str]:
         values: List[str] = []
         for number in range(1, 6):
             values.extend(CHAPTER_DIMENSIONS[number])
+        if uses_flexible_phd_structure(summary.get("academic_level")):
+            values.extend([
+                "functional completeness across the actual PhD architecture",
+                "integration across article, essay, portfolio or discipline-specific chapters",
+                "original and defensible contribution to knowledge",
+                "rival explanations and robustness",
+                "objective-to-method-to-result-to-discussion-to-conclusion traceability",
+            ])
         return list(dict.fromkeys(values))
     return CHAPTER_DIMENSIONS.get(selected, ["academic coherence", "evidence", "critical analysis", "academic writing"])
 
@@ -971,7 +983,9 @@ def _batch_prompt(
             "cross_chapter_audit": bool(section.get("alignment_audit")),
             "revision_audit": bool(section.get("revision_audit")),
             "specialist_reviewer_role": specialist_role_for_chapter(
-                section.get("chapter_number"), section.get("heading", "")
+                section.get("chapter_number"),
+                section.get("heading", ""),
+                academic_level=summary.get("academic_level"),
             ),
             "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
@@ -986,7 +1000,7 @@ def _batch_prompt(
     doctoral_structure = bool(
         summary.get("thesis_structure_mode")
         == "flexible_doctoral"
-        or _is_doctoral_level(summary.get("academic_level"))
+        or uses_flexible_phd_structure(summary.get("academic_level"))
     )
 
     if doctoral_structure:
@@ -1017,7 +1031,7 @@ def _batch_prompt(
             ),
         }
         complete_structure_instruction = (
-            "For this Professional Doctorate or PhD thesis, accept the actual "
+            "For this PhD thesis, accept the actual "
             "chapter architecture and titles. Review every chapter and section "
             "as submitted, then test whether the core research functions are "
             "complete, logically ordered, mutually consistent and integrated "
@@ -1038,7 +1052,7 @@ def _batch_prompt(
             "additional_chapters_must_align_with_the_problem_objectives_methods_results_and_conclusions": True,
         }
         complete_structure_instruction = (
-            "For a complete non-doctoral thesis, examine all standard research "
+            "For every complete non-PhD thesis, including a Professional Doctorate, examine all standard research "
             "chapters and any approved additional chapters. "
         )
 
@@ -1065,6 +1079,10 @@ def _batch_prompt(
             "optional_chapters_detected": summary.get(
                 "optional_chapters_detected", []
             ),
+            "institutional_profile": summary.get("institutional_profile", "generic"),
+            "chapter_role_map": summary.get("chapter_role_map", {}),
+            "phd_prescribed_elements_covered": summary.get("phd_prescribed_elements_covered", []),
+            "missing_phd_prescribed_elements": summary.get("missing_phd_prescribed_elements", []),
             "review_level_label": profile["label"],
             "declared_degree_label": benchmark["degree_label"],
             "review_benchmark": benchmark["degree_standard"],
@@ -1079,6 +1097,7 @@ def _batch_prompt(
             if key != "source_text_normalised"
         },
         "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
+        "objective_to_conclusion_traceability_matrix": review.get("objective_alignment_matrix") or {},
         "chapter_review_dimensions": _chapter_dimensions(review),
         "coverage_contract": {
             "review_every_section_and_subsection": True,
@@ -1134,7 +1153,7 @@ def _batch_prompt(
             + complete_structure_instruction
             + "For Chapters Three and Four, first identify the actual research design and analysis route from the study, then apply only the diagnostics and reporting requirements appropriate to that route. Conduct a level-appropriate methods-results-discussion audit across quantitative, qualitative, mixed-methods, review, experimental, econometric, SEM, mediation, moderation or other designs as applicable. Verify design-sampling alignment, instrument or protocol quality, reliability/validity/trustworthiness, data screening, model choice, assumptions, diagnostic thresholds, statistical or qualitative table completeness, numerical consistency where enough evidence is present, hypothesis/research-question decisions and discussion claims. For PROCESS, mediation, moderation, SEM, regression, ANOVA, t-test, chi-square, panel/time-series, thematic analysis and mixed-methods integration, require the specific outputs only when that analysis is actually used. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
-            "Write comments in direct student-facing language. Start with the specific defect, not a checklist label. For example, write “Definition of Terms is missing from Chapter One. This section is required under the UCC thesis structure...” rather than “Expected UCC thesis section is not evident.” Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
+            "Write comments in direct student-facing language. Start with the specific defect, not a checklist label. For example, write “Definition of Terms is missing from Chapter One and the chapter does not define the constructs used in the study” rather than “Expected institutional section is not evident.” Give examples only from the confirmed study context. When a verified contextual detail, source or statistic is unavailable, omit the example and give a direct verification instruction without any placeholder token. "
             "Treat the institutional structure only as a whole-chapter coverage guide. Do not ask a bare chapter heading or chapter title to contain the chapter's methods, results or conclusions. The chapter Introduction should outline the chapter purpose and contents. "
             "Every issue must be directly relevant to the cited passage, use the exact section or subsection heading, and, when applicable, name the supplied table number and title. Do not criticise a purpose statement, research question, objective or hypothesis merely because it is concise; assess precision, completeness and alignment. In Chapter One, review the background as a focused broad-to-specific argument. In Chapter Two, require deep critical synthesis across theory, context, methods, measures, findings, contradictions and limitations. "
             "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For research-intensive Master’s and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, citation and reference consistency and contribution wherever relevant. Do not repeat the programme level in routine comments. "
@@ -1516,43 +1535,64 @@ def _deduplicate_issues(issues: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 def _consolidate_repetitive_issues(issues: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Merge repetitive language, citation and terminology comments within a section."""
-    merge_categories = {"academic_writing", "citations_and_sources", "conceptual_clarity"}
-    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
-    untouched: List[Dict[str, Any]] = []
-    for issue in issues:
-        category = str(issue.get("category") or "other")
-        if category in merge_categories:
-            grouped[(normalised(issue.get("section", "")), category)].append(issue)
-        else:
-            untouched.append(issue)
+    """Consolidate only genuine duplicates at the same section and anchor.
 
-    merged: List[Dict[str, Any]] = list(untouched)
-    for (_, category), values in grouped.items():
-        values = sorted(values, key=lambda item: (SEVERITY_ORDER.get(item.get("severity", "minor"), 9), -float(item.get("confidence") or 0)))
-        primary = dict(values[0])
-        evidence: List[str] = []
-        for value in values:
-            evidence.extend(value.get("evidence_paragraph_ids") or [])
-        primary["evidence_paragraph_ids"] = list(dict.fromkeys(evidence))[:6]
-        if len(values) > 1:
-            if category == "academic_writing":
-                primary["issue_title"] = "Recurring academic writing and language problems"
-                primary["required_action"] = (
-                    "Undertake a systematic line-by-line language edit of this section, correcting the recurring patterns identified in the marked examples rather than treating each sentence as an isolated error."
-                )
-                primary["guidance_type"] = "language_pattern"
-            elif category == "citations_and_sources":
-                primary["issue_title"] = "Source attribution and verification require systematic correction"
-                primary["required_action"] = (
-                    "Verify each marked claim or citation against the original source, remove unsupported details, and ensure every retained in-text citation has a complete and accurate reference-list entry."
-                )
-                primary["source_verification_required"] = True
-                primary["guidance_type"] = "source_verification"
-            elif category == "conceptual_clarity":
-                primary["issue_title"] = "Key terminology is used inconsistently"
-        merged.append(primary)
-    return sorted(merged, key=lambda x: (SEVERITY_ORDER.get(x.get("severity", "minor"), 9), normalised(x.get("section", "")), normalised(x.get("issue_title", ""))))
+    Earlier versions merged every language, citation or terminology finding in
+    a section. That could turn several distinct corrections into one generic
+    note. This version requires the same category, the same section, overlapping
+    evidence and high semantic similarity before consolidation.
+    """
+    try:
+        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.82"))
+    except (TypeError, ValueError):
+        threshold = 0.82
+    threshold = max(0.80, min(0.95, threshold))
+
+    kept: List[Dict[str, Any]] = []
+    for issue in sorted(
+        issues,
+        key=lambda x: (
+            SEVERITY_ORDER.get(x.get("severity", "minor"), 9),
+            normalised(x.get("section", "")),
+            normalised(x.get("issue_title", "")),
+        ),
+    ):
+        issue_evidence = set(issue.get("evidence_paragraph_ids") or [])
+        issue_text = normalised(" ".join((
+            clean_text(issue.get("issue_title", "")),
+            clean_text(issue.get("assessment", "")),
+            clean_text(issue.get("required_action", "")),
+        )))
+        merged = False
+        for index, existing in enumerate(kept):
+            if normalised(existing.get("section", "")) != normalised(issue.get("section", "")):
+                continue
+            if str(existing.get("category") or "") != str(issue.get("category") or ""):
+                continue
+            existing_evidence = set(existing.get("evidence_paragraph_ids") or [])
+            if issue_evidence and existing_evidence and not (issue_evidence & existing_evidence):
+                continue
+            existing_text = normalised(" ".join((
+                clean_text(existing.get("issue_title", "")),
+                clean_text(existing.get("assessment", "")),
+                clean_text(existing.get("required_action", "")),
+            )))
+            similarity = SequenceMatcher(None, issue_text, existing_text).ratio() if issue_text and existing_text else 0.0
+            if similarity < threshold:
+                continue
+            primary = dict(existing)
+            if SEVERITY_ORDER.get(issue.get("severity", "minor"), 9) < SEVERITY_ORDER.get(primary.get("severity", "minor"), 9):
+                primary.update(issue)
+            primary["evidence_paragraph_ids"] = list(dict.fromkeys(
+                list(existing.get("evidence_paragraph_ids") or []) + list(issue.get("evidence_paragraph_ids") or [])
+            ))[:12]
+            primary["confidence"] = max(float(existing.get("confidence") or 0), float(issue.get("confidence") or 0))
+            kept[index] = primary
+            merged = True
+            break
+        if not merged:
+            kept.append(issue)
+    return kept
 
 
 def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -1864,7 +1904,7 @@ async def enrich_review_with_academic_ai(
     optional_chapters = list(
         (review.get("summary") or {}).get("optional_chapters_detected") or []
     )
-    if optional_chapters:
+    if optional_chapters and not uses_flexible_phd_structure(academic_level):
         optional_paragraphs = [
             paragraph for paragraph in current
             if paragraph.get("chapter_number") in optional_chapters
@@ -1900,6 +1940,26 @@ async def enrich_review_with_academic_ai(
                         "problem, objectives, literature, methods, results, "
                         "conclusions and recommendations."
                     ),
+                },
+            })
+
+    if uses_flexible_phd_structure(academic_level) and (review.get("summary") or {}).get("review_scope") == "full_thesis":
+        phd_integration = _selected_audit_paragraphs(
+            current, max(config.max_map_input_chars, 60000)
+        )
+        if phd_integration:
+            sections.append({
+                "heading": "PhD functional completeness and cross-chapter integration audit",
+                "chapter_number": None,
+                "section_path": [],
+                "part": 1,
+                "paragraphs": phd_integration,
+                "alignment_audit": True,
+                "extra_context": {
+                    "chapter_role_map": (review.get("summary") or {}).get("chapter_role_map", {}),
+                    "missing_prescribed_elements": (review.get("summary") or {}).get("missing_phd_prescribed_elements", []),
+                    "objective_alignment_matrix": review.get("objective_alignment_matrix") or {},
+                    "instruction": "Assess the actual PhD architecture by function rather than chapter number. Verify that every prescribed research element is present, adequate and integrated.",
                 },
             })
 
@@ -2397,7 +2457,8 @@ async def enrich_review_with_academic_ai(
         # pass through the deterministic evidence/placement gate instead of
         # triggering an unbounded series of paid requests.
         deferred_audit_sections: List[Dict[str, Any]] = []
-        if depth in {"light", "standard"} and len(verification_batches) > config.fast_audit_max_batches:
+        audit_scope = str((review.get("summary") or {}).get("review_scope") or "chapter")
+        if depth in {"light", "standard"} and audit_scope == "chapter" and len(verification_batches) > config.fast_audit_max_batches:
             deferred = verification_batches[config.fast_audit_max_batches:]
             verification_batches = verification_batches[:config.fast_audit_max_batches]
             deferred_audit_sections = [row for batch in deferred for row in batch]
@@ -2663,18 +2724,24 @@ async def enrich_review_with_academic_ai(
         if valid:
             raw_issues.append(valid)
 
-    # v1.9.9.8: UCC section-coverage contract. This deterministic layer
-    # ensures every relevant UCC thesis/dissertation section in the submitted
-    # chapter is assessed at the actual academic level. It is added before
-    # the evidence gate so it cannot bypass factual placement controls.
-    for ucc_issue in ucc_section_contract_issues(
-        current,
-        academic_level=academic_level,
-        depth=depth,
-    ):
-        valid = _valid_issue(ucc_issue, paragraph_index, context_lock)
-        if valid:
-            raw_issues.append(valid)
+    # Institution-specific section coverage is opt-in. Generic five-chapter
+    # reviews rely on the degree-calibrated checklist and the AI review rather
+    # than silently applying UCC placement rules to another institution. PhD
+    # reviews are always evaluated by function instead of a fixed section map.
+    institutional_profile = str((review.get("summary") or {}).get("institutional_profile") or "generic").lower()
+    use_ucc_contract = (
+        institutional_profile == "ucc"
+        and not uses_flexible_phd_structure(academic_level)
+    )
+    if use_ucc_contract:
+        for ucc_issue in ucc_section_contract_issues(
+            current,
+            academic_level=academic_level,
+            depth=depth,
+        ):
+            valid = _valid_issue(ucc_issue, paragraph_index, context_lock)
+            if valid:
+                raw_issues.append(valid)
 
     raw_issues, accuracy_gate_stats = apply_accuracy_gate(
         raw_issues, paragraph_index, current
@@ -2989,10 +3056,10 @@ async def enrich_review_with_academic_ai(
             depth=depth,
             submission_scope=submission_scope,
         )
-        if required_section_reconciliation
+        if required_section_reconciliation and use_ucc_contract
         else set()
     )
-    if missing_ucc_sections or (floor and len(all_issues) < floor):
+    if use_ucc_contract and (missing_ucc_sections or (floor and len(all_issues) < floor)):
         ucc_pool: List[Dict[str, Any]] = []
         for item in ucc_section_contract_issues(
             current,
@@ -3063,11 +3130,21 @@ async def enrich_review_with_academic_ai(
                 all_issues = working
 
     finding_rows = [_finding_row(issue, paragraph_index) for issue in all_issues]
-    section_coverage_ledger = build_section_coverage_ledger(
-        current,
-        academic_level=academic_level,
-        depth=depth,
-        submission_scope=submission_scope,
+    section_coverage_ledger = (
+        build_section_coverage_ledger(
+            current,
+            academic_level=academic_level,
+            depth=depth,
+            submission_scope=submission_scope,
+        )
+        if use_ucc_contract
+        else {
+            "mode": "generic_degree_calibrated_structure",
+            "institutional_profile": institutional_profile,
+            "complete": True,
+            "entries": [],
+            "note": "No institution-specific section placement contract was selected.",
+        }
     )
     review["section_coverage_ledger"] = section_coverage_ledger
     coverage_ledger = (
@@ -3118,24 +3195,61 @@ async def enrich_review_with_academic_ai(
     priority_candidates = [
         {"section": row.get("section", ""), "severity": row.get("severity", "moderate"),
          "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""),
-         "issue": row.get("item", "")}
+         "issue": row.get("item", ""), "chapter_number": row.get("chapter_number")}
         for row in finding_rows
     ]
     for row in review.get("revision_results") or []:
         if row.get("status") in {"partly_meets_requirement", "does_not_meet_requirement", "manual_review_required"}:
             priority_candidates.append({"section": row.get("section", "Supervisor comment follow-up"), "severity": row.get("severity", "major"), "status": row.get("status_label", "Revision required"), "action": row.get("required_action", ""), "issue": "Earlier supervisor comment"})
-    priority_candidates = sorted(priority_candidates, key=lambda x: SEVERITY_ORDER.get(x.get("severity", "minor"), 9))
+    priority_candidates = sorted(
+        priority_candidates,
+        key=lambda x: (
+            SEVERITY_ORDER.get(x.get("severity", "minor"), 9),
+            int(x.get("chapter_number") or 999),
+            normalised(x.get("section", "")),
+        ),
+    )
     priority = []
     seen_priority = set()
-    for item in priority_candidates:
+    priority_limit = 8 if depth == "light" else (10 if depth == "standard" else 12)
+
+    def add_priority(item: Dict[str, Any]) -> bool:
         signature = (normalised(item.get("section", "")), normalised(item.get("action", ""))[:180])
         if not signature[1] or signature in seen_priority:
-            continue
+            return False
         seen_priority.add(signature)
         priority.append(item)
-        priority_limit = 8 if depth == "light" else (10 if depth == "standard" else 12)
+        return True
+
+    # A complete-thesis or combined-chapter report must not allow early Chapter
+    # One findings to consume the entire correction schedule. Reserve one place
+    # for the strongest material issue in every reviewed chapter before filling
+    # the remaining places by severity.
+    priority_scope = str(summary.get("review_scope") or "chapter")
+    if priority_scope in {"full_thesis", "chapter_range"}:
+        best_by_chapter: Dict[int, Dict[str, Any]] = {}
+        for item in priority_candidates:
+            try:
+                chapter = int(item.get("chapter_number"))
+            except (TypeError, ValueError):
+                continue
+            if chapter not in best_by_chapter:
+                best_by_chapter[chapter] = item
+        chapter_representatives = sorted(
+            best_by_chapter.values(),
+            key=lambda x: (
+                SEVERITY_ORDER.get(x.get("severity", "minor"), 9),
+                int(x.get("chapter_number") or 999),
+            ),
+        )
+        for item in chapter_representatives[:priority_limit]:
+            add_priority(item)
+
+    for item in priority_candidates:
         if len(priority) >= priority_limit:
             break
+        add_priority(item)
+
 
     profile = _review_profile(depth)
     benchmark = _combined_benchmark(academic_level, depth)

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
 from .academic_ai_engine import ReviewOutputValidationError, enrich_review_with_academic_ai
-from .ai_config import AIConfigurationError, HybridAIConfig
+from .ai_config import AIConfigurationError, HybridAIConfig, unsupported_environment_variables
 from .ai_providers import AIProviderError
 from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, expected_native_comment_count, native_comment_count
 from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_inline_annotated_docx
@@ -77,6 +77,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+APP_VERSION = "1.9.9.30"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -121,7 +122,7 @@ WORKER_POLL_SECONDS = max(2, int(os.getenv("VPROF_WORKER_POLL_SECONDS", "8")))
 
 app = FastAPI(
     title="ProjectReady AI Supervisor Assistant",
-    version="1.9.9.10",
+    version=APP_VERSION,
     description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
 )
 app.add_middleware(
@@ -159,6 +160,25 @@ async def startup() -> None:
                 os.getenv("ADMIN_USERNAME", "admin"),
                 generated,
             )
+    config = HybridAIConfig.from_env()
+    logger.info(
+        "VProfessor %s effective route: profile=%s combined=%s section_model=%s final_model=%s phd_final_model=%s external_adjudicator=%s escalation=%s strict_failure=%s",
+        APP_VERSION,
+        config.routing_profile,
+        config.combined_app_pipeline_enabled,
+        config.openai_section_analysis_model,
+        config.openai_final_synthesis_model,
+        config.openai_phd_final_synthesis_model,
+        config.openai_external_adjudicator_model,
+        config.selective_escalation_enabled,
+        config.strict_failure,
+    )
+    unsupported = unsupported_environment_variables()
+    if unsupported:
+        logger.warning(
+            "Remove unsupported legacy environment variables because they do not control this build: %s",
+            ", ".join(unsupported),
+        )
     if AUTO_RESUME_JOBS and RUN_REVIEW_JOBS_IN_WEB:
         await _resume_recoverable_jobs()
 
@@ -292,7 +312,7 @@ async def health():
     return {
         "status": "ok",
         "service": "projectready-supervisor",
-        "version": "1.9.2",
+        "version": APP_VERSION,
         "checkpoint_resume": True,
         "storage": storage_status(),
     }
@@ -1534,6 +1554,7 @@ async def _run_review_job(
                         "supervisor_comments_text"
                     ],
                     original_document=payload["original_document"],
+                    institutional_profile=payload.get("institutional_profile", "generic"),
                 )
                 runtime_context = review.pop("_runtime_context", {})
                 checkpoints.save(
@@ -1978,6 +1999,7 @@ async def create_review(
     degree_programme: str = Form(""),
     candidate_department: str = Form(""),
     institution: str = Form("University of Cape Coast"),
+    institutional_profile: str = Form("generic"),
     thesis_title: str = Form(""),
     review_scope: str = Form("chapter"),
     selected_chapter: int = Form(0),
@@ -2045,11 +2067,28 @@ async def create_review(
         raise HTTPException(status_code=400, detail="Choose Light Review, Standard Review or Advanced Review.")
     if review_scope not in {"chapter", "chapter_range", "full_thesis"}:
         raise HTTPException(status_code=400, detail="Choose Single chapter, Combined chapters or Complete thesis.")
-    if review_scope == "chapter_range" and combined_chapter_end not in {2, 3, 4, 5}:
+    phd_structure = clean_text(academic_level).lower() in {"phd", "dphil"} or "doctor of philosophy" in clean_text(academic_level).lower()
+    maximum_chapter = 20 if phd_structure else 5
+    if review_scope == "chapter_range" and not (2 <= combined_chapter_end <= maximum_chapter):
         raise HTTPException(
             status_code=400,
-            detail="Choose Chapters 1–2, 1–3, 1–4 or 1–5.",
+            detail=(
+                "For a PhD combined review, choose an ending chapter between 2 and 20."
+                if phd_structure
+                else "Choose Chapters 1–2, 1–3, 1–4 or 1–5."
+            ),
         )
+    if review_scope == "chapter" and not (1 <= selected_chapter <= maximum_chapter):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "For a PhD chapter review, choose a chapter number between 1 and 20."
+                if phd_structure
+                else "Choose Chapter 1, 2, 3, 4 or 5."
+            ),
+        )
+    if institutional_profile not in {"generic", "ucc"}:
+        raise HTTPException(status_code=400, detail="Choose Generic degree-appropriate or UCC structure guidance.")
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
 
@@ -2139,6 +2178,7 @@ async def create_review(
         "data": data,
         "academic_level": academic_level,
         "research_approach": research_approach,
+        "institutional_profile": institutional_profile,
         "workflow_type": workflow_type,
         "assessment_stage": assessment_stage,
         "assessment_metadata": {

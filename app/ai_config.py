@@ -51,6 +51,37 @@ def _normalise_effort(value: str, default: str = "high") -> str:
     return effort if effort in allowed else default
 
 
+
+
+OBSOLETE_OR_UNSUPPORTED_ENV_VARS = {
+    "VPROF_ANALYSIS_ROUTE_DETECTION",
+    "VPROF_ARTICLEREADY_REVIEW_ENGINE",
+    "VPROF_COVERAGE_STATUS_LEDGER",
+    "VPROF_EVIDENCE_PRESERVING_REVIEW",
+    "VPROF_EXPORT_UNANCHORED_FINDINGS_AS_SUMMARY_COMMENTS",
+    "VPROF_GENERIC_METHOD_RESULTS_AUDIT",
+    "VPROF_METHOD_SPECIFIC_DIAGNOSTICS",
+    "VPROF_REFERENCE_RECONCILIATION_AUDIT",
+    "VPROF_REPORT_FIRST_REVIEW",
+    "VPROF_REQUIRE_STATISTICAL_AUDIT_FOR_RESULTS",
+    "VPROF_SAFE_COMMENT_MARKER_ANCHORS",
+    "VPROF_SHOW_FINDING_COMMENT_RECONCILIATION",
+    "VPROF_VERIFY_DOCX_COMMENT_COUNT",
+    "VPROF_UCC_SECTION_COVERAGE_CONTRACT",
+    "VPROF_PRESERVE_UCC_SECTION_COMMENTS",
+}
+
+
+def unsupported_environment_variables() -> list[str]:
+    """Return legacy settings that are present but do not control this build.
+
+    Surfacing these names prevents administrators from assuming that a dormant
+    flag is protecting a review. The corresponding behaviour is either always
+    enforced by the canonical pipeline or has been replaced by an active,
+    typed setting.
+    """
+    return sorted(name for name in OBSOLETE_OR_UNSUPPORTED_ENV_VARS if os.getenv(name) is not None)
+
 @dataclass(frozen=True)
 class HybridAIConfig:
     """Academic-review routing configuration.
@@ -60,7 +91,7 @@ class HybridAIConfig:
     external examination use GPT-5.6 Terra. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.9.10 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
+    VProfessor v1.9.9.30 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -183,6 +214,8 @@ class HybridAIConfig:
     openai_section_analysis_fallback_model: str
     openai_final_synthesis_model: str
     openai_final_synthesis_fallback_model: str
+    openai_phd_final_synthesis_model: str
+    openai_phd_final_synthesis_reasoning_effort: str
     openai_cleaning_input_price: float
     openai_cleaning_cached_input_price: float
     openai_cleaning_output_price: float
@@ -358,6 +391,13 @@ class HybridAIConfig:
         final_synthesis_fallback_model = os.getenv(
             "OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL", audit_model or expert_model
         ).strip() or audit_model or expert_model
+        phd_final_synthesis_model = os.getenv(
+            "OPENAI_PHD_FINAL_SYNTHESIS_MODEL", final_synthesis_model
+        ).strip() or final_synthesis_model
+        phd_final_synthesis_reasoning_effort = _normalise_effort(
+            os.getenv("OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT", audit_effort),
+            default="high",
+        )
 
         return cls(
             enabled=_env_bool("AI_REVIEW_ENABLED", True),
@@ -606,6 +646,8 @@ class HybridAIConfig:
             openai_section_analysis_fallback_model=section_fallback_model,
             openai_final_synthesis_model=final_synthesis_model,
             openai_final_synthesis_fallback_model=final_synthesis_fallback_model,
+            openai_phd_final_synthesis_model=phd_final_synthesis_model,
+            openai_phd_final_synthesis_reasoning_effort=phd_final_synthesis_reasoning_effort,
             openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 2.50),
             openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.25),
             openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 15.00),
@@ -691,7 +733,7 @@ class HybridAIConfig:
                 "AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS", 360
             ),
             external_assessment_request_max_retries=_env_int(
-                "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES", 0, 0
+                "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES", 1, 0
             ),
         )
 

@@ -155,7 +155,14 @@ class CostAwareAIProvider:
     def _combined_openai_pipeline_enabled(self) -> bool:
         return bool(getattr(self.config, "combined_app_pipeline_enabled", False))
 
-    def _combined_pipeline_plan(self, stage: ReviewStage, profile: RoutingProfile) -> RoutePlan:
+    def _combined_pipeline_plan(
+        self,
+        stage: ReviewStage,
+        profile: RoutingProfile,
+        *,
+        requested_model: str = "",
+        requested_effort: str = "",
+    ) -> RoutePlan:
         """Three-role OpenAI thesis pipeline.
 
         Phase 1 routes cleaning/formatting and JSON repair to the cheapest nano
@@ -190,13 +197,18 @@ class CostAwareAIProvider:
         )
         final = RouteTarget(
             ProviderName.OPENAI,
-            self.config.openai_final_synthesis_model,
-            self.config.openai_final_audit_reasoning_effort or "high",
+            requested_model or self.config.openai_final_synthesis_model,
+            requested_effort or self.config.openai_final_audit_reasoning_effort or "high",
         )
         final_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_fallback_model,
             self.config.openai_final_audit_reasoning_effort or "high",
+        )
+        external = RouteTarget(
+            ProviderName.OPENAI,
+            requested_model or self.config.openai_external_adjudicator_model,
+            requested_effort or self.config.openai_external_adjudicator_reasoning_effort or "high",
         )
 
         phase1 = {
@@ -209,11 +221,15 @@ class CostAwareAIProvider:
         phase3 = {
             ReviewStage.FINAL_AUDIT,
             ReviewStage.RESEARCH_INTENSIVE_AUDIT,
-            ReviewStage.EXTERNAL_EXAMINATION,
         }
         if stage in phase1:
             primary, fallback, escalation = self._normalise_targets(
                 cleaning, section_fallback, None
+            )
+            return RoutePlan(stage, profile, primary, fallback, escalation, False)
+        if stage is ReviewStage.EXTERNAL_EXAMINATION:
+            primary, fallback, escalation = self._normalise_targets(
+                external, final_fallback, None
             )
             return RoutePlan(stage, profile, primary, fallback, escalation, False)
         if stage in phase3:
@@ -231,7 +247,7 @@ class CostAwareAIProvider:
             primary,
             fallback,
             escalation,
-            False,
+            self.config.selective_escalation_enabled,
         )
 
     def _enabled(self, target: Optional[RouteTarget]) -> bool:
@@ -321,7 +337,12 @@ class CostAwareAIProvider:
         )
 
         if self._combined_openai_pipeline_enabled():
-            return self._combined_pipeline_plan(stage_value, profile)
+            return self._combined_pipeline_plan(
+                stage_value,
+                profile,
+                requested_model=requested_model,
+                requested_effort=requested_effort,
+            )
 
         if self._deepseek_v4_pro_only_mode() and self._stage_allows_deepseek_pro_only(stage_value):
             # One expert-class DeepSeek V4 Pro route for every supervisory

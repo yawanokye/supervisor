@@ -233,7 +233,7 @@ def _rewrite_chapter_one_background_synthesis(row: Dict[str, Any]) -> Dict[str, 
     output = dict(row)
     output["item"] = output["issue_title"] = "The background needs a clearer evidence-led progression"
     output["comment"] = output["assessment"] = (
-        "The background contains relevant literature, but the evidence should be used selectively to introduce the main constructs, move from the wider context to Ghanaian Colleges of Education, and lead directly to the unresolved problem. Chapter One does not require the full study-by-study critical synthesis expected in Chapter Two."
+        "The background contains relevant literature, but the evidence should be used selectively to introduce the main constructs, move from the wider setting to the confirmed study context and population, and lead directly to the unresolved problem. Chapter One does not require the full study-by-study critical synthesis expected in Chapter Two."
     )
     output["academic_consequence"] = (
         "Without a clear progression, the chapter becomes lengthy while the reason for the study remains difficult to identify."
@@ -318,14 +318,14 @@ def _study_terms(review: Dict[str, Any]) -> List[str]:
                 add_candidate(value, fallback_candidates)
 
     # Phrase recovery is a last resort only. It must never override clear title
-    # constructs with accidental combinations such as "internal controls fraud".
+    # constructs with accidental adjacent terms or setting labels.
     if not primary_candidates and not fallback_candidates:
         words = re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", focus_text[:30000])
         stop = {
             "effect", "influence", "impact", "relationship", "among", "role", "moderating",
-            "ghana", "ghanaian", "study", "teachers", "students", "pre", "service", "attempts",
-            "respond", "following", "questions", "chapter", "research", "findings", "purpose",
-            "objective", "objectives", "commercial", "rural", "specifically", "general",
+            "study", "participants", "respondents", "attempts", "respond", "following",
+            "questions", "chapter", "research", "findings", "purpose", "objective",
+            "objectives", "specifically", "general",
         }
         phrase_counts: Dict[str, int] = {}
         for size in (3, 2):
@@ -346,12 +346,8 @@ def _study_terms(review: Dict[str, Any]) -> List[str]:
         candidates.extend(fallback_candidates)
     output: List[str] = []
     seen = set()
-    reject = {
-        "the banking", "detection and", "fraudulent activities", "the study", "the banking sector",
-        "control systems", "internal controls fraud", "banking organizations", "financial system",
-    }
+    reject = {"the study", "the research", "research questions", "study findings"}
     for candidate in candidates:
-        candidate = re.sub(r"\b(?:Ghana|Ghanaian|Colleges? of Education|pre-service teachers?)\b", "", candidate, flags=re.I)
         candidate = re.sub(r"^(?:the|a|an)\s+", "", _clean(candidate), flags=re.I).strip(" ,:-")
         words_in_candidate = candidate.lower().split()
         if not words_in_candidate or words_in_candidate[-1] in {"and", "or", "the", "of", "in", "at"}:
@@ -359,8 +355,8 @@ def _study_terms(review: Dict[str, Any]) -> List[str]:
         key = _norm(candidate)
         if len(candidate) < 5 or not key or key in seen or key in reject:
             continue
-        # Reject accidental adjacent-construct n-grams without a connector.
-        if re.search(r"\binternal controls? fraud\b", key):
+        # Reject malformed adjacent-construct n-grams that end in a connector.
+        if re.search(r"\b(?:and|or|of|in|at)$", key):
             continue
         replace_index = None
         skip = False
@@ -481,6 +477,11 @@ def _merge_rows(primary: Dict[str, Any], duplicate: Dict[str, Any]) -> Dict[str,
 
 
 def _consolidate(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    try:
+        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.82"))
+    except (TypeError, ValueError):
+        threshold = 0.82
+    threshold = max(0.80, min(0.95, threshold))
     kept: List[Dict[str, Any]] = []
     positions: Dict[Tuple[Any, ...], List[int]] = {}
     for row in rows:
@@ -489,8 +490,10 @@ def _consolidate(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         merged = False
         for index in candidates:
             existing = kept[index]
-            same_table_stats = key[1:2] == ("table",) and _issue_family(row) == "statistical_model"
-            if same_table_stats or _similarity(existing, row) >= 0.48:
+            # Even two statistical findings on the same table may concern
+            # different defects. Merge only highly similar findings sharing the
+            # same anchor and issue family.
+            if _similarity(existing, row) >= threshold:
                 kept[index] = _merge_rows(existing, row)
                 merged = True
                 break

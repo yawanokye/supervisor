@@ -386,16 +386,9 @@ def _example_relevant(example: str, issue: Dict[str, Any]) -> bool:
     context_norm = normalised(context)
     example_norm = normalised(example)
 
-    # Block recurring stale examples and any domain-specific phrase that is not
-    # present in the current evidence or finding context.
-    high_risk_phrases = (
-        "assinman rural bank", "rural banking sector", "fraud incidence", "fraud triangle",
-        "pressure opportunity and rationalisation", "segregation of duties", "access controls",
-        "internal controls within the bank", "commercial banks in ghana",
-    )
-    for phrase in high_risk_phrases:
-        if phrase in example_norm and phrase not in context_norm:
-            return False
+    # Domain-specific examples must share substantive terms with the current
+    # finding or evidence. The generic token-overlap gate below provides this
+    # protection without carrying phrases from a previous study into production.
 
     # Examples about citations are only relevant to citation findings.
     if any(term in example_norm for term in ("citation cluster", "reference list entry", "parenthetical citation")):

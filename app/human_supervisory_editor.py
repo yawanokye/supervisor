@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from .document_parser import clean_text, normalised
 from .finding_order import chapter_number, primary_evidence
+from .study_semantics import extract_population_labels
 
 
 def _env_enabled(name: str, default: bool = True) -> bool:
@@ -115,7 +116,7 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     chapter = chapter_number(row) or 999
     section = _section_text(row)
     finding_text = _finding_text(row)
-    finding_id = _norm(row.get("finding_id"))
+    finding_id = _norm(row.get("finding_id")).replace("-", " ")
     category = _norm(row.get("category"))
     missing = _norm(_missing_label(row))
     evidence = primary_evidence(row)
@@ -177,7 +178,7 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
         )):
             return (chapter, "scope_completeness")
         if any(term in finding_text for term in (
-            "commercial bank", "rural bank", "case study", "population", "scope", "generalisation",
+            "case study", "population", "scope", "unit of analysis", "sampling frame", "generalisation", "generalization",
         )):
             return (chapter, "scope_and_population", paragraph)
 
@@ -225,8 +226,9 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
 
     if family == "problem_evidence_and_gap":
         output["item"] = output["issue_title"] = "The problem statement needs stronger evidence and a precise unresolved issue"
+        focus = joined or "the study's main constructs"
         output["comment"] = output["assessment"] = (
-            "The section discusses fraud and internal controls generally, but it does not yet demonstrate the scale of the problem in the study context or identify clearly what previous research has left unresolved."
+            f"The section introduces {focus}, but it does not yet demonstrate the scale or consequences of the problem in the confirmed study context or identify clearly what previous research has left unresolved."
         )
         output["academic_consequence"] = (
             "Without that evidence and gap, the reader cannot see why this particular investigation is necessary."
@@ -318,10 +320,10 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
         output["required_action"] = (
             "State one study population and setting, then use that scope consistently in the title, problem, purpose, objectives, methods and conclusions."
         )
-        output["illustrative_guidance"] = ""
+        output["illustrative_guidance"] = _clean(output.get("illustrative_guidance"))
 
     elif family == "scope_population_inconsistency":
-        output["illustrative_guidance"] = ""
+        output["illustrative_guidance"] = _clean(output.get("illustrative_guidance"))
 
     elif family == "limitations_constraints_and_transferability":
         output["item"] = output["issue_title"] = "The limitations and limits of generalisation need clearer explanation"
@@ -658,9 +660,9 @@ def _named_dimensions(review: Dict[str, Any]) -> List[str]:
     setting_norm = _norm(_study_setting(review, []))
     for match in re.finditer(r"\(([^()]{3,120})\)", source_text):
         parenthetical = _clean(match.group(1))
-        # A single parenthetical institution alias such as “(Assinman)” is not
-        # a construct dimension. Analytical dimensions are usually a list or a
-        # recognised multi-part factor description.
+        # A single parenthetical institution or setting alias is not a construct
+        # dimension. Analytical dimensions are usually a list or a recognised
+        # multi-part factor description.
         parts = [part for part in re.split(r",|\band\b", parenthetical, flags=re.I) if _clean(part)]
         if len(parts) == 1 and setting_norm and _norm(parts[0]) in setting_norm:
             continue
@@ -669,11 +671,9 @@ def _named_dimensions(review: Dict[str, Any]) -> List[str]:
             key = _norm(value)
             if setting_norm and key and key in setting_norm:
                 continue
-            if value and 1 <= len(value.split()) <= 5 and key not in {"rural banks", "commercial banks"}:
+            if value and 1 <= len(value.split()) <= 5:
                 values.append(value)
     low = _norm(source_text)
-    if all(term in low for term in ("pressure", "opportunity", "rational")):
-        values.extend(["pressure", "opportunity", "rationalisation"])
     output: List[str] = []
     seen = set()
     for value in values:
@@ -717,11 +717,10 @@ def _profile_constructs(review: Dict[str, Any], terms: Sequence[str]) -> List[st
     cleaned: List[str] = []
     seen = set()
     for value in values:
-        value = re.sub(r"\b(?:among|in)\s+(?:commercial|rural)?\s*banks?.*$", "", _clean(value), flags=re.I)
+        value = re.sub(r"\b(?:among|within|in)\s+(?:the\s+)?[A-Z][A-Za-z0-9&'’., -]{3,80}$", "", _clean(value), flags=re.I)
         value = re.sub(r"\b(?:at|within)\s+[A-Z].*$", "", value).strip(" ,.;:")
         value = re.sub(r"\bbehavioral\b", "behavioural", value, flags=re.I)
         value = re.sub(r"\brationalization\b", "rationalisation", value, flags=re.I)
-        value = re.sub(r"\bpressures\b", "pressure", value, flags=re.I)
         key = _norm(value)
         setting_key = _norm(setting)
         if setting_key and key and key in setting_key:
@@ -828,9 +827,7 @@ def _definition_example(review: Dict[str, Any], terms: Sequence[str]) -> str:
     dimensions = {_norm(value) for value in _named_dimensions(review)}
     for value in constructs:
         low = _norm(value)
-        if "fraud detection and prevention" in low:
-            expanded.extend(["fraud detection", "fraud prevention"])
-        elif dimensions and all(dimension in low for dimension in dimensions):
+        if dimensions and all(dimension in low for dimension in dimensions):
             # Prefer the named dimensions themselves over a broad composite
             # label such as “behavioural and institutional factors (...)”.
             continue
@@ -933,7 +930,7 @@ def _objective_alignment_example(review: Dict[str, Any], terms: Sequence[str]) -
             clauses.append(f"treat Objective {index} on {subject} as associational or predictive unless the design can support a causal claim")
 
     if any(re.search(r"\b(effectiveness|rate of|successful)\b", value, flags=re.I) for value in objectives + questions):
-        rate_clause = "define how any detection or prevention rate will be calculated, including its numerator, denominator and data source, and state how effectiveness will be measured"
+        rate_clause = "define how each reported rate or effectiveness measure will be calculated, including its numerator, denominator, unit and data source"
         clauses.insert(1 if clauses else 0, rate_clause)
 
     clauses = list(dict.fromkeys(value for value in clauses if value))[:4]
@@ -992,30 +989,41 @@ def _scope_inconsistency_finding(review: Dict[str, Any]) -> Dict[str, Any] | Non
     if not rows:
         return None
     full_text = " ".join(_clean(row.get("text")) for row in rows)
-    low = _norm(full_text)
-    commercial = bool(re.search(r"\bcommercial banks?\b", low))
-    rural = bool(re.search(r"\brural banks?\b", low))
-    case_name = _study_setting(review, [])
-    if not (commercial and rural and case_name and _norm(case_name) not in {"ghana", "rural bank", "commercial bank"}):
+    labels = extract_population_labels(full_text)
+    setting = _study_setting(review, [])
+    setting_norm = _norm(setting)
+    labels = [label for label in labels if _norm(label) and _norm(label) not in setting_norm]
+    # Flag only when at least two distinct population labels are used and a
+    # specific setting or case is also named. This keeps the check conservative
+    # and prevents a domain-specific example from becoming a general rule.
+    distinct: List[str] = []
+    for label in labels:
+        key = _norm(label)
+        if any(key == _norm(old) for old in distinct):
+            continue
+        distinct.append(label)
+    if len(distinct) < 2 or not setting:
         return None
 
-    anchor = next((row for row in rows if "commercial bank" in _norm(row.get("text"))), None)
-    if anchor is None:
-        anchor = next((row for row in rows if "rural bank" in _norm(row.get("text"))), rows[0])
+    anchor = next(
+        (row for row in rows if any(_norm(label) in _norm(row.get("text")) for label in distinct)),
+        rows[0],
+    )
+    label_text = _join_terms(distinct[:3])
     return {
         "finding_id": "HUMAN-SCOPE-CONSISTENCY",
         "status": "does_not_meet_requirement",
         "severity": "major",
-        "confidence": 0.99,
+        "confidence": 0.93,
         "chapter_number": 1,
         "section": _clean(anchor.get("heading") or "Background to the Study"),
         "section_reference": _clean(anchor.get("heading") or "Background to the Study"),
         "category": "scope_alignment",
         "item": "The study population and institutional scope are inconsistent",
-        "comment": f"The chapter alternates between commercial banks, rural banks and the specific case of {case_name}. These are different study populations and should not be used interchangeably.",
+        "comment": f"The chapter uses {label_text} while also presenting {setting} as the specific study setting. It does not explain whether these labels describe one population, nested groups or different intended scopes.",
         "academic_consequence": "The inconsistency affects the title, sampling frame, interpretation and the extent to which the findings may be generalised.",
-        "required_action": f"Decide whether the work is a single-case study of {case_name} or a broader study of rural banks, then use that decision consistently in the title, problem, purpose, objectives, questions, methods and conclusions.",
-        "illustrative_guidance": "",
+        "required_action": "Define one target population and unit of analysis, explain any nested subgroups, and use the same scope consistently in the title, problem, purpose, objectives, methods and conclusions.",
+        "illustrative_guidance": f"state whether the target population is {label_text}, then explain how {setting} relates to that population",
         "problematic_quote": _safe_excerpt(anchor.get("text")),
         "evidence": [{**anchor, "document_role": "current"}],
         "annotation_eligible": True,
@@ -1082,12 +1090,10 @@ def _language_editing_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
         (r"\brationalization\b", "rationalization", "rationalisation"),
         (r"\bgeneralization\b", "generalization", "generalisation"),
         (r"\banalyzing\b", "analyzing", "analysing"),
-        (r"\bthe regularity of fraud\b", "the regularity of fraud", "the incidence or frequency of fraud"),
     )
     rows = [row for row in _current_paragraphs(review) if clean_text(row.get("text"))]
     examples: List[Tuple[str, str]] = []
     anchor: Dict[str, Any] | None = None
-    capitalisation_rows: List[Dict[str, Any]] = []
     for row in rows:
         text = _clean(row.get("text"))
         row_found = False
@@ -1096,16 +1102,12 @@ def _language_editing_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
                 if (wrong, right) not in examples:
                     examples.append((wrong, right))
                 row_found = True
-        if re.search(r"(?<![.!?]\s)\bRural banks\b", text):
-            capitalisation_rows.append(row)
         if row_found and anchor is None:
             anchor = row
         if len(examples) >= 4:
             break
     if anchor is None:
         return None
-    if capitalisation_rows and ("Rural banks", "rural banks") not in examples:
-        examples.append(("Rural banks", "rural banks"))
     guidance = "; ".join(f"change “{wrong}” to “{right}”" for wrong, right in examples[:4])
     return {
         "finding_id": "HUMAN-LANGUAGE-EDITING",
@@ -1488,7 +1490,14 @@ def _contextualise_finding(
             output["comment"] = output["assessment"] = (
                 f"The section discusses the problem generally, but it does not yet demonstrate its nature or scale at {setting} or identify clearly what previous research has left unresolved."
             )
-        output["illustrative_guidance"] = _problem_example(review, terms)
+        generated_example = _problem_example(review, terms)
+        existing_example = _clean(output.get("illustrative_guidance"))
+        if _study_setting(review, terms) or _profile_constructs(review, terms):
+            output["illustrative_guidance"] = generated_example
+        elif existing_example:
+            output["illustrative_guidance"] = existing_example
+        else:
+            output["illustrative_guidance"] = generated_example
 
     elif domain == "objective_alignment":
         example = _objective_alignment_example(review, terms)
@@ -1499,9 +1508,9 @@ def _contextualise_finding(
         if any(token in core for token in ("incomplete", "underdeveloped", "unit of analysis", "study period", "exclusion", "does not yet perform")):
             output["illustrative_guidance"] = _scope_example(review, terms)
         elif "not used consistently" in core or "alternates between" in core:
-            # The action already gives the concrete correction. Repeating it as
-            # an example makes the comment sound formulaic.
-            output["illustrative_guidance"] = ""
+            # Retain a validated study-specific example when one is already
+            # available. Do not manufacture a case or population label.
+            output["illustrative_guidance"] = _clean(output.get("illustrative_guidance"))
 
     elif domain == "significance":
         if "research gap" in core or "gap is placed" in core:
