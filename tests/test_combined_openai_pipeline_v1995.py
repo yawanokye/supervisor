@@ -27,7 +27,8 @@ def test_phase_2_routes_to_section_analysis_model(monkeypatch):
     plan = router.plan(stage=ReviewStage.RESEARCH_INTENSIVE_REVIEW, review_depth='standard')
     assert plan.primary.provider is ProviderName.OPENAI
     assert plan.primary.model == 'gpt-5.6-terra'
-    assert plan.fallback and plan.fallback.model == 'gpt-5.6-terra'
+    # The same provider/model must not be presented as its own fallback.
+    assert plan.fallback is None
 
 
 def test_phase_3_routes_to_final_synthesis_model(monkeypatch):
