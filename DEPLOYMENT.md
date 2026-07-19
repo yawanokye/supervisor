@@ -1,4 +1,4 @@
-# V-Professor v2.0.0 Deployment Guide
+# V-Professor v2.1.0 Deployment Guide
 
 ## Architecture
 
@@ -129,7 +129,7 @@ These values do not overwrite an administrator already stored in PostgreSQL.
 7. Confirm the status moves from queued to document preparation within one or two polling cycles.
 8. Confirm the output contains the annotated DOCX, inline-annotated DOCX and supervisory action report.
 
-Old review checkpoints should not be reused because the v2.0.0 scope, annotation and report pipeline identifiers changed.
+Old review checkpoints should not be reused because the v2.1.0 evidence-ledger, annotation and report pipeline identifiers changed.
 
 ## Validation
 

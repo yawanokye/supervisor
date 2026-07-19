@@ -203,8 +203,10 @@ services:
         value: true
       - key: VPROF_COMMENT_MAX_CHARS
         value: 1100
+      - key: VPROF_GROUPED_COMMENT_MAX_CHARS
+        value: 4200
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
-        value: 0.82
+        value: 0.92
       - key: VPROF_DEVELOPMENTAL_COMMENTS
         value: true
       - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
@@ -251,6 +253,8 @@ services:
         value: true
       - key: VPROF_NATIVE_COMMENT_STYLE
         value: exact_anchor_grouped
+      - key: VPROF_GROUP_SAME_ANCHOR_COMMENTS
+        value: true
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
         value: false
       - key: VPROF_COMMENT_MERGE_BY_SECTION

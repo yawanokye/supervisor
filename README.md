@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.0.0
+# V-Professor Supervisory Review 2.1.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -7,11 +7,23 @@ V-Professor provides degree-calibrated supervisory review and external assessmen
 - Supervisors may review a complete chapter or scan the uploaded file and select individual sections.
 - Bachelor’s, Master’s and Professional Doctorate submissions normally use the five-chapter research structure.
 - PhD submissions may use a justified custom chapter architecture, but all prescribed doctoral research elements must be present and integrated.
-- Findings are anchored to the exact sentence, paragraph or table row requiring action.
-- Findings on the same sentence share one numbered native Word comment box. Different sentences retain separate anchors.
-- The inline annotated copy places the numbered supervisor comment immediately after the affected paragraph.
-- The report states the actions required before supervisor approval or submission, including location, action, academic reason and verification method.
+- Every material finding must pass an evidence-grounding gate before release.
+- Findings are anchored to the exact sentence, paragraph, table caption, row or cell requiring action.
+- Findings on the same exact sentence or paragraph share one numbered native Word comment box. Different anchors retain separate comments.
+- Native comments and inline comments use the same canonical finding ledger and state the issue, problem identified, action required, academic reason and verification test.
+- The inline annotated copy places the supervisor action immediately after the affected paragraph without changing the original text.
+- The report presents direct actions required before supervisor approval or submission, including the exact text, action, academic reason and completion test.
 - Methods and results receive route-specific checks for internal statistical accuracy, reporting adequacy and analysis appropriateness. Definitive recalculation still requires the original dataset, syntax and software output.
+
+## Quality safeguards introduced in 2.1.0
+
+- chapter-only uploads are not falsely treated as complete theses;
+- examples quoted in comments must be present in the current work or clearly marked as illustrative guidance;
+- previous-study terminology is rejected unless grounded in the current document;
+- unresolved supervisor instructions and incomplete citations are detected;
+- Chapter One checks cover problem evidence, construct consistency, unit of analysis, purpose-objective-question alignment, causal language, grammar and limitation-versus-delimitation;
+- decimals, p-values, temperatures, equations, citations, URLs and DOI strings are protected during annotation;
+- later editing stages cannot replace evidence-locked findings with generic comments.
 
 ## Deployment
 
