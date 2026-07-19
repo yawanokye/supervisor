@@ -28,8 +28,8 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.30-structure-safe-editor"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "1.9.9.30-professional-supervisory-review"
+ANNOTATION_EXPORT_VERSION = "2.0.0-exact-anchor-grouping"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.0.0-professional-supervisory-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -233,7 +233,7 @@ def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, 
 
 
 def _native_comment_style() -> str:
-    return (os.getenv("VPROF_NATIVE_COMMENT_STYLE") or "one_per_finding").strip().lower()
+    return (os.getenv("VPROF_NATIVE_COMMENT_STYLE") or "exact_anchor_grouped").strip().lower()
 
 
 def _merge_comments_by_section() -> bool:
@@ -247,13 +247,11 @@ def _merge_comments_by_section() -> bool:
     older VPROF_EXPORT_ONE_COMMENT_PER_FINDING variable so deployments can move
     back to grouped comments with a single new env setting.
     """
-    # The final human-supervisor pipeline consolidates duplicate root causes
-    # before export. Grouping again at DOCX level would attach different issues
-    # to one sentence and make the review look mechanical.
-    if _env_bool("VPROF_HUMAN_SUPERVISORY_EDITOR", True):
-        return False
     style = _native_comment_style()
-    if style in {"anchored_grouped", "evidence_grouped", "numbered_grouped", "grouped", "section_grouped", "professional"}:
+    if style in {
+        "exact_anchor_grouped", "sentence_grouped", "anchored_grouped",
+        "evidence_grouped", "numbered_grouped", "grouped", "professional",
+    }:
         return True
     if style in {"one_per_finding", "separate", "individual"}:
         return False
@@ -279,11 +277,11 @@ def _include_section_review_comments() -> bool:
 
 
 def _max_items_per_native_comment() -> int:
-    raw = os.getenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT") or "1"
+    raw = os.getenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT") or "8"
     try:
-        return max(1, min(5, int(raw)))
+        return max(1, min(12, int(raw)))
     except ValueError:
-        return 1
+        return 8
 
 
 def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
@@ -1375,7 +1373,12 @@ def _merge_nearby_span_groups(
             merged.append(((start, end), list(comments)))
             continue
         (previous_start, previous_end), previous_comments = merged[-1]
-        if start <= previous_end + max_gap:
+        # Touching sentence boundaries are not overlapping. Using ``<=`` here
+        # merged consecutive sentences into one broad Word comment. Merge only
+        # true overlap, or an explicitly configured positive gap.
+        overlaps = start < previous_end
+        within_positive_gap = max_gap > 0 and start <= previous_end + max_gap
+        if overlaps or within_positive_gap:
             merged[-1] = ((previous_start, max(previous_end, end)), previous_comments + list(comments))
         else:
             merged.append(((start, end), list(comments)))
@@ -2566,8 +2569,13 @@ def build_annotated_docx(
                     exposed_text = "".join(run.text or "" for run in paragraph.runs)
                     offsets_are_safe = exposed_text == (paragraph.text or "")
                     if exact_start >= 0 and offsets_are_safe:
+                        safe_start, safe_end = _expand_to_safe_text_span(
+                            paragraph.text or "",
+                            exact_start,
+                            exact_start + len(quote),
+                        )
                         by_paragraph[paragraph_number][
-                            (exact_start, exact_start + len(quote))
+                            (safe_start, safe_end)
                         ].append(comment)
                     else:
                         after_paragraph[paragraph_number].append(comment)
@@ -2595,9 +2603,10 @@ def build_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        merged_groups = _merge_nearby_span_groups(
-            span_groups, max_gap=0 if _export_one_comment_per_finding() else 24
-        )
+        # Group only findings that resolve to the same or overlapping exact
+        # sentence span. Nearby but distinct sentences must retain separate
+        # native comment boxes.
+        merged_groups = _merge_nearby_span_groups(span_groups, max_gap=0)
         for (start, end), comments in reversed(merged_groups):
             if _export_one_comment_per_finding():
                 placed_any = False

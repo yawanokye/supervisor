@@ -1073,6 +1073,8 @@ def _batch_prompt(
             "selected_chapter_isolated_from_composite": summary.get(
                 "reviewed_only_selected_chapter", False
             ),
+            "section_scope_mode": summary.get("section_scope_mode", "whole_chapter"),
+            "selected_section_scope": summary.get("selected_section_scope") or {},
             "complete_thesis_structure_validated": summary.get(
                 "complete_thesis_structure_validated", False
             ),
@@ -1119,6 +1121,7 @@ def _batch_prompt(
             "distinguish_missing_from_weak_content": True,
             "make_method_advice_conditional_when_design_is_unknown": True,
             "do_not_review_context_only_chapters_as_the_selected_chapter": True,
+            "do_not_review_or_flag_unselected_sections": True,
             "when_combined_chapters_are_selected_review_every_chapter_in_the_range": True,
             "verify_alignment_sequentially_from_chapter_one_to_the_last_selected_chapter": True,
             "verify_objective_question_hypothesis_method_result_conclusion_alignment": True,
@@ -1150,6 +1153,7 @@ def _batch_prompt(
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate passages. "
             "A target passage may have zero issues only after a substantive assessment. There is no predetermined number of comments: report every distinct material issue and do not invent issues to reach a count. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
+            "When selected_section_scope.mode is selected_sections, review and annotate only the selected section boundaries supplied in the current sections. Do not create missing-section, structural or language findings for unselected sections. Use the exact selected heading and passage as the location for every finding. "
             + complete_structure_instruction
             + "For Chapters Three and Four, first identify the actual research design and analysis route from the study, then apply only the diagnostics and reporting requirements appropriate to that route. Conduct a level-appropriate methods-results-discussion audit across quantitative, qualitative, mixed-methods, review, experimental, econometric, SEM, mediation, moderation or other designs as applicable. Verify design-sampling alignment, instrument or protocol quality, reliability/validity/trustworthiness, data screening, model choice, assumptions, diagnostic thresholds, statistical or qualitative table completeness, numerical consistency where enough evidence is present, hypothesis/research-question decisions and discussion claims. For PROCESS, mediation, moderation, SEM, regression, ANOVA, t-test, chi-square, panel/time-series, thematic analysis and mixed-methods integration, require the specific outputs only when that analysis is actually used. "
             "Treat deterministic statistical warnings as evidence requiring verification rather than as automatic proof of error. "
@@ -2033,7 +2037,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v1.9.9.0-deterministic-supervisory-checklist",
+            "pipeline": "academic-review-v2.0.0-section-scope-professional-actions",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2485,7 +2489,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v1.9.8.6-final-mphil-depth",
+                "pipeline": "academic-comment-audit-v2.0.0-exact-anchor-statistical-adequacy",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,

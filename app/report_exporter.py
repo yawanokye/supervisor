@@ -18,6 +18,7 @@ from .articleready_review_bridge import build_articleready_quality_audit
 from .professional_review_pipeline import build_professional_review_package
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .supervisory_review_algorithm import build_supervisory_report_spec
+from .submission_readiness import build_supervisory_readiness
 
 INK = "1F2937"
 MUTED = "667085"
@@ -731,6 +732,105 @@ def _add_articleready_quality_audit_section(doc: Document, review: Dict[str, Any
         _set_cell_text(row.cells[3], _compact_sentence(row_data.get("required_action", ""), 360), False, INK, 8.0)
     return True
 
+
+def _add_supervisory_readiness_section(
+    doc: Document,
+    review: Dict[str, Any],
+    heading: str,
+) -> bool:
+    """Add the direct ArticleReady-style action schedule.
+
+    This is the supervisor-facing decision section. It states exactly what must
+    be corrected, where, why and how the supervisor can verify completion.
+    """
+    readiness = review.get("supervisory_readiness") or build_supervisory_readiness(review)
+    actions = list(readiness.get("actions") or [])
+    doc.add_heading(heading, level=1)
+    status = doc.add_paragraph()
+    status.add_run("Current status: ").bold = True
+    status.add_run(_clean(readiness.get("status") or "Review completed"))
+    meaning = _clean(readiness.get("meaning"))
+    if meaning:
+        doc.add_paragraph(meaning)
+
+    if not actions:
+        doc.add_paragraph(
+            "No unresolved material correction was identified in the selected review scope. "
+            "The supervisor should still confirm institutional formatting, source files and final submission requirements."
+        )
+    else:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        table.autofit = False
+        header = table.rows[0]
+        _set_repeat_table_header(header)
+        widths = (1.05, 1.4, 2.45, 2.45, 2.05)
+        for cell, width in zip(header.cells, widths):
+            _set_cell_width(cell, width)
+            _set_cell_shading(cell, BRAND)
+        for cell, text in zip(
+            header.cells,
+            ("Priority", "Location", "Specific action required", "Why this must be corrected", "How to verify completion"),
+        ):
+            _set_cell_text(cell, text, True, "FFFFFF", 8.0)
+        for index, action in enumerate(actions[:100]):
+            row = table.add_row()
+            _prevent_row_split(row)
+            for cell, width in zip(row.cells, widths):
+                _set_cell_width(cell, width)
+                if index % 2:
+                    _set_cell_shading(cell, "F8FAFC")
+            _set_cell_text(row.cells[0], action.get("priority"), True, BRAND, 7.7)
+            _set_cell_text(row.cells[1], action.get("location"), False, MUTED, 7.7)
+            _set_cell_text(row.cells[2], action.get("specific_action"), False, INK, 7.7)
+            _set_cell_text(row.cells[3], action.get("why_it_matters"), False, INK, 7.7)
+            _set_cell_text(row.cells[4], action.get("verification"), False, INK, 7.7)
+
+    statistical = readiness.get("statistical_assurance") or {}
+    if statistical:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.add_run("Statistical accuracy and adequacy assurance: ").bold = True
+        p.add_run(
+            f"{_clean(statistical.get('accuracy_status'))}. "
+            f"{_clean(statistical.get('adequacy_status'))}. "
+            f"{_clean(statistical.get('limitation'))}"
+        )
+    analysis_actions = list(readiness.get("additional_analysis_actions") or [])
+    if analysis_actions:
+        doc.add_heading("Additional analyses or result-verification actions", level=2)
+        doc.add_paragraph(
+            "The following analyses or checks are recommendations until they are completed from the original data and output. "
+            "They must not be described in the thesis as though they have already been performed."
+        )
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        header = table.rows[0]
+        for cell, text in zip(
+            header.cells,
+            ("Priority and location", "Rationale", "Data required", "Suitable method and output", "Consequence of omission"),
+        ):
+            _set_cell_shading(cell, BRAND)
+            _set_cell_text(cell, text, True, "FFFFFF", 7.8)
+        for index, action in enumerate(analysis_actions[:40]):
+            row = table.add_row()
+            _prevent_row_split(row)
+            if index % 2:
+                for cell in row.cells:
+                    _set_cell_shading(cell, "F8FAFC")
+            _set_cell_text(row.cells[0], f"{action.get('priority')}\n{action.get('location')}", True, BRAND, 7.4)
+            _set_cell_text(row.cells[1], action.get("rationale"), False, INK, 7.4)
+            _set_cell_text(row.cells[2], action.get("data_required"), False, INK, 7.4)
+            _set_cell_text(row.cells[3], f"{action.get('suitable_method')} Output: {action.get('output_to_report')}", False, INK, 7.4)
+            _set_cell_text(row.cells[4], action.get("consequence_of_omission"), False, INK, 7.4)
+    note = _clean(readiness.get("approval_note"))
+    if note:
+        p = doc.add_paragraph()
+        run = p.add_run(note)
+        run.italic = True
+        run.font.color.rgb = RGBColor.from_string(MUTED)
+    return True
+
 def _add_compact_follow_up(
     doc: Document,
     title: str,
@@ -975,6 +1075,12 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     else:
         doc.add_paragraph("No critical or major correction was identified. Address the remaining targeted corrections before resubmission.")
 
+    _add_supervisory_readiness_section(
+        doc,
+        review,
+        "2.3 Actions Required Before Supervisor Approval or Submission",
+    )
+
     _add_simple_heading(doc, "3. Methods, Results and Discussion Accuracy Audit")
     p = doc.add_paragraph()
     p.add_run("Statistical consistency and analysis appropriateness: ").bold = True
@@ -1181,7 +1287,13 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     recommendation = package.get("recommendation") or {}
     _set_cell_text(cell, f"{recommendation.get('decision', 'Review completed')}. {recommendation.get('meaning', '')}", True, INK, 9.2)
 
-    section_number = 2
+    _add_supervisory_readiness_section(
+        doc,
+        review,
+        "2. Actions Required Before Supervisor Approval or Submission",
+    )
+
+    section_number = 3
     if summary.get("systematic_coverage_review"):
         doc.add_heading(f"{section_number}. Review Coverage Assurance", level=1)
         section_number += 1

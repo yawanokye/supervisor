@@ -36,6 +36,7 @@ from .review_rules import (
     is_applicable,
     readiness_band,
 )
+from .review_scope import apply_selected_section_scope
 
 JUSTIFICATION_MARKERS = {
     "because", "therefore", "appropriate", "suitable", "justified", "rationale",
@@ -663,6 +664,8 @@ def analyse(
     academic_level: str,
     research_approach: str,
     selected_chapter: Optional[int] = None,
+    section_scope_mode: str = "whole_chapter",
+    selected_sections: Optional[List[str]] = None,
     combined_chapter_end: Optional[int] = None,
     review_scope: str = "chapter",
     document_type: str = "chapter_one",
@@ -701,12 +704,22 @@ def analyse(
             combined_chapter_end if combined_scope else None
         ),
     )
-    current_paragraphs = partition["review_paragraphs"]
+    chapter_paragraphs = list(partition["review_paragraphs"])
+    current_paragraphs, selected_section_scope = apply_selected_section_scope(
+        chapter_paragraphs,
+        selected_chapter=selected_chapter,
+        section_scope_mode=(
+            section_scope_mode
+            if not full_thesis and not combined_scope
+            else "whole_chapter"
+        ),
+        selected_sections=selected_sections or [],
+    )
     flexible_doctoral_structure = (
         full_thesis
         and partition["structure_mode"] == "flexible_doctoral"
     )
-    chapter_role_map = build_chapter_role_map(current_paragraphs, academic_level)
+    chapter_role_map = build_chapter_role_map(chapter_paragraphs, academic_level)
     if uses_flexible_phd_structure(academic_level):
         statistical_chapters = chapters_for_roles(
             chapter_role_map, {"methodology", "results", "discussion", "article_or_study"}
@@ -1011,6 +1024,9 @@ def analyse(
             "research_approach": research_approach,
             "institutional_profile": clean_text(institutional_profile or "generic").lower(),
             "review_scope": review_scope,
+            "section_scope_mode": selected_section_scope.get("mode", "whole_chapter"),
+            "selected_section_scope": selected_section_scope,
+            "selected_sections_reviewed": selected_section_scope.get("selected_section_titles", []),
             "document_type": document_type,
             "document_label": document_label,
             "proposal_mode": proposal_mode,
@@ -1079,6 +1095,7 @@ def analyse(
                 "coverage"
             ]["optional_chapters"],
             "paragraphs_extracted": len(current_paragraphs),
+            "chapter_paragraphs_available": len(chapter_paragraphs),
             "uploaded_paragraphs_extracted": len(uploaded_paragraphs),
             "rules_checked": len(combined_results),
             "official_rules_checked": len(results),
@@ -1123,6 +1140,7 @@ def analyse(
         "results": results,
         "_runtime_context": {
             "current_paragraphs": current_paragraphs,
+            "selected_section_scope": selected_section_scope,
             "context_paragraphs": context_paragraphs,
             "original_paragraphs": original_paragraphs,
             "supervisor_comments": supervisor_comments,

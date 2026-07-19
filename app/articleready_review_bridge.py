@@ -31,6 +31,8 @@ ArticleReady-style evidence-preserving review contract:
 - For results, assess whether every research question or hypothesis is answered, whether tables/figures are numbered and interpreted correctly, whether statistics are internally consistent, and whether diagnostics, effect sizes, confidence intervals or qualitative evidence are reported where the method requires them.
 - For discussion, assess whether the author explains meaning, compares with theory and empirical literature, addresses unexpected or non-significant findings, recognises limitations and avoids overclaiming beyond the design.
 - Use journal-quality revision guidance: say what is wrong, why it matters, exactly what to revise, and provide a context-specific example only when it helps the student understand the correction.
+- Classify every unresolved action as Essential before approval, Strongly recommended, or Optional refinement. Each action must state the exact location, the specific correction, the academic reason and how the supervisor can verify completion.
+- Anchor every action to the exact sentence, paragraph or table row that requires it. When several distinct actions concern the same sentence, keep them in one numbered native Word comment box rather than scattering duplicate comment boxes across the sentence.
 - Keep the full substantive review in the report. Convert only actionable, evidence-anchored corrections into Word comments. Native comments must not compress away important academic judgement.
 """.strip()
 

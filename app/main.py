@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -42,7 +43,7 @@ from .checkpointing import (
     save_job_payload,
     stable_hash,
 )
-from .document_parser import clean_text
+from .document_parser import clean_text, parse_document
 from .external_assessment import (
     ExternalAssessmentValidationError,
     enrich_with_external_assessment,
@@ -55,6 +56,12 @@ from .external_assessment_exporter import (
 )
 from .report_exporter import build_docx_report
 from .review_engine import analyse
+from .review_scope import (
+    apply_review_scope_filter,
+    build_document_outline,
+    parse_selected_sections,
+)
+from .submission_readiness import attach_supervisory_readiness
 from .storage import ensure_storage, load_annotated, load_review_json, save_annotated, save_review_json, storage_status
 from .token_budget import (
     DEFAULT_SUPERVISOR_TOKENS,
@@ -77,7 +84,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "1.9.9.30"
+APP_VERSION = "2.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -120,36 +127,7 @@ def _env_bool(name: str, default: bool) -> bool:
 RUN_REVIEW_JOBS_IN_WEB = _env_bool("VPROF_RUN_JOBS_IN_WEB", True)
 WORKER_POLL_SECONDS = max(2, int(os.getenv("VPROF_WORKER_POLL_SECONDS", "8")))
 
-app = FastAPI(
-    title="ProjectReady AI Supervisor Assistant",
-    version=APP_VERSION,
-    description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
-)
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=SESSION_SECRET,
-    session_cookie="supervisor_session",
-    max_age=8 * 60 * 60,
-    same_site="lax",
-    https_only=COOKIE_SECURE,
-)
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
-
-REVIEW_CACHE: Dict[str, dict] = {}
-ANNOTATED_CACHE: Dict[str, bytes] = {}
-AI_USAGE_CACHE: Dict[str, dict] = {}
-JOB_CACHE: Dict[str, Dict[str, Any]] = {}
-BACKGROUND_TASKS: set[asyncio.Task] = set()
-JOB_TASKS: Dict[str, asyncio.Task] = {}
-RUNNING_JOB_IDS: set[str] = set()
-SCHEDULED_JOB_IDS: set[str] = set()
-LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
-CREDENTIAL_FLASH: Dict[str, Dict[str, str]] = {}
-
-
-@app.on_event("startup")
-async def startup() -> None:
+async def _run_startup_tasks() -> None:
     init_db()
     ensure_storage()
     with SessionLocal() as db:
@@ -181,6 +159,41 @@ async def startup() -> None:
         )
     if AUTO_RESUME_JOBS and RUN_REVIEW_JOBS_IN_WEB:
         await _resume_recoverable_jobs()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _run_startup_tasks()
+    yield
+
+
+app = FastAPI(
+    title="ProjectReady AI Supervisor Assistant",
+    version=APP_VERSION,
+    description="Institutional supervisor portal for complete academic review of theses, dissertations, proposals and revisions.",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="supervisor_session",
+    max_age=8 * 60 * 60,
+    same_site="lax",
+    https_only=COOKIE_SECURE,
+)
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+REVIEW_CACHE: Dict[str, dict] = {}
+ANNOTATED_CACHE: Dict[str, bytes] = {}
+AI_USAGE_CACHE: Dict[str, dict] = {}
+JOB_CACHE: Dict[str, Dict[str, Any]] = {}
+BACKGROUND_TASKS: set[asyncio.Task] = set()
+JOB_TASKS: Dict[str, asyncio.Task] = {}
+RUNNING_JOB_IDS: set[str] = set()
+SCHEDULED_JOB_IDS: set[str] = set()
+LOGIN_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
+CREDENTIAL_FLASH: Dict[str, Dict[str, str]] = {}
 
 
 def _strip_internal_ai_metadata(review: dict) -> dict:
@@ -323,7 +336,7 @@ async def lecturer_login_page(request: Request, db: Session = Depends(get_db)):
     user = _current_user(request, db)
     if user:
         return RedirectResponse("/admin" if user.role == "admin" else "/portal", status_code=303)
-    return templates.TemplateResponse("login.html", _template_context(request, portal_type="lecturer"))
+    return templates.TemplateResponse(request, "login.html", _template_context(request, portal_type="lecturer"))
 
 
 @app.post("/login")
@@ -359,7 +372,7 @@ async def admin_login_page(request: Request, db: Session = Depends(get_db)):
     user = _current_user(request, db)
     if user and user.role == "admin":
         return RedirectResponse("/admin", status_code=303)
-    return templates.TemplateResponse("login.html", _template_context(request, portal_type="admin"))
+    return templates.TemplateResponse(request, "login.html", _template_context(request, portal_type="admin"))
 
 
 @app.post("/admin/login")
@@ -399,7 +412,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
 
 @app.get("/forgot-password", response_class=HTMLResponse)
 async def forgot_password_page(request: Request):
-    return templates.TemplateResponse("forgot_password.html", _template_context(request))
+    return templates.TemplateResponse(request, "forgot_password.html", _template_context(request))
 
 
 @app.post("/forgot-password")
@@ -438,7 +451,7 @@ async def change_password_page(request: Request, db: Session = Depends(get_db)):
     user = _current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse("change_password.html", _template_context(request, user=user))
+    return templates.TemplateResponse(request, "change_password.html", _template_context(request, user=user))
 
 
 @app.post("/account/password")
@@ -495,6 +508,7 @@ async def lecturer_portal(request: Request, db: Session = Depends(get_db)):
     processing = sum(1 for row in reviews if row.status in {"queued", "processing", "paused"})
     revised = sum(1 for row in reviews if row.submission_stage == "revised")
     return templates.TemplateResponse(
+        request,
         "portal.html",
         _template_context(
             request,
@@ -514,7 +528,7 @@ async def review_workspace(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     if user.must_change_password:
         return RedirectResponse("/account/password", status_code=303)
-    return templates.TemplateResponse("index.html", _template_context(request, user=user, token_capacity=supervisor_capacity(user), token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED))
+    return templates.TemplateResponse(request, "index.html", _template_context(request, user=user, token_capacity=supervisor_capacity(user), token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED))
 
 
 @app.get("/reviews/{review_id}", response_class=HTMLResponse)
@@ -526,7 +540,7 @@ async def review_detail(review_id: str, request: Request, db: Session = Depends(
     if not record or (user.role != "admin" and record.lecturer_id != user.id):
         raise HTTPException(status_code=404, detail="Review not found.")
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
-    return templates.TemplateResponse("review_detail.html", _template_context(request, user=user, record=record, review=review))
+    return templates.TemplateResponse(request, "review_detail.html", _template_context(request, user=user, record=record, review=review))
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -567,6 +581,7 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     credential_token = request.session.pop("credential_token", None)
     credentials = CREDENTIAL_FLASH.pop(credential_token, None) if credential_token else None
     return templates.TemplateResponse(
+        request,
         "admin_dashboard.html",
         _template_context(request, user=user, lecturers=lecturers, review_counts=review_counts, recent_reviews=recent_reviews, stats=stats, credentials=credentials, token_capacities=token_capacities, token_ledger=token_ledger, ledger_users=ledger_users, token_rates=TOKENS_PER_PAGE, token_capacity_rates=RESERVED_TOKENS_PER_PAGE, token_accounting_enabled=TOKEN_ACCOUNTING_ENABLED, token_quota_enforcement=TOKEN_QUOTA_ENFORCEMENT),
     )
@@ -1451,6 +1466,8 @@ async def _run_review_job(
             "workflow_type": payload.get("workflow_type"),
             "review_scope": payload.get("review_scope"),
             "selected_chapter": payload.get("selected_chapter"),
+            "section_scope_mode": payload.get("section_scope_mode"),
+            "selected_sections": payload.get("selected_sections") or [],
             "combined_chapter_end": payload.get("combined_chapter_end"),
             "submission_stage": payload.get("submission_stage"),
             "review_depth": payload.get("review_depth"),
@@ -1480,7 +1497,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v1.9.8.6-final-degree-quality-gate",
+            "pipeline": "review-pipeline-v2.0.0-section-scope-professional-actions",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1506,7 +1523,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v1.9.1-tiered-openai",
+                "pipeline": "document-analysis-v2.0.0-selected-section-scope",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1540,6 +1557,8 @@ async def _run_review_job(
                     academic_level=payload["academic_level"],
                     research_approach=payload["research_approach"],
                     selected_chapter=payload["selected_chapter"] or None,
+                    section_scope_mode=payload.get("section_scope_mode", "whole_chapter"),
+                    selected_sections=payload.get("selected_sections") or [],
                     combined_chapter_end=(
                         payload.get("combined_chapter_end") or None
                     ),
@@ -1595,7 +1614,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v1.9.8.6-final-degree-quality-gate",
+                "pipeline": "academic-review-complete-v2.0.0-professional-actions",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1704,6 +1723,12 @@ async def _run_review_job(
                     "workflow_label": "Supervisory Review",
                     "external_assessment_available": False,
                 })
+                # Apply the supervisor's section selection after all review
+                # passes so no out-of-scope finding can leak into the report or
+                # either annotated DOCX. Then create the direct ArticleReady-
+                # style action schedule used by the portal and report.
+                review = apply_review_scope_filter(review)
+                review = attach_supervisory_readiness(review)
 
             usage_snapshot = dict(review.get("ai_review") or {})
             if usage_snapshot:
@@ -1988,6 +2013,57 @@ async def _run_review_job(
         _release_job_lease(job_id)
 
 
+@app.post("/api/review/outline")
+async def review_outline(
+    request: Request,
+    file: UploadFile = File(...),
+    selected_chapter: int = Form(0),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Return the detected chapter and section outline before review submission.
+
+    The endpoint lets supervisors choose only the sections they want reviewed.
+    It performs document parsing only and does not call an AI provider.
+    """
+    _verify_csrf(request, csrf_token)
+    user = _current_user(request, db)
+    if not user or user.role not in {"lecturer", "admin"}:
+        raise HTTPException(status_code=401, detail="Sign in to scan a document outline.")
+    filename = file.filename or "uploaded-document"
+    data = await _read_upload(file, "The chapter or thesis file")
+    try:
+        paragraphs = await asyncio.to_thread(parse_document, data, filename)
+        detected_numbers = {
+            int(row.get("chapter_number"))
+            for row in paragraphs
+            if isinstance(row.get("chapter_number"), int)
+        }
+        if selected_chapter and not detected_numbers:
+            paragraphs = [
+                {**row, "chapter_number": int(selected_chapter)}
+                for row in paragraphs
+            ]
+        outline = build_document_outline(paragraphs)
+    except Exception as exc:
+        logger.exception("Could not scan the document outline")
+        raise HTTPException(
+            status_code=400,
+            detail="The chapter headings could not be read. Check that the file is a valid DOCX or PDF and try again.",
+        ) from exc
+    if selected_chapter:
+        outline["selected_chapter"] = int(selected_chapter)
+        outline["selected_chapter_outline"] = next(
+            (
+                chapter
+                for chapter in outline.get("chapters") or []
+                if int(chapter.get("chapter_number") or 0) == int(selected_chapter)
+            ),
+            None,
+        )
+    return JSONResponse(outline)
+
+
 @app.post("/api/review", status_code=202)
 async def create_review(
     request: Request,
@@ -2003,6 +2079,8 @@ async def create_review(
     thesis_title: str = Form(""),
     review_scope: str = Form("chapter"),
     selected_chapter: int = Form(0),
+    section_scope_mode: str = Form("whole_chapter"),
+    selected_sections_json: str = Form("[]"),
     combined_chapter_end: int = Form(0),
     document_type: str = Form("chapter_one"),
     submission_stage: str = Form("initial"), review_depth: str = Form("standard"), csrf_token: str = Form(...),
@@ -2046,6 +2124,8 @@ async def create_review(
             )
         review_scope = "full_thesis"
         selected_chapter = 0
+        section_scope_mode = "whole_chapter"
+        selected_sections_json = "[]"
         combined_chapter_end = 0
         document_type = "full_thesis"
         submission_stage = (
@@ -2067,6 +2147,20 @@ async def create_review(
         raise HTTPException(status_code=400, detail="Choose Light Review, Standard Review or Advanced Review.")
     if review_scope not in {"chapter", "chapter_range", "full_thesis"}:
         raise HTTPException(status_code=400, detail="Choose Single chapter, Combined chapters or Complete thesis.")
+    if section_scope_mode not in {"whole_chapter", "selected_sections"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose Whole chapter or Selected sections for the chapter review.",
+        )
+    selected_sections = parse_selected_sections(selected_sections_json)
+    if review_scope != "chapter":
+        section_scope_mode = "whole_chapter"
+        selected_sections = []
+    elif section_scope_mode == "selected_sections" and not selected_sections:
+        raise HTTPException(
+            status_code=400,
+            detail="Scan the uploaded chapter and select at least one section to review.",
+        )
     phd_structure = clean_text(academic_level).lower() in {"phd", "dphil"} or "doctor of philosophy" in clean_text(academic_level).lower()
     maximum_chapter = 20 if phd_structure else 5
     if review_scope == "chapter_range" and not (2 <= combined_chapter_end <= maximum_chapter):
@@ -2194,6 +2288,8 @@ async def create_review(
         },
         "review_scope": review_scope,
         "selected_chapter": selected_chapter,
+        "section_scope_mode": section_scope_mode,
+        "selected_sections": selected_sections,
         "combined_chapter_end": combined_chapter_end,
         "document_type": document_type,
         "submission_stage": submission_stage,

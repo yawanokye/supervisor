@@ -39,8 +39,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.30-structure-safe-editor"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "1.9.9.30-professional-supervisory-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.0.0-exact-anchor-grouping"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.0.0-professional-supervisory-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -196,7 +196,10 @@ def build_inline_annotated_docx(
         for row in build_canonical_finding_rows(review, force=True)
     ]
 
-    after_paragraph: Dict[int, List[str]] = defaultdict(list)
+    # Findings tied to the same exact sentence share one numbered inline note.
+    # Findings tied to different sentences in the same paragraph remain
+    # separate and are placed in sentence order immediately after the paragraph.
+    after_anchor: Dict[Tuple[int, int, int], List[str]] = defaultdict(list)
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
     def reference_number_for(row: Dict[str, Any]) -> int:
@@ -248,24 +251,35 @@ def build_inline_annotated_docx(
         else:
             terms = [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")]
             start, end = _best_span(text, terms, quote)
-        _mark_span_red(paragraph, start, end, _group_reference_numbers_from_comment(_format_comment_group([comment], anchor_context=text[start:end])))
-        after_paragraph[paragraph_number].append(comment)
+        start, end = _expand_to_safe_text_span(text, start, end)
+        if start >= end:
+            start, end = 0, len(text)
+        after_anchor[(paragraph_number, start, end)].append(comment)
 
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
     else:
         _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
-    for paragraph_number in sorted(after_paragraph, reverse=True):
+    for (paragraph_number, start, end), comments in sorted(
+        after_anchor.items(),
+        key=lambda item: (item[0][0], item[0][1]),
+        reverse=True,
+    ):
         locator = source_map.get(paragraph_number) or {}
         paragraph = locator.get("paragraph")
-        if paragraph is not None:
-            comments = list(dict.fromkeys(after_paragraph[paragraph_number]))
-            # Keep each numbered correction as its own detailed blue annotation.
-            # This prevents several unrelated corrections from being compressed
-            # into one note merely because they occur in the same paragraph.
-            for comment in reversed(comments):
-                _add_inline_comment(paragraph, [comment])
+        if paragraph is None:
+            continue
+        comments = list(dict.fromkeys(comments))
+        text = paragraph.text or ""
+        grouped = _format_comment_group(comments, anchor_context=text[start:end])
+        _mark_span_red(
+            paragraph,
+            start,
+            end,
+            _group_reference_numbers_from_comment(grouped),
+        )
+        _add_inline_comment(paragraph, comments)
 
     output = io.BytesIO()
     document.save(output)

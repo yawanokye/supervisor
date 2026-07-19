@@ -67,8 +67,6 @@ OBSOLETE_OR_UNSUPPORTED_ENV_VARS = {
     "VPROF_SAFE_COMMENT_MARKER_ANCHORS",
     "VPROF_SHOW_FINDING_COMMENT_RECONCILIATION",
     "VPROF_VERIFY_DOCX_COMMENT_COUNT",
-    "VPROF_UCC_SECTION_COVERAGE_CONTRACT",
-    "VPROF_PRESERVE_UCC_SECTION_COMMENTS",
 }
 
 
@@ -88,10 +86,10 @@ class HybridAIConfig:
 
     The fast chapter reviewer uses GPT-5.6 Terra. Factual verification,
     cross-chapter judgement, advanced research methods/results review and
-    external examination use GPT-5.6 Terra. Review depth controls breadth and detail,
+    external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.9.30 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
+    VProfessor v2.0.0 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with Terra for extraction and section review and Sol for bounded final synthesis and adjudication. Existing strict schemas, checkpoints and token accounting remain active.
     """
 
     enabled: bool
