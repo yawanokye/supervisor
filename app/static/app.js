@@ -60,8 +60,17 @@ const priorExaminerCommentsText = document.getElementById("priorExaminerComments
 const priorVersionFileInput = document.getElementById("priorVersionFileInput");
 const priorVersionFileName = document.getElementById("priorVersionFileName");
 const workflowFormNote = document.getElementById("workflowFormNote");
+const sectionScopeCard = document.getElementById("sectionScopeCard");
+const sectionSelector = document.getElementById("sectionSelector");
+const selectedSectionsJson = document.getElementById("selectedSectionsJson");
+const scanSectionsButton = document.getElementById("scanSectionsButton");
+const selectAllSectionsButton = document.getElementById("selectAllSectionsButton");
+const clearSectionsButton = document.getElementById("clearSectionsButton");
+const detectedSectionsList = document.getElementById("detectedSectionsList");
+const sectionScanStatus = document.getElementById("sectionScanStatus");
 
 let highestDisplayedProgress = 2;
+let detectedSectionOptions = [];
 
 function setProgress(value, message = "", { reset = false } = {}) {
   const incoming = Math.max(
@@ -147,6 +156,104 @@ function selectedDocumentType() {
 
 function selectedStage() {
   return document.querySelector('input[name="submission_stage"]:checked')?.value || "initial";
+}
+
+function selectedSectionScopeMode() {
+  return document.querySelector('input[name="section_scope_mode"]:checked')?.value || "whole_chapter";
+}
+
+function updateSelectedSectionsValue() {
+  const selected = [...detectedSectionsList.querySelectorAll('input[type="checkbox"]:checked')]
+    .map(input => input.value);
+  selectedSectionsJson.value = JSON.stringify(selected);
+  if (selectedSectionScopeMode() === "selected_sections") {
+    sectionScanStatus.textContent = selected.length
+      ? `${selected.length} section${selected.length === 1 ? "" : "s"} selected for review.`
+      : "Select at least one detected section.";
+  }
+}
+
+function resetSectionSelection(message = "Upload the chapter and choose its chapter number, then scan the headings.") {
+  detectedSectionOptions = [];
+  detectedSectionsList.innerHTML = "";
+  selectedSectionsJson.value = "[]";
+  sectionScanStatus.textContent = message;
+}
+
+function renderDetectedSections(chapterOutline) {
+  detectedSectionOptions = chapterOutline?.sections || [];
+  detectedSectionsList.innerHTML = "";
+  if (!detectedSectionOptions.length) {
+    sectionScanStatus.textContent = "No section headings were detected. Review the whole chapter or correct the heading styles in the document.";
+    return;
+  }
+  const fallback = Boolean(chapterOutline?.using_expected_fallback);
+  detectedSectionOptions.forEach((section, index) => {
+    const label = document.createElement("label");
+    label.className = "section-check-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = section.section_key;
+    checkbox.checked = true;
+    checkbox.addEventListener("change", updateSelectedSectionsValue);
+    const body = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = section.section_title || `Section ${index + 1}`;
+    const meta = document.createElement("small");
+    meta.textContent = section.detected === false
+      ? "Expected section label. Exact heading boundaries were not detected."
+      : `${section.section_number ? `${section.section_number} · ` : ""}Starts at paragraph ${section.paragraph || "not available"}`;
+    body.append(title, meta);
+    label.append(checkbox, body);
+    detectedSectionsList.appendChild(label);
+  });
+  if (fallback) {
+    const warning = document.createElement("div");
+    warning.className = "section-scan-warning";
+    warning.textContent = "The document does not use detectable section headings. Selected labels will guide the review, but exact section isolation requires Word heading styles or numbered headings.";
+    detectedSectionsList.prepend(warning);
+  }
+  updateSelectedSectionsValue();
+}
+
+async function scanDocumentOutline() {
+  const file = fileInput.files?.[0];
+  const chapter = Number(chapterSelect.value || 0);
+  if (!file) {
+    sectionScanStatus.textContent = "Upload the chapter before scanning its headings.";
+    fileInput.focus();
+    return;
+  }
+  if (!chapter) {
+    sectionScanStatus.textContent = "Choose the chapter number before scanning its headings.";
+    chapterSelect.focus();
+    return;
+  }
+  scanSectionsButton.disabled = true;
+  sectionScanStatus.textContent = "Reading the chapter headings…";
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("selected_chapter", String(chapter));
+    body.append("csrf_token", form.querySelector('input[name="csrf_token"]')?.value || "");
+    const response = await fetch("/api/review/outline", {
+      method: "POST",
+      body,
+      headers: { "Accept": "application/json" }
+    });
+    const outline = await readJsonSafely(response);
+    const chapterOutline = outline.selected_chapter_outline ||
+      (outline.chapters || []).find(item => Number(item.chapter_number) === chapter);
+    if (!chapterOutline) {
+      resetSectionSelection(`Chapter ${chapter} was not detected in the uploaded file. Check the selected chapter or upload the correct document.`);
+      return;
+    }
+    renderDetectedSections(chapterOutline);
+  } catch (error) {
+    resetSectionSelection(error.message || "The chapter outline could not be scanned.");
+  } finally {
+    scanSectionsButton.disabled = false;
+  }
 }
 
 function updatePhdChapterOptions() {
@@ -238,6 +345,20 @@ function updateUploadWorkflow() {
   previousFilesInput.required = false;
   previousFilesInput.disabled = external || fullThesis || combined || chapter < 2;
 
+  const sectionScopeAvailable = !external && !fullThesis && !combined && chapter >= 1;
+  sectionScopeCard.classList.toggle("hidden", !sectionScopeAvailable);
+  form.querySelectorAll('input[name="section_scope_mode"]').forEach(input => {
+    input.disabled = !sectionScopeAvailable;
+  });
+  if (!sectionScopeAvailable) {
+    const wholeChapter = form.querySelector('input[name="section_scope_mode"][value="whole_chapter"]');
+    if (wholeChapter) wholeChapter.checked = true;
+    sectionSelector.classList.add("hidden");
+    resetSectionSelection();
+  } else {
+    sectionSelector.classList.toggle("hidden", selectedSectionScopeMode() !== "selected_sections");
+  }
+
   revisionReviewFields.classList.toggle("hidden", external || !revised);
   supervisorCommentFilesInput.disabled = external || !revised;
   supervisorCommentsText.disabled = external || !revised;
@@ -294,6 +415,10 @@ function setFileNames(input, target, emptyText) {
 
 fileInput.addEventListener("change", () => {
   fileName.textContent = fileInput.files[0]?.name || "No file selected";
+  resetSectionSelection("The file changed. Scan the chapter headings again before selecting sections.");
+  if (selectedSectionScopeMode() === "selected_sections" && fileInput.files[0] && chapterSelect.value) {
+    scanDocumentOutline();
+  }
 });
 
 previousFilesInput.addEventListener("change", () => {
@@ -322,8 +447,39 @@ document.querySelectorAll('input[name="review_scope"], input[name="document_type
   input.addEventListener("change", updateUploadWorkflow);
 });
 
-chapterSelect.addEventListener("change", updateUploadWorkflow);
+chapterSelect.addEventListener("change", () => {
+  updateUploadWorkflow();
+  resetSectionSelection("The chapter selection changed. Scan the headings for the selected chapter.");
+  if (selectedSectionScopeMode() === "selected_sections" && fileInput.files[0]) {
+    scanDocumentOutline();
+  }
+});
 combinedChapterEnd.addEventListener("change", updateUploadWorkflow);
+
+form.querySelectorAll('input[name="section_scope_mode"]').forEach(input => {
+  input.addEventListener("change", () => {
+    const selectedOnly = selectedSectionScopeMode() === "selected_sections";
+    sectionSelector.classList.toggle("hidden", !selectedOnly);
+    if (!selectedOnly) {
+      selectedSectionsJson.value = "[]";
+      sectionScanStatus.textContent = "The whole selected chapter will be reviewed.";
+    } else if (!detectedSectionOptions.length && fileInput.files[0] && chapterSelect.value) {
+      scanDocumentOutline();
+    } else {
+      updateSelectedSectionsValue();
+    }
+  });
+});
+
+scanSectionsButton.addEventListener("click", scanDocumentOutline);
+selectAllSectionsButton.addEventListener("click", () => {
+  detectedSectionsList.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = true; });
+  updateSelectedSectionsValue();
+});
+clearSectionsButton.addEventListener("click", () => {
+  detectedSectionsList.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = false; });
+  updateSelectedSectionsValue();
+});
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, c => ({
@@ -555,12 +711,15 @@ function renderReview(review) {
       </article>`).join("");
   }
 
+  const readinessActions = review.supervisory_readiness?.actions || [];
   document.getElementById("priorityActions").innerHTML =
-    (review.priority_actions || []).map(action => `
+    (readinessActions.length ? readinessActions : (review.priority_actions || [])).map(action => `
       <article class="action-item ${escapeHtml(action.severity)}">
         <strong>${escapeHtml(action.issue || action.section || "Academic revision")}</strong>
-        <span>${escapeHtml(action.status)} · ${escapeHtml(action.severity)}</span>
-        <p>${escapeHtml(action.action)}</p>
+        <span>${escapeHtml(action.priority || action.status || "Action required")} · ${escapeHtml(action.severity)}</span>
+        <p>${escapeHtml(action.specific_action || action.action)}</p>
+        ${action.location ? `<small><b>Location:</b> ${escapeHtml(action.location)}</small>` : ""}
+        ${action.verification ? `<small><b>Verification:</b> ${escapeHtml(action.verification)}</small>` : ""}
       </article>`).join("") ||
     `<p class="form-note">No priority actions were generated.</p>`;
 
@@ -915,6 +1074,19 @@ form.addEventListener("submit", async event => {
     combinedChapterEnd.focus();
     return;
   }
+  if (!external && scope === "chapter" && selectedSectionScopeMode() === "selected_sections") {
+    let selectedSections = [];
+    try {
+      selectedSections = JSON.parse(selectedSectionsJson.value || "[]");
+    } catch (_) {
+      selectedSections = [];
+    }
+    if (!selectedSections.length) {
+      showFormError("Scan the chapter headings and select at least one section for review.", sectionScopeCard);
+      sectionScopeCard.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+  }
   if (external && !degreeProgramme.value.trim()) {
     showFormError("Enter the degree programme for the external examination report.", assessmentMetadataFields);
     degreeProgramme.focus();
@@ -951,6 +1123,8 @@ form.addEventListener("submit", async event => {
       body.set("combined_chapter_end", "0");
       body.set("document_type", "full_thesis");
       body.set("submission_stage", "initial");
+      body.set("section_scope_mode", "whole_chapter");
+      body.set("selected_sections_json", "[]");
       body.delete("previous_files");
       body.delete("supervisor_comment_files");
       body.delete("supervisor_comments_text");
@@ -959,11 +1133,15 @@ form.addEventListener("submit", async event => {
       body.set("selected_chapter", "0");
       body.set("combined_chapter_end", "0");
       body.set("document_type", "full_thesis");
+      body.set("section_scope_mode", "whole_chapter");
+      body.set("selected_sections_json", "[]");
       body.delete("previous_files");
     } else if (scope === "chapter_range") {
       body.set("selected_chapter", String(rangeEnd));
       body.set("combined_chapter_end", String(rangeEnd));
       body.set("document_type", "combined_chapters");
+      body.set("section_scope_mode", "whole_chapter");
+      body.set("selected_sections_json", "[]");
       body.delete("previous_files");
     } else {
       body.set("combined_chapter_end", "0");

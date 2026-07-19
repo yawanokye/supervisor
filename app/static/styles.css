@@ -361,3 +361,21 @@ input[type="text"]:focus,input[type="password"]:focus,input[type="email"]:focus,
 .workspace-token-banner span,.workspace-token-banner strong{display:block}.workspace-token-banner span{font-size:.72rem;color:var(--muted);font-weight:800}.workspace-token-banner strong{margin-top:3px;font-size:1.25rem}.workspace-token-banner p{max-width:720px;margin:0;color:var(--muted);font-size:.8rem;line-height:1.5}
 @media(max-width:1150px){.token-summary-grid{grid-template-columns:repeat(3,1fr)}.bulk-token-form{grid-template-columns:repeat(3,1fr)}.bulk-token-form .bulk-note{grid-column:span 2}.bulk-token-form .primary-button{width:100%}}
 @media(max-width:760px){.token-summary-grid{grid-template-columns:1fr 1fr}.bulk-token-form{grid-template-columns:1fr}.bulk-token-form .bulk-note{grid-column:auto}.supervisor-token-card,.workspace-token-banner{display:block}.token-card-metrics{margin-top:14px}.workspace-token-banner p{margin-top:9px}}
+
+/* VProfessor 2.0 section-level supervisor scope */
+.section-scope-card{display:grid;gap:12px}
+.section-scope-card.hidden{display:none}
+.section-scope-options{margin-top:4px}
+.section-selector{display:grid;gap:10px;padding-top:4px}
+.section-selector.hidden{display:none}
+.section-selector-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.compact-button{padding:8px 12px;font-size:.8rem}
+.text-button{border:0;background:transparent;color:var(--brand);font-weight:700;cursor:pointer;padding:6px}
+.section-checklist{display:grid;gap:8px;max-height:300px;overflow:auto;padding:4px 2px}
+.section-check-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:10px 12px;border:1px solid #dfe5f6;border-radius:11px;background:#fff;cursor:pointer}
+.section-check-item:hover{border-color:#aab9ec}
+.section-check-item input{margin-top:3px}
+.section-check-item strong{display:block;font-size:.86rem;color:var(--ink)}
+.section-check-item small{display:block;margin-top:2px;color:var(--muted);font-size:.74rem}
+.section-scan-warning{padding:9px 11px;border-radius:10px;background:#fff4e5;color:#8a4b08;font-size:.78rem}
+@media(max-width:600px){.section-selector-toolbar{align-items:stretch}.section-selector-toolbar button{width:100%}}
