@@ -189,6 +189,8 @@ services:
         value: 600
       - key: VPROF_WORKER_CONCURRENCY
         value: 1
+      - key: VPROF_WORKER_CLAIM_LIMIT
+        value: 1
       - key: VPROF_WORKER_POLL_SECONDS
         value: 8
       - key: VPROF_ALL_LEVELS_DEGREE_CALIBRATED
@@ -206,8 +208,6 @@ services:
       - key: VPROF_DEVELOPMENTAL_COMMENTS
         value: true
       - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
-        value: false
-      - key: VPROF_FINDING_QUOTAS_ENABLED
         value: false
       - key: VPROF_SYSTEMATIC_COVERAGE_REVIEW
         value: true
@@ -247,54 +247,42 @@ services:
         value: 0
       - key: VPROF_STANDARD_PHD_MIN_FINDINGS
         value: 0
-      - key: VPROF_PROFESSIONAL_REVIEW_PIPELINE
-        value: true
-      - key: VPROF_SCOPE_SPECIFIC_REPORTS
-        value: true
-      - key: VPROF_CANONICAL_FINDING_LEDGER
-        value: true
-      - key: VPROF_FULL_THESIS_EXAMINER_MODE
-        value: true
       - key: VPROF_DETERMINISTIC_SUPERVISORY_CHECKLIST
         value: true
-      - key: VPROF_HARD_SUPERVISORY_CHECKLIST
-        value: true
-      - key: VPROF_EVIDENCE_SAFE_CHECKLIST
-        value: true
       - key: VPROF_NATIVE_COMMENT_STYLE
-        value: one_per_finding
+        value: exact_anchor_grouped
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
-        value: true
-      - key: VPROF_COMMENT_MERGE_BY_SECTION
         value: false
+      - key: VPROF_COMMENT_MERGE_BY_SECTION
+        value: true
       - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
-        value: 1
+        value: 8
       - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS
         value: false
       - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS
-        value: true
+        value: false
       - key: VPROF_ADD_QUALITY_EXPECTATION_TO_COMMENTS
         value: false
       - key: VPROF_INCLUDE_DEGREE_LABEL_IN_COMMENTS
         value: false
       - key: VPROF_REPORT_INCLUDE_DETAILED_FINDINGS
-        value: false
-      - key: VPROF_REPORT_MAX_DETAILED_FINDINGS
-        value: 30
-      - key: VPROF_INTRO_BACKGROUND_SYNTHESIS_MODE
-        value: focused
-      - key: VPROF_FINAL_COMMENT_RECONCILIATION
         value: true
+      - key: VPROF_REPORT_MAX_DETAILED_FINDINGS
+        value: 100
       - key: VPROF_REQUIRED_SECTION_RELEASE_RECONCILIATION
         value: true
       - key: VPROF_FULL_DOCUMENT_COMPONENT_AUDIT
         value: true
       - key: VPROF_UCC_SECTION_CONTRACT_MAX_ISSUES
         value: 500
+      - key: VPROF_UCC_SECTION_COVERAGE_CONTRACT
+        value: true
+      - key: VPROF_PRESERVE_UCC_SECTION_COMMENTS
+        value: true
       - key: VPROF_HUMAN_SUPERVISORY_EDITOR
         value: true
       - key: VPROF_HUMAN_ROOT_CAUSE_CONSOLIDATION
-        value: true
+        value: false
       - key: VPROF_HUMAN_JUDGEMENT_PASS
         value: true
       - key: VPROF_SEMANTIC_EXAMPLE_GATE
@@ -312,8 +300,6 @@ services:
       - key: VPROF_STRICT_CONTEXT_EXAMPLE_VALIDATION
         value: true
       - key: VPROF_PROFESSIONAL_REVIEW_APPENDIX
-        value: true
-      - key: VPROF_INLINE_ANNOTATED_EXPORT
         value: true
       - key: VPROF_NATIVE_GROUP_LOCATION_MARKERS
         value: false
