@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.1.0
+# V-Professor Supervisory Review 2.1.1
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -15,7 +15,7 @@ V-Professor provides degree-calibrated supervisory review and external assessmen
 - The report presents direct actions required before supervisor approval or submission, including the exact text, action, academic reason and completion test.
 - Methods and results receive route-specific checks for internal statistical accuracy, reporting adequacy and analysis appropriateness. Definitive recalculation still requires the original dataset, syntax and software output.
 
-## Quality safeguards introduced in 2.1.0
+## Quality safeguards introduced in 2.1.0 and stabilised in 2.1.1
 
 - chapter-only uploads are not falsely treated as complete theses;
 - examples quoted in comments must be present in the current work or clearly marked as illustrative guidance;

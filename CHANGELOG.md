@@ -1,3 +1,12 @@
+# v2.1.1, provider recovery and audit stability hotfix
+
+- Fixed the `submission_scope` interface mismatch that crashed deterministic expert checks.
+- Prevented output truncation and schema errors from opening the provider circuit.
+- Replaced misleading `No enabled AI provider` messages when a configured provider is only cooling down.
+- Split comment-accuracy audits into token-safe batches, including sections with many findings.
+- Expanded the one structured-output retry after truncation within the global token ceiling.
+- Prevented the same provider/model from being used as its own fallback.
+
 # v2.1.0, evidence-grounded professional supervisory review
 
 ## Added
