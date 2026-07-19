@@ -89,7 +89,7 @@ class HybridAIConfig:
     external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v2.0.0 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with Terra for extraction and section review and Sol for bounded final synthesis and adjudication. Existing strict schemas, checkpoints and token accounting remain active.
+    VProfessor v2.1.0 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with Terra for extraction and section review and Sol for bounded final synthesis and adjudication. Existing strict schemas, checkpoints and token accounting remain active.
     """
 
     enabled: bool

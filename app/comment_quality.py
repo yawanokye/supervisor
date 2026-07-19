@@ -123,7 +123,7 @@ def comment_max_chars() -> int:
 
 
 def similarity_threshold() -> float:
-    return _env_float("VPROF_COMMENT_SIMILARITY_THRESHOLD", 0.62, 0.45, 0.90)
+    return _env_float("VPROF_COMMENT_SIMILARITY_THRESHOLD", 0.92, 0.90, 0.98)
 
 
 def reject_placeholder_comments() -> bool:
@@ -323,9 +323,22 @@ def _fallback_action(category: str) -> str:
     return "Revise the marked passage to address the identified academic weakness using only verified information from the study and authentic sources."
 
 
+def _evidence_locked_issue(issue: Dict[str, Any]) -> bool:
+    return (
+        normalised(issue.get("guidance_type")) == "deterministic supervisory checklist"
+        or normalised(issue.get("verification_status")) == "hard deterministic supervisory checklist"
+        or normalised(issue.get("finding_id")).startswith("dsc hard ")
+    )
+
+
 def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    output = make_issue_student_friendly(
-        dict(issue), issue.get("_academic_level") or issue.get("academic_level")
+    locked = _evidence_locked_issue(issue)
+    output = (
+        dict(issue)
+        if locked
+        else make_issue_student_friendly(
+            dict(issue), issue.get("_academic_level") or issue.get("academic_level")
+        )
     )
     current_year = current_year or datetime.now(timezone.utc).year
     if _future_date_only_issue(output, current_year):
@@ -350,7 +363,7 @@ def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] 
         output[field] = public_text(
             raw,
             reject_placeholders=True,
-            reject_incomplete=field in {"required_action", "illustrative_guidance"},
+            reject_incomplete=(field in {"required_action", "illustrative_guidance"} and not locked),
         )
 
     if not output.get("issue_title"):
@@ -490,9 +503,17 @@ def prepare_public_issues(issues: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[s
 
 
 def sanitise_finding_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    output = make_finding_student_friendly(
-        dict(row), row.get("_academic_level") or row.get("academic_level")
+    locked = _evidence_locked_issue(row)
+    output = (
+        dict(row)
+        if locked
+        else make_finding_student_friendly(
+            dict(row), row.get("_academic_level") or row.get("academic_level")
+        )
     )
+    if locked:
+        output.setdefault("item", clean_text(output.get("issue_title")))
+        output.setdefault("comment", clean_text(output.get("assessment")))
     for field in ("item", "comment", "required_action", "illustrative_guidance", "reference_label", "section_reference", "section"):
         value = output.get(field, "")
         if field == "required_action":

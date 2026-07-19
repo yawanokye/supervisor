@@ -39,8 +39,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.0.0-exact-anchor-grouping"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.0.0-professional-supervisory-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.1.0-evidence-ledger-exact-anchor-grouping"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.1.0-professional-evidence-ledger-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -211,14 +211,14 @@ def build_inline_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
         if _is_missing_section_finding(row):
             raw_missing_comment = _row_comment(row)
             if raw_missing_comment:
                 reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
+            continue
+        if row.get("annotation_eligible") is False:
             continue
         raw_comment = _row_comment(row)
         if not raw_comment:

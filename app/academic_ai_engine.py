@@ -1547,10 +1547,10 @@ def _consolidate_repetitive_issues(issues: Sequence[Dict[str, Any]]) -> List[Dic
     evidence and high semantic similarity before consolidation.
     """
     try:
-        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.82"))
+        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.92"))
     except (TypeError, ValueError):
-        threshold = 0.82
-    threshold = max(0.80, min(0.95, threshold))
+        threshold = 0.92
+    threshold = max(0.90, min(0.98, threshold))
 
     kept: List[Dict[str, Any]] = []
     for issue in sorted(
@@ -2037,7 +2037,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.0.0-section-scope-professional-actions",
+            "pipeline": "academic-review-v2.1.0-evidence-ledger-professional-actions",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2489,7 +2489,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.0.0-exact-anchor-statistical-adequacy",
+                "pipeline": "academic-comment-audit-v2.1.0-evidence-ledger-statistical-adequacy",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -2687,6 +2687,7 @@ async def enrich_review_with_academic_ai(
         current,
         academic_level=academic_level,
         research_approach=(review.get("summary") or {}).get("research_approach"),
+        submission_scope=(review.get("summary") or {}).get("review_scope") or "chapter",
     ):
         valid = _valid_issue(deterministic, paragraph_index, context_lock)
         if valid:
@@ -2701,6 +2702,7 @@ async def enrich_review_with_academic_ai(
         current,
         academic_level=academic_level,
         research_approach=(review.get("summary") or {}).get("research_approach"),
+        submission_scope=(review.get("summary") or {}).get("review_scope") or "chapter",
     ):
         valid = _valid_issue(checklist_issue, paragraph_index, context_lock)
         if valid:
@@ -2990,6 +2992,7 @@ async def enrich_review_with_academic_ai(
             current,
             academic_level=academic_level,
             research_approach=(review.get("summary") or {}).get("research_approach"),
+            submission_scope=(review.get("summary") or {}).get("review_scope") or "chapter",
             max_issues=max(48, floor * 3 if floor else 48),
         ):
             valid = _valid_issue(dict(item), paragraph_index, context_lock)

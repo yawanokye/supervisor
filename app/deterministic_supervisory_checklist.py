@@ -521,10 +521,82 @@ def _reference_author_tokens(text: str) -> Set[str]:
 
 
 
+
+
+def _sentences(value: str) -> List[str]:
+    """Split prose conservatively for deterministic sentence-level findings."""
+    text = clean_text(value)
+    if not text:
+        return []
+    protected = text
+    replacements = {
+        "et al.": "et al<prd>", "e.g.": "e<prd>g<prd>", "i.e.": "i<prd>e<prd>",
+        "Dr.": "Dr<prd>", "Prof.": "Prof<prd>", "Mr.": "Mr<prd>", "Mrs.": "Mrs<prd>",
+    }
+    for source, target in replacements.items():
+        protected = protected.replace(source, target)
+    protected = re.sub(r"(?<=\d)\.(?=\d)", "<prd>", protected)
+    parts = re.split(r"(?<=[.!?])\s+", protected)
+    return [part.replace("<prd>", ".").strip() for part in parts if part.strip()]
+
+
+def _row_with_pattern(rows: Sequence[Dict[str, Any]], pattern: str) -> Optional[Dict[str, Any]]:
+    regex = re.compile(pattern, flags=re.I)
+    return next((row for row in rows if regex.search(clean_text(row.get("text", "")))), None)
+
+
+def _exact_match_text(row: Optional[Dict[str, Any]], pattern: str) -> str:
+    if not row:
+        return ""
+    match = re.search(pattern, clean_text(row.get("text", "")), flags=re.I)
+    return clean_text(match.group(0)) if match else ""
+
+
+def _context_tokens_from_title(title_text: str) -> Set[str]:
+    low = normalised(title_text)
+    stop = {
+        "impact", "effect", "effects", "effective", "planning", "control", "procurement",
+        "activities", "activity", "study", "analysis", "assessment", "relationship", "role",
+        "firm", "firms", "company", "companies", "organisation", "organization", "of", "a",
+        "the", "in", "on", "and", "among", "within",
+    }
+    return {
+        token for token in re.findall(r"[a-z][a-z-]{2,}", low)
+        if token not in stop and len(token) >= 4
+    }
+
+
+def _cited_sentences(value: str) -> List[str]:
+    return [sentence for sentence in _sentences(value) if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", sentence)]
+
+
+def _actual_spelling_variants(text: str) -> Dict[str, List[str]]:
+    families = {
+        "organisation": (r"\borganis(?:ation|ations|e|ed|es|ing)\b", r"\borganiz(?:ation|ations|e|ed|es|ing)\b"),
+        "recognise": (r"\brecognis(?:e|ed|es|ing|ation)\b", r"\brecogniz(?:e|ed|es|ing|ation)\b"),
+        "behaviour": (r"\bbehaviou?r(?:s|al)?\b", r"\bbehavior(?:s|al)?\b"),
+        "labour": (r"\blabour\b", r"\blabor\b"),
+        "maximise": (r"\bmaximis(?:e|ed|es|ing|ation)\b", r"\bmaximiz(?:e|ed|es|ing|ation)\b"),
+        "generalise": (r"\bgeneralis(?:e|ed|es|ing|ation)\b", r"\bgeneraliz(?:e|ed|es|ing|ation)\b"),
+    }
+    output: Dict[str, List[str]] = {"british": [], "american": []}
+    for _label, (british, american) in families.items():
+        output["british"].extend(match.group(0) for match in re.finditer(british, text, flags=re.I))
+        output["american"].extend(match.group(0) for match in re.finditer(american, text, flags=re.I))
+    output["british"] = list(dict.fromkeys(output["british"]))
+    output["american"] = list(dict.fromkeys(output["american"]))
+    return output
+
+
+def _scope_is_complete(value: Any) -> bool:
+    key = normalised(str(value or "chapter"))
+    return key in {"full thesis", "full_thesis", "complete thesis", "complete dissertation", "complete project"}
+
 def hard_chapter_one_supervisory_issues(
     paragraphs: Sequence[Dict[str, Any]],
     *,
     academic_level: Any = "",
+    submission_scope: Any = "chapter",
 ) -> List[Dict[str, Any]]:
     """Evidence-anchored Chapter One checks that must not depend on model recall.
 
@@ -579,6 +651,94 @@ def hard_chapter_one_supervisory_issues(
     issues: List[Dict[str, Any]] = []
 
     title_text = _section_plain(title_rows)
+
+    # High-confidence document hygiene checks. These catch unresolved supervisor
+    # instructions and visibly incomplete citations before the model review.
+    instruction_row = next((
+        row for row in current
+        if not row.get("is_heading")
+        and len(clean_text(row.get("text", "")).split()) <= 35
+        and re.search(
+            r"^(?:delete|remove|revise|rewrite|correct|insert|add|change)\b.{0,140}\b(?:work|chapter|section|numbering|style|heading|paragraph)\b|\bthis is not [A-Z][A-Za-z .'-]{1,40} style\b",
+            clean_text(row.get("text", "")),
+            flags=re.I,
+        )
+    ), None)
+    if instruction_row:
+        instruction_text = clean_text(instruction_row.get("text", ""))
+        issues.append(_issue(
+            code="DOC-UNRESOLVED-SUPERVISOR-INSTRUCTION",
+            section=source_section(instruction_row) or "Chapter One",
+            title="An unresolved supervisor or editor instruction remains in the academic text",
+            assessment=f"The sentence ‘{instruction_text}’ reads as an editing instruction rather than part of the student's scholarly argument.",
+            consequence="Leaving supervisor instructions in the body makes the chapter look unfinished and may cause the instruction to be mistaken for the student's own text.",
+            action="Remove the instruction from the academic narrative, implement the intended formatting correction where appropriate, and inspect the full document for other embedded review notes.",
+            anchor=instruction_row,
+            category="document_completeness",
+            severity="major",
+            quote=instruction_text,
+        ))
+
+    incomplete_citation_row = next((
+        row for row in current
+        if re.search(r"\([A-Z][A-Za-z'’\-]+(?:\s+et\s+al\.?)?\s*,?\s*$", clean_text(row.get("text", "")))
+        or (
+            clean_text(row.get("text", "")).count("(") > clean_text(row.get("text", "")).count(")")
+            and re.search(r"\([A-Z][A-Za-z'’\-]+\s*,", clean_text(row.get("text", "")))
+        )
+    ), None)
+    if incomplete_citation_row:
+        incomplete_quote = _exact_match_text(incomplete_citation_row, r"\([A-Z][A-Za-z'’\-]+(?:\s+et\s+al\.?)?\s*,?\s*$") or clean_text(incomplete_citation_row.get("text", ""))[-80:]
+        issues.append(_issue(
+            code="CIT-INCOMPLETE-PARENTHETICAL",
+            section=source_section(incomplete_citation_row) or "Chapter One",
+            title="A sentence ends with an incomplete parenthetical citation",
+            assessment=f"The citation fragment ‘{incomplete_quote}’ has no complete year and closing parenthesis, so the sentence and source attribution are visibly unfinished.",
+            consequence="An incomplete citation prevents source verification and may also conceal missing text at the end of the sentence.",
+            action="Restore the complete sentence and citation from the original source, including the author, year and closing punctuation, then verify the corresponding reference-list entry.",
+            anchor=incomplete_citation_row,
+            category="citations_and_sources",
+            severity="major",
+            quote=incomplete_quote,
+        ))
+
+    # Detect unstable construct terminology in the same Chapter One. The check
+    # is deliberately restricted to distinctive phrases rather than generic
+    # mentions of procurement.
+    control_procurement_row = _row_with_pattern(current, r"\bcontrol procurements?\b")
+    if control_procurement_row and re.search(r"\bplanning and control\b", full_text, flags=re.I):
+        exact_construct = _exact_match_text(control_procurement_row, r"\bcontrol procurements?\b")
+        issues.append(_issue(
+            code="B1-CONSTRUCT-TERMINOLOGY-SHIFT",
+            section=source_section(control_procurement_row) or "Background to the Study",
+            title="The chapter changes the name and meaning of a principal construct",
+            assessment=f"The work moves from ‘planning and control’ to ‘{exact_construct}’ without explaining whether these expressions denote the same construct, a procurement process or a different variable.",
+            consequence="Unstable construct names weaken the title, purpose, objectives, instrument design and later interpretation because the reader cannot tell exactly what is being measured.",
+            action="Select one conceptually accurate term for each construct, define it once, and use the same wording consistently in the title, background, purpose, objectives, questions and methodology. If procurement control and contract control are different, separate and define them explicitly.",
+            anchor=control_procurement_row,
+            category="conceptual_clarity",
+            severity="major",
+            quote=exact_construct,
+        ))
+
+    # Detect singular/plural unit-of-analysis drift, such as 'a manufacturing
+    # firm' in the title and 'manufacturing firms' in the scope or questions.
+    singular_phrase = bool(re.search(r"\ba\s+[a-z -]{0,30}firm\b", title_text + " " + purpose_text, flags=re.I))
+    plural_scope_row = _row_with_pattern(current, r"\bmanufacturing firms\b|\bcompanies\b|\borganisations\b")
+    if singular_phrase and plural_scope_row and re.search(r"\bmanufacturing firms\b", full_text, flags=re.I):
+        plural_quote = _exact_match_text(plural_scope_row, r"\bmanufacturing firms\b") or "manufacturing firms"
+        issues.append(_issue(
+            code="B3-UNIT-OF-ANALYSIS-SINGULAR-PLURAL",
+            section=source_section(plural_scope_row) or "Chapter One",
+            title="The unit and scope of the study shift between one firm and several firms",
+            assessment=f"The title or purpose frames the study around a single manufacturing firm, while the marked passage refers to ‘{plural_quote}’ in the plural.",
+            consequence="This inconsistency changes the population, sampling frame, generalisability and level of analysis that the methodology must support.",
+            action="Decide whether the study concerns one identified manufacturing firm or multiple firms. Apply that decision consistently to the title, purpose, objectives, questions, scope, limitations and methodology.",
+            anchor=plural_scope_row,
+            category="cross_section_coherence",
+            severity="major",
+            quote=plural_quote,
+        ))
 
     if background:
         low_bg = normalised(bg_text)
@@ -695,6 +855,59 @@ def hard_chapter_one_supervisory_issues(
                 category="research_gap_and_problem",
             ))
 
+        # Evidence from another sector or country does not establish the
+        # problem in the declared study context. Require at least one cited
+        # sentence tied to the title's distinctive setting or sector.
+        title_low = normalised(title_text)
+        context_markers: List[str] = []
+        for phrase in ("manufacturing", "ghana", "africa", "university", "bank", "hospital", "school", "public sector", "private sector"):
+            if phrase in title_low:
+                context_markers.append(phrase)
+        cited_problem_sentences = _cited_sentences(problem_text)
+        if context_markers and cited_problem_sentences and not any(
+            any(marker in normalised(sentence) for marker in context_markers)
+            for sentence in cited_problem_sentences
+        ):
+            foreign_anchor = next((
+                row for row in problem
+                if re.search(r"\b(?:Kenya|Nigeria|Tanzania|South Africa|India|China|Europe|Asia|financial sector)\b", clean_text(row.get("text", "")), flags=re.I)
+            ), _first_substantive(problem))
+            issues.append(_issue(
+                code="B2-CONTEXT-EVIDENCE-MISMATCH",
+                section="Statement of the Problem",
+                title="The evidence used does not establish the problem in the declared study context",
+                assessment="The section cites evidence from another country or sector, but it does not provide comparable evidence showing the nature or seriousness of the problem in the manufacturing context stated in the title.",
+                consequence="Evidence from a different setting can motivate the topic, but it cannot by itself prove that the same problem exists in the selected firm or sector.",
+                action="Add recent evidence from the selected manufacturing firm, the relevant Ghanaian manufacturing sector or an authoritative local source. Use the external evidence only for comparison, then state the unresolved local problem directly.",
+                anchor=foreign_anchor,
+                category="research_gap_and_problem",
+                severity="major",
+                quote=clean_text(foreign_anchor.get("text", "")) if foreign_anchor else "",
+            ))
+
+        unsupported_gap_row = next((
+            row for row in problem
+            if re.search(r"\b(?:scanty literature|little is known|few studies|not received much attention|has not received much attention|limited studies)\b", clean_text(row.get("text", "")), flags=re.I)
+        ), None)
+        if unsupported_gap_row:
+            passage = clean_text(unsupported_gap_row.get("text", ""))
+            # A defensible literature gap needs nearby synthesis rather than a
+            # bare assertion. One citation to a practical problem is not enough.
+            if len(re.findall(r"\([^)]*(?:19|20)\d{2}[^)]*\)", passage)) < 2:
+                gap_quote = _exact_match_text(unsupported_gap_row, r"\b(?:scanty literature|little is known|few studies|not received much attention|has not received much attention|limited studies)\b")
+                issues.append(_issue(
+                    code="B2-UNSUPPORTED-LITERATURE-GAP",
+                    section="Statement of the Problem",
+                    title="The claimed research gap is asserted rather than demonstrated",
+                    assessment=f"The wording ‘{gap_quote}’ claims that the literature is limited, but the paragraph does not synthesise the relevant studies to show exactly what they examined and what remains unresolved.",
+                    consequence="A generic scarcity claim does not establish an empirical, contextual or methodological gap and can be challenged easily during examination.",
+                    action="Replace the unsupported scarcity claim with a concise synthesis of the closest studies, identify their contexts, variables and methods, and state the precise issue they did not resolve for the present study.",
+                    anchor=unsupported_gap_row,
+                    category="research_gap_and_problem",
+                    severity="major",
+                    quote=gap_quote,
+                ))
+
     if purpose and objectives:
         missing_constructs = omitted_objective_focuses(purpose_text, objectives_text)
         if missing_constructs:
@@ -709,6 +922,51 @@ def hard_chapter_one_supervisory_issues(
                 category="objectives_questions_hypotheses",
                 severity="critical" if degree in {"research_masters", "professional_doctorate", "phd"} else "major",
             ))
+        purpose_low = normalised(purpose_text)
+        objectives_low = normalised(objectives_text)
+        purpose_extra = any(term in purpose_low for term in ("suggest measures", "recommend measures", "propose measures", "develop strategies"))
+        objectives_cover_extra = any(term in objectives_low for term in ("measure", "recommend", "strategy", "intervention", "solution"))
+        objective_focuses_missing_from_purpose = [
+            label for label, terms in (
+                ("current practices", ("current practice", "existing practice")),
+                ("challenges", ("challenge", "constraint", "barrier")),
+            )
+            if any(term in objectives_low for term in terms) and not any(term in purpose_low for term in terms)
+        ]
+        if purpose_extra or objective_focuses_missing_from_purpose:
+            details: List[str] = []
+            if purpose_extra and not objectives_cover_extra:
+                details.append("the purpose promises suggested measures, but no objective or question investigates or develops those measures")
+            if objective_focuses_missing_from_purpose:
+                details.append("the objectives introduce " + " and ".join(objective_focuses_missing_from_purpose) + " that are not stated in the purpose")
+            issues.append(_issue(
+                code="B3-PURPOSE-OBJECTIVE-CONTENT-MISMATCH",
+                section="Purpose of the Study",
+                title="The purpose, objectives and questions do not contain the same substantive tasks",
+                assessment="The alignment breaks because " + "; ".join(details) + ".",
+                consequence="The methodology and results cannot be organised coherently when the purpose promises one set of tasks and the objectives require another.",
+                action="Choose the final set of study tasks, state all of them concisely in the purpose, and provide one matching objective and research question for each task. Remove any promised recommendation or measure that will not be generated through a defined analysis.",
+                anchor=_first_substantive(purpose),
+                category="objectives_questions_hypotheses",
+                severity="major",
+                quote=clean_text(_first_substantive(purpose).get("text", "")) if _first_substantive(purpose) else "",
+            ))
+
+        causal_terms = [term for term in ("impact", "effect", "influence", "cause") if term in normalised(title_text + " " + purpose_text + " " + objectives_text)]
+        if causal_terms:
+            issues.append(_issue(
+                code="B3-CAUSAL-CLAIM-STRENGTH",
+                section="Purpose of the Study",
+                title="The study uses causal language that must be justified by the research design",
+                assessment=f"The title, purpose or objectives use terms such as {', '.join(causal_terms[:3])}, which imply more than a simple description or association.",
+                consequence="A cross-sectional survey or descriptive design cannot normally establish causal impact without a defensible identification strategy and appropriate temporal or experimental evidence.",
+                action="Retain causal wording only if the methodology can identify causal effects. Otherwise, revise the title, purpose, objectives and questions to use wording such as association, relationship, perceived effect or contribution, consistent with the actual design.",
+                anchor=_first_substantive(purpose),
+                category="objectives_questions_hypotheses",
+                severity="major",
+                quote=clean_text(_first_substantive(purpose).get("text", "")) if _first_substantive(purpose) else "",
+            ))
+
     if objectives and not questions:
         issues.append(_issue(
             code="B3.3-MISSING-QUESTIONS",
@@ -748,6 +1006,22 @@ def hard_chapter_one_supervisory_issues(
                 anchor=next((row for row in questions if ".?" in clean_text(row.get("text", ""))), _first_substantive(questions)),
                 category="academic_writing",
                 severity="moderate",
+            ))
+
+        grammar_row = _row_with_pattern(questions, r"\bwhat is the (?:current|existing) practices\b")
+        if grammar_row:
+            grammar_quote = _exact_match_text(grammar_row, r"\bwhat is the (?:current|existing) practices[^?]*\?") or clean_text(grammar_row.get("text", ""))
+            issues.append(_issue(
+                code="RQ-SUBJECT-VERB-AGREEMENT",
+                section="Research Questions",
+                title="A research question contains a subject-verb agreement error",
+                assessment=f"The wording ‘{grammar_quote}’ combines the singular verb ‘is’ with the plural noun ‘practices’.",
+                consequence="A grammatical error in a core research question reduces precision and can obscure whether the study examines one practice or several practices.",
+                action="Revise the question to ‘What are the current practices…?’ or recast it around a singular construct, then ensure the corresponding objective uses the same wording.",
+                anchor=grammar_row,
+                category="academic_writing",
+                severity="moderate",
+                quote=grammar_quote,
             ))
 
     if significance:
@@ -842,6 +1116,27 @@ def hard_chapter_one_supervisory_issues(
                 category="chapter_structure",
             ))
 
+    if limitations:
+        low_limitation = normalised(limits_text)
+        scope_only = any(term in low_limitation for term in ("limited to", "generalized to", "generalised to", "other industries", "study area"))
+        methodological_limit = any(term in low_limitation for term in (
+            "access", "response rate", "measurement", "bias", "data quality", "sample size", "time constraint",
+            "recall", "self report", "cross sectional", "missing data", "confidentiality", "non response",
+        ))
+        if scope_only and not methodological_limit:
+            issues.append(_issue(
+                code="B4-LIMITATION-DELIMITATION-CONFUSION",
+                section="Limitation of the Study",
+                title="The limitation section mainly states the study boundary rather than an actual limitation",
+                assessment="The section says the study is restricted to manufacturing firms and may not generalise to other industries. This describes the chosen scope or delimitation more than a methodological constraint encountered by the study.",
+                consequence="Combining scope and limitation prevents the reader from distinguishing deliberate boundaries from conditions that may affect the credibility or interpretation of the findings.",
+                action="Move the deliberate sector and organisational boundaries to a Scope or Delimitation section. In the Limitation section, state only genuine design, data, measurement, sampling or access constraints and explain how each will be managed or considered when interpreting the findings.",
+                anchor=_first_substantive(limitations),
+                category="chapter_structure",
+                severity="moderate",
+                quote=clean_text(_first_substantive(limitations).get("text", "")) if _first_substantive(limitations) else "",
+            ))
+
     if delimitations:
         if re.search(r"\[[^\]]*(insert|provide|complete|specify)[^\]]*\]", delim_text, flags=re.I):
             issues.append(_issue(
@@ -873,18 +1168,65 @@ def hard_chapter_one_supervisory_issues(
                 category="objectives_questions_hypotheses",
             ))
 
-    if any(word in full_text for word in ("behavior", "organization", "labor")) and any(word in full_text for word in ("behaviour", "organisation", "labour")):
-        anchor = next((row for row in current if any(w in clean_text(row.get("text", "")) for w in ("behavior", "organization", "labor"))), _first_substantive(background))
+    spelling = _actual_spelling_variants(full_text)
+    if spelling["british"] and spelling["american"]:
+        american_row = next((
+            row for row in current
+            if any(re.search(rf"\b{re.escape(word)}\b", clean_text(row.get("text", "")), flags=re.I) for word in spelling["american"])
+        ), _first_substantive(background))
+        american_quote = next((
+            word for word in spelling["american"]
+            if american_row and re.search(rf"\b{re.escape(word)}\b", clean_text(american_row.get("text", "")), flags=re.I)
+        ), spelling["american"][0])
         issues.append(_issue(
             code="STYLE-BRITISH-AMERICAN",
-            section=source_section(anchor) if anchor else "Chapter One",
+            section=source_section(american_row) if american_row else "Chapter One",
             title="British and American spelling are mixed in the chapter",
-            assessment="The chapter uses British spellings such as behaviour/organisations and American spellings such as behavior/organization/labor.",
+            assessment=(
+                "The chapter uses confirmed British forms such as "
+                + ", ".join(spelling["british"][:3])
+                + " and confirmed American forms such as "
+                + ", ".join(spelling["american"][:3])
+                + "."
+            ),
             consequence="Mixed spelling conventions reduce editorial consistency and do not meet a polished thesis presentation standard.",
-            action="Choose the required institutional convention and apply it consistently across the chapter, including quoted or adapted text where appropriate.",
-            anchor=anchor,
+            action="Apply formal British English consistently across the chapter, except where an original publication title or direct quotation must retain its source spelling.",
+            anchor=american_row,
             category="academic_writing",
             severity="minor",
+            quote=american_quote,
+        ))
+
+    narrative_et_al_row = _row_with_pattern(current, r"\bet al\s*\(")
+    if narrative_et_al_row:
+        quote = _exact_match_text(narrative_et_al_row, r"\b[A-Z][A-Za-z'’\-]+\s+et al\s*\((?:19|20)\d{2}\)") or _exact_match_text(narrative_et_al_row, r"\bet al\s*\(")
+        issues.append(_issue(
+            code="CIT-ET-AL-PUNCTUATION",
+            section=source_section(narrative_et_al_row) or "Chapter One",
+            title="A narrative citation omits the full stop after ‘al.’",
+            assessment=f"The citation form ‘{quote}’ does not follow the standard narrative author-date form.",
+            consequence="Repeated citation punctuation errors weaken editorial accuracy and can create inconsistent source identification.",
+            action="Revise narrative citations to the required style, for example ‘White et al. (2016)’, and audit the chapter for the same pattern.",
+            anchor=narrative_et_al_row,
+            category="citations_and_sources",
+            severity="minor",
+            quote=quote,
+        ))
+
+    parenthetical_et_al_row = _row_with_pattern(current, r"\([A-Z][A-Za-z'’\-]+,\s*et al\.")
+    if parenthetical_et_al_row:
+        quote = _exact_match_text(parenthetical_et_al_row, r"\([A-Z][A-Za-z'’\-]+,\s*et al\.,?\s*(?:19|20)\d{2}\)") or _exact_match_text(parenthetical_et_al_row, r"\([A-Z][A-Za-z'’\-]+,\s*et al\.")
+        issues.append(_issue(
+            code="CIT-ET-AL-COMMA",
+            section=source_section(parenthetical_et_al_row) or "Chapter One",
+            title="A parenthetical citation contains an unnecessary comma before ‘et al.’",
+            assessment=f"The citation ‘{quote}’ separates the lead author from ‘et al.’ with a comma.",
+            consequence="The malformed citation does not conform to standard author-date formatting.",
+            action="Remove the comma before ‘et al.’ and apply the selected referencing style consistently to all multiple-author citations.",
+            anchor=parenthetical_et_al_row,
+            category="citations_and_sources",
+            severity="minor",
+            quote=quote,
         ))
 
     if references:
@@ -908,7 +1250,9 @@ def hard_chapter_one_supervisory_issues(
 
     # Topic-safe citation/reference and scope checks for any Chapter One topic.
     full_low = normalised(full_text)
-    if not references and len(re.findall(r"\([^)]*(?:19|20)\d{2}[^)]*\)", full_text)) >= 5:
+    scope_key = normalised(str(submission_scope or "chapter"))
+    complete_submission = scope_key in {"full thesis", "full_thesis", "complete thesis", "complete dissertation", "complete project"}
+    if complete_submission and not references and len(re.findall(r"\([^)]*(?:19|20)\d{2}[^)]*\)", full_text)) >= 5:
         cite_anchor = next((row for row in current if re.search(r"\([^)]*(?:19|20)\d{2}[^)]*\)", clean_text(row.get("text", "")))), _first_substantive(background) or _first_substantive(problem))
         issues.append(_issue(
             code="REF-MISSING-LIST",
@@ -954,6 +1298,7 @@ def deterministic_supervisory_checklist_issues(
     *,
     academic_level: Any = "",
     research_approach: Any = "",
+    submission_scope: Any = "chapter",
     max_issues: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Build evidence-anchored issues from the attached supervisory checklist.
@@ -979,7 +1324,7 @@ def deterministic_supervisory_checklist_issues(
     # v1.9.9.1: hard deterministic Chapter One contract. These are added
     # before generic rules so obvious MPhil issues cannot disappear simply
     # because the model, evidence-term scoring or public deduplication missed them.
-    hard_issues = hard_chapter_one_supervisory_issues(current, academic_level=academic_level)
+    hard_issues = hard_chapter_one_supervisory_issues(current, academic_level=academic_level, submission_scope=submission_scope)
     issues.extend(hard_issues)
     hard_chapters = {1} if hard_issues else set()
 

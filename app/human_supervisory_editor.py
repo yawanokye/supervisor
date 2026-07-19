@@ -112,6 +112,19 @@ def _table_reference(row: Dict[str, Any]) -> str:
     return f"{label}: {title}" if title else label
 
 
+def _evidence_locked_finding(row: Dict[str, Any]) -> bool:
+    """Return True for deterministic findings whose evidence and action are authoritative.
+
+    These rows may receive light grammar cleanup, but later editorial passes may
+    not replace their issue, action, anchor or scope with a generic template.
+    """
+    return (
+        _norm(row.get("guidance_type")) == "deterministic supervisory checklist"
+        or _norm(row.get("verification_status")) == "hard deterministic supervisory checklist"
+        or _norm(row.get("finding_id")).startswith("dsc hard ")
+    )
+
+
 def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     chapter = chapter_number(row) or 999
     section = _section_text(row)
@@ -121,6 +134,9 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     missing = _norm(_missing_label(row))
     evidence = primary_evidence(row)
     paragraph = evidence.get("paragraph")
+
+    if _evidence_locked_finding(row):
+        return (chapter, "evidence_locked", _norm(row.get("finding_id")) or paragraph)
 
     if missing:
         return (chapter, "missing_section", missing)
@@ -280,15 +296,17 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
             flags=re.I,
         ):
             return output
-        output["item"] = output["issue_title"] = "The objectives, questions and hypotheses need one consistent analytical structure"
+        mentions_hypotheses = "hypoth" in _norm(concrete_text)
+        alignment_parts = "objectives, questions and hypotheses" if mentions_hypotheses else "purpose, objectives and research questions"
+        output["item"] = output["issue_title"] = f"The {alignment_parts} need one consistent analytical structure"
         output["comment"] = output["assessment"] = (
-            "The study combines descriptive and inferential aims, but the corresponding questions or hypotheses are not organised consistently."
+            "The study combines different analytical aims, but the corresponding elements are not organised consistently."
         )
         output["academic_consequence"] = (
             "This makes it difficult to determine which analysis will answer each objective and what type of conclusion the design can support."
         )
         output["required_action"] = (
-            "Classify each objective as descriptive, associational, predictive or causal, then provide a matching research question or hypothesis and an appropriate analysis."
+            "Classify each objective as descriptive, associational, predictive or causal, then provide a matching research question and, only where the design requires it, a hypothesis and appropriate analysis."
         )
         if joined:
             output["illustrative_guidance"] = (
@@ -414,7 +432,8 @@ def consolidate_root_causes(rows: Sequence[Dict[str, Any]], terms: Sequence[str]
                 _clean(row.get("finding_id")) for row in group if _clean(row.get("finding_id"))
             ]
             merged["root_cause_consolidated"] = True
-        merged = _special_root_cause_rewrite(merged, key, terms)
+        if not _evidence_locked_finding(merged):
+            merged = _special_root_cause_rewrite(merged, key, terms)
         output.append(merged)
     return output
 
@@ -1144,11 +1163,16 @@ def add_human_judgement_findings(
         _language_editing_finding(review),
     ]
     existing_ids = {_norm(row.get("finding_id")) for row in output if _norm(row.get("finding_id"))}
+    existing_codes = {_norm(row.get("checklist_code")) for row in output if _norm(row.get("checklist_code"))}
     for finding in additions:
         if not finding:
             continue
         fid = _norm(finding.get("finding_id"))
         if fid and fid in existing_ids:
+            continue
+        if fid == "human language editing" and "style british american" in existing_codes:
+            continue
+        if fid == "human scope consistency" and "b3 unit of analysis singular plural" in existing_codes:
             continue
         new_key = _root_cause_key(finding)
         if any(
@@ -1577,11 +1601,12 @@ def edit_findings_for_human_review(
             current[field] = _grammar_polish(current.get(field))
 
         current = _scrub_cross_domain_contamination(current)
-        current = _contextualise_finding(current, review, terms)
+        if not _evidence_locked_finding(current):
+            current = _contextualise_finding(current, review, terms)
 
-        missing_example = _missing_section_human_example(current, terms, review)
-        if missing_example:
-            current["illustrative_guidance"] = missing_example
+            missing_example = _missing_section_human_example(current, terms, review)
+            if missing_example:
+                current["illustrative_guidance"] = missing_example
 
         # Never export an excerpt that ends in the middle of a word. Exact
         # sentence anchors are preferred, but a word-safe excerpt remains useful

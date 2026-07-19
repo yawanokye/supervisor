@@ -28,8 +28,8 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "2.0.0-exact-anchor-grouping"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.0.0-professional-supervisory-review"
+ANNOTATION_EXPORT_VERSION = "2.1.0-evidence-ledger-exact-anchor-grouping"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.1.0-professional-evidence-ledger-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -259,9 +259,14 @@ def _merge_comments_by_section() -> bool:
 
 
 def _export_one_comment_per_finding() -> bool:
+    # Professional v2.1 rule: findings anchored to the same exact sentence or
+    # paragraph must share one numbered native comment box. A deployment can
+    # restore the legacy behaviour only by explicitly disabling this rule.
+    if _env_bool("VPROF_GROUP_SAME_ANCHOR_COMMENTS", True):
+        return False
     if _merge_comments_by_section():
         return False
-    return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", True)
+    return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", False)
 
 
 def _split_related_concerns() -> bool:
@@ -282,6 +287,20 @@ def _max_items_per_native_comment() -> int:
         return max(1, min(12, int(raw)))
     except ValueError:
         return 8
+
+
+def _grouped_comment_max_chars() -> int:
+    """Allow a grouped native comment to retain every numbered action.
+
+    The per-finding limit remains concise, but a sentence may legitimately have
+    several distinct corrections. The grouped box therefore needs a larger
+    ceiling so later actions are not silently cut off.
+    """
+    raw = os.getenv("VPROF_GROUPED_COMMENT_MAX_CHARS") or "4200"
+    try:
+        return max(comment_max_chars(), min(6000, int(raw)))
+    except ValueError:
+        return max(comment_max_chars(), 4200)
 
 
 def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
@@ -595,101 +614,46 @@ def _shorten_comment(value: str, limit: Optional[int] = None) -> str:
     return sentence_safe_trim(value, effective_limit)
 
 def _comment_body(row: Dict[str, Any]) -> str:
+    """Build one evidence-grounded, action-led native supervisor comment."""
     safe_row = sanitise_finding_row(row)
     if safe_row is None:
         return ""
     row = safe_row
-
-    # The final editorial pass prepares a concise natural comment. Use it
-    # directly instead of rebuilding the same issue/why/action template here.
-    human_comment = _sanitise_guidance(row.get("student_comment", ""))
-
-    reference = clean_text(
-        row.get("reference_label")
-        or row.get("section_reference")
-        or row.get("section")
-    )
-    if not row.get("table_reference"):
-        table_evidence = next(
-            (item for item in row.get("evidence") or [] if item.get("table_number")),
-            None,
-        )
-        if table_evidence:
-            number = clean_text(table_evidence.get("table_number", ""))
-            title = clean_text(table_evidence.get("table_title", ""))
-            table_reference = f"Table {number}" if number else "Table"
-            if title:
-                table_reference += f": {title}"
-            reference = f"{reference}, {table_reference}" if reference else table_reference
-
-    if human_comment:
-        # Exact paragraph anchors already provide location. Prefix table
-        # comments only. Missing sections are placed at their logical insertion
-        # point, so repeating the preceding section name sounds mechanical.
-        table_comment = bool(row.get("table_reference"))
-        body = f"{reference}: {human_comment}" if reference and table_comment else human_comment
-        body = professionalise_reviewer_language(body, row.get("_academic_level") or row.get("academic_level"))
-        return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
-
-    issue = _sanitise_guidance(row.get("item", ""))
-    section_label = clean_text(row.get("section_reference") or row.get("section") or "")
-    if (reference and normalised(issue) == normalised(reference)) or (section_label and normalised(issue) == normalised(section_label)):
-        issue = ""
-    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
-    consequence = _sanitise_guidance(
+    issue = _sanitise_guidance(row.get("item", "") or row.get("issue_title", ""))
+    action = _normalise_action_start(_sanitise_guidance(row.get("required_action", "")))
+    assessment = _sanitise_guidance(row.get("assessment", "") or row.get("comment", ""))
+    reason = _sanitise_guidance(
         row.get("academic_consequence", "")
-        or row.get("consequence", "")
         or row.get("why_it_matters", "")
     )
-    action = _sanitise_guidance(row.get("required_action", ""))
+    verification = _sanitise_guidance(row.get("verification_test", "") or row.get("verification", ""))
     example = _sanitise_guidance(row.get("illustrative_guidance", ""))
-    if not example:
-        example = _sanitise_guidance(context_specific_example(row))
-    example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
+    table_reference = clean_text(row.get("table_reference") or "")
+    section_reference = clean_text(row.get("section_reference") or row.get("section") or "")
+    reference = section_reference if table_reference and table_reference in section_reference else table_reference
 
-    heading = reference or "Supervisor review"
     parts: List[str] = []
-
     if issue:
-        parts.append(issue.rstrip(" .") + ".")
-    if assessment:
-        parts.append(assessment.rstrip(" .") + ".")
-    if consequence and normalised(consequence) not in normalised(assessment):
-        parts.append(consequence.rstrip(" .") + ".")
-
+        parts.append("Issue: " + issue.rstrip(" .") + ".")
+    if assessment and normalised(assessment) != normalised(issue):
+        parts.append("Problem identified: " + assessment.rstrip(" .") + ".")
     if action:
-        action_text = _normalise_action_start(action)
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix|interpret|qualify|separate|clean)\b", action_text, flags=re.I):
-            parts.append(action_text + ".")
-        else:
-            parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
-    elif assessment:
-        parts.append("Revise the marked passage so the academic point is clear, properly supported and aligned with the section purpose.")
+        parts.append("Action required: " + action.rstrip(" .") + ".")
+    elif reason:
+        parts.append("Action required: Revise the marked passage so that the academic point is precise, supported and aligned with the section purpose.")
+    if reason:
+        parts.append("Why this matters: " + reason.rstrip(" .") + ".")
+    if verification:
+        parts.append("Verification: " + verification.rstrip(" .") + ".")
     if example:
-        example_text = _normalise_action_start(example)
-        if example_text:
-            parts.append("For example, " + example_text[0].lower() + example_text[1:] + ".")
-
-    deduped_parts: List[str] = []
-    seen_parts = set()
-    for part in parts:
-        key = normalised(part)
-        if not key or key in seen_parts:
-            continue
-        if any(_comment_similarity(key, existing) >= 0.88 for existing in seen_parts):
-            continue
-        seen_parts.add(key)
-        deduped_parts.append(part)
-    parts = deduped_parts
-
-    body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
-    # Manual-confirmation and provider-failure status belongs in the internal
-    # audit trail, never in a student's Word comment. Student-facing comments
-    # remain developmental but must read as natural supervision, not as a
-    # labelled template.
-    body = _strip_visible_labels(body)
+        example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I).strip(" .")
+        if example:
+            parts.append("Example: " + example[0].upper() + example[1:] + ".")
+    body = " ".join(parts)
+    if reference:
+        body = reference + ": " + body
     body = professionalise_reviewer_language(body, row.get("_academic_level") or row.get("academic_level"))
-    return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
+    return public_text(_shorten_comment(body, comment_max_chars()), reject_placeholders=True, reject_incomplete=True)
 
 
 _LEVEL_PHRASE_RE = re.compile(
@@ -719,29 +683,17 @@ def _split_example(value: str) -> Tuple[str, str]:
 
 def _compact_group_item(value: str) -> Tuple[str, str]:
     value = _strip_comment_reference(value)
-    text = _strip_visible_labels(
-        public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+    text = public_text(
+        value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True
     ).strip("[] ").rstrip(" ;.")
     text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
     text = _remove_level_repetition(text)
     core, example = _split_example(text)
-    # When a grouped comment is anchored on a section heading, repeating
-    # "Problem Statement:" or "Introduction:" inside every numbered item looks
-    # mechanical. Remove only short heading prefixes; the section location is
-    # already provided by the Word anchor and the report.
-    core = re.sub(
-        r"^.{2,180}:\s*(?=(?:Add|Align|Ask|Avoid|Check|Clarify|Clean|Correct|Define|Develop|Ensure|Explain|Expand|Formulate|Interpret|Insert|Link|Provide|Qualify|Remove|Replace|Revise|Rewrite|Separate|Show|State|Support|Use|Verify)\b)",
-        "",
-        core,
-        flags=re.I,
-    ).strip()
-    core = re.sub(r"^(?:\d+(?:\.\d+){0,4}\s*)?[A-Za-z][A-Za-z0-9/&() \-]{2,90}:\s*", "", core).strip()
-    # Keep the full local guidance where possible. The comment is already
-    # grouped by the exact evidence passage, and using only the first two
-    # sentences can accidentally cut decimal headings such as 4.2 or table
-    # numbers such as Table 4.1.
-    core = _shorten_comment(core, 560).rstrip(" .")
-    example = _shorten_comment(example, 320).rstrip(" .") if example else ""
+    # Preserve Issue, Action required, Why this matters and Verification labels.
+    # These make the correction immediately implementable and ensure that the
+    # native comment carries the same substance as the readiness report.
+    core = _shorten_comment(core, 720).rstrip(" .")
+    example = _shorten_comment(example, 240).rstrip(" .") if example else ""
     return core, example
 
 
@@ -812,8 +764,8 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
             continue
         if key in seen:
             continue
-        if any(_comment_similarity(key, existing_key) >= 0.74 for existing_key in seen):
-            continue
+        # Distinct canonical findings on the same sentence must remain as
+        # separately numbered actions. Only exact duplicates are suppressed.
         seen.add(key)
         unique.append((ref_no, item.rstrip(" .") + "."))
         if example and all(_comment_similarity(normalised(example), normalised(existing)) < 0.60 for existing in examples):
@@ -830,7 +782,7 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
     if examples:
         example = examples[0]
         body = body.rstrip() + " For example, " + example[0].lower() + example[1:]
-    return _shorten_comment(body, comment_max_chars())
+    return _shorten_comment(body, _grouped_comment_max_chars())
 
 
 def _is_synthetic_section_heading(value: str) -> bool:
@@ -2115,45 +2067,37 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
 
 
 def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
-    """Return a detailed blue correction that mirrors the academic finding."""
+    """Return the same action-led finding used by the native comment and report."""
     safe_row = sanitise_finding_row(row)
     if safe_row is None:
         return ""
     row = safe_row
-    label = _canonical_group_label(row)
     issue = _sanitise_guidance(row.get("item", "") or row.get("issue_title", ""))
-    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
-    consequence = _sanitise_guidance(
-        row.get("academic_consequence", "") or row.get("consequence", "") or row.get("why_it_matters", "")
+    action = _normalise_action_start(_sanitise_guidance(row.get("required_action", "")) or _strip_comment_reference(comment))
+    assessment = _sanitise_guidance(row.get("assessment", "") or row.get("comment", ""))
+    reason = _sanitise_guidance(
+        row.get("academic_consequence", "")
+        or row.get("why_it_matters", "")
     )
-    action = _sanitise_guidance(row.get("required_action", ""))
-    if not action:
-        action = _strip_comment_reference(comment)
-    example = _sanitise_guidance(row.get("illustrative_guidance", "")) or _sanitise_guidance(context_specific_example(row))
-    example = re.sub(r"^(?:for\s+)?(?:context\s+)?example[:,]?\s*", "", example, flags=re.I).strip(" .")
-
+    verification = _sanitise_guidance(row.get("verification_test", "") or row.get("verification", ""))
+    example = _sanitise_guidance(row.get("illustrative_guidance", ""))
     parts: List[str] = []
-    if label and issue:
-        parts.append(f"{label}: {issue.rstrip(' .')}.")
-    elif issue:
-        parts.append(issue.rstrip(" .") + ".")
-    elif label:
-        parts.append(f"{label} requires revision.")
-    if assessment and normalised(assessment) not in normalised(" ".join(parts)):
-        parts.append(assessment.rstrip(" .") + ".")
-    if consequence and normalised(consequence) not in normalised(" ".join(parts)):
-        parts.append(consequence.rstrip(" .") + ".")
-
+    if issue:
+        parts.append("Issue: " + issue.rstrip(" .") + ".")
+    if assessment and normalised(assessment) != normalised(issue):
+        parts.append("Problem identified: " + assessment.rstrip(" .") + ".")
     if action:
-        parts.append(_normalise_action_start(action).rstrip(" .") + ".")
-    else:
-        parts.append("Revise the marked passage so that the claim is clear, evidence-supported and aligned with the chapter purpose.")
+        parts.append("Action required: " + action.rstrip(" .") + ".")
+    if reason:
+        parts.append("Why this matters: " + reason.rstrip(" .") + ".")
+    if verification:
+        parts.append("Verification: " + verification.rstrip(" .") + ".")
     if example:
-        example = _normalise_action_start(example).rstrip(" .")
-        parts.append("For example, " + example[0].lower() + example[1:] + ".")
-
+        example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I).strip(" .")
+        if example:
+            parts.append("For example, " + example[0].lower() + example[1:] + ".")
     text = professionalise_reviewer_language(" ".join(parts), row.get("_academic_level") or row.get("academic_level"))
-    return public_text(_shorten_comment(text, 2000), reject_placeholders=True, reject_incomplete=True)
+    return public_text(_shorten_comment(text, 1100), reject_placeholders=True, reject_incomplete=True)
 
 
 
@@ -2338,14 +2282,14 @@ def _build_grouped_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
         if _is_missing_section_finding(row):
             raw_missing_comment = _missing_section_bottom_comment(row) or _comment_body(row)
             if raw_missing_comment:
                 reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
+            continue
+        if row.get("annotation_eligible") is False:
             continue
         raw_comment = _comment_body(row)
         if not raw_comment:
@@ -2510,10 +2454,19 @@ def build_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
+        is_missing_section = _is_missing_section_finding(row)
         comment = _comment_body(row)
-        if not comment:
+        if is_missing_section:
+            if comment:
+                try:
+                    reference_number = int(row.get("finding_number"))
+                except (TypeError, ValueError):
+                    reference_number = 0
+                if reference_number:
+                    numbered_rows.append((reference_number, row, comment))
+            missing_section_rows.append(row)
+            continue
+        if row.get("annotation_eligible") is False or not comment:
             continue
         try:
             reference_number = int(row.get("finding_number"))
@@ -2521,7 +2474,6 @@ def build_annotated_docx(
             reference_number = 0
         if reference_number:
             numbered_rows.append((reference_number, row, comment))
-        is_missing_section = _is_missing_section_finding(row)
         comment = _with_comment_reference(reference_number, comment) if reference_number else comment
         evidence = [
             item for item in (row.get("evidence") or [])

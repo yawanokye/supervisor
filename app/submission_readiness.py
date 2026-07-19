@@ -100,7 +100,7 @@ def _analysis_requirement(row: Mapping[str, Any], number: int) -> Dict[str, Any]
 
 def build_supervisory_readiness(review: Dict[str, Any]) -> Dict[str, Any]:
     rows = [
-        row for row in review.get("academic_findings") or []
+        row for row in (review.get("canonical_findings") or review.get("academic_findings") or [])
         if row.get("status") not in {"meets_requirement", "not_applicable"}
     ]
     severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
@@ -122,10 +122,11 @@ def build_supervisory_readiness(review: Dict[str, Any]) -> Dict[str, Any]:
             "priority": _priority(row.get("severity") or "moderate"),
             "severity": _clean(row.get("severity") or "moderate"),
             "location": _location(row),
+            "text_requiring_attention": _trim(row.get("exact_source_text") or row.get("problematic_quote"), 360),
             "issue": issue,
             "specific_action": action,
             "why_it_matters": _trim(row.get("academic_consequence") or row.get("comment") or row.get("assessment"), 440),
-            "verification": _verification(row),
+            "verification": _trim(row.get("verification_test") or _verification(row), 440),
         })
         if _is_analysis_action(row):
             analysis_actions.append(_analysis_requirement(row, int(row.get("finding_number") or index)))

@@ -759,20 +759,20 @@ def _add_supervisory_readiness_section(
             "The supervisor should still confirm institutional formatting, source files and final submission requirements."
         )
     else:
-        table = doc.add_table(rows=1, cols=5)
+        table = doc.add_table(rows=1, cols=6)
         table.style = "Table Grid"
         table.autofit = False
         header = table.rows[0]
         _set_repeat_table_header(header)
-        widths = (1.05, 1.4, 2.45, 2.45, 2.05)
+        widths = (0.9, 1.75, 1.75, 2.15, 1.95, 1.75)
         for cell, width in zip(header.cells, widths):
             _set_cell_width(cell, width)
             _set_cell_shading(cell, BRAND)
         for cell, text in zip(
             header.cells,
-            ("Priority", "Location", "Specific action required", "Why this must be corrected", "How to verify completion"),
+            ("Priority", "Exact location and text", "Problem identified", "Action required", "Why it matters", "How to verify completion"),
         ):
-            _set_cell_text(cell, text, True, "FFFFFF", 8.0)
+            _set_cell_text(cell, text, True, "FFFFFF", 7.8)
         for index, action in enumerate(actions[:100]):
             row = table.add_row()
             _prevent_row_split(row)
@@ -780,11 +780,16 @@ def _add_supervisory_readiness_section(
                 _set_cell_width(cell, width)
                 if index % 2:
                     _set_cell_shading(cell, "F8FAFC")
-            _set_cell_text(row.cells[0], action.get("priority"), True, BRAND, 7.7)
-            _set_cell_text(row.cells[1], action.get("location"), False, MUTED, 7.7)
-            _set_cell_text(row.cells[2], action.get("specific_action"), False, INK, 7.7)
-            _set_cell_text(row.cells[3], action.get("why_it_matters"), False, INK, 7.7)
-            _set_cell_text(row.cells[4], action.get("verification"), False, INK, 7.7)
+            exact = _clean(action.get("text_requiring_attention"))
+            location_text = _clean(action.get("location"))
+            if exact:
+                location_text = location_text + "\n\nText: “" + _compact_sentence(exact, 240) + "”"
+            _set_cell_text(row.cells[0], action.get("priority"), True, BRAND, 7.3)
+            _set_cell_text(row.cells[1], location_text, False, MUTED, 7.3)
+            _set_cell_text(row.cells[2], action.get("issue"), False, INK, 7.3)
+            _set_cell_text(row.cells[3], action.get("specific_action"), False, INK, 7.3)
+            _set_cell_text(row.cells[4], action.get("why_it_matters"), False, INK, 7.3)
+            _set_cell_text(row.cells[5], action.get("verification"), False, INK, 7.3)
 
     statistical = readiness.get("statistical_assurance") or {}
     if statistical:

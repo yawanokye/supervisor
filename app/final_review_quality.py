@@ -10,6 +10,7 @@ from .document_parser import clean_text, normalised
 from .finding_order import chapter_number, order_and_number_rows, primary_evidence
 from .student_friendly_review import make_finding_student_friendly
 from .human_supervisory_editor import edit_findings_for_human_review
+from .evidence_ledger import evidence_ledger_rows
 
 
 _LEVEL_SENTENCE_RE = re.compile(
@@ -478,10 +479,10 @@ def _merge_rows(primary: Dict[str, Any], duplicate: Dict[str, Any]) -> Dict[str,
 
 def _consolidate(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     try:
-        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.82"))
+        threshold = float(os.getenv("VPROF_COMMENT_SIMILARITY_THRESHOLD", "0.92"))
     except (TypeError, ValueError):
-        threshold = 0.82
-    threshold = max(0.80, min(0.95, threshold))
+        threshold = 0.92
+    threshold = max(0.90, min(0.98, threshold))
     kept: List[Dict[str, Any]] = []
     positions: Dict[Tuple[Any, ...], List[int]] = {}
     for row in rows:
@@ -719,6 +720,14 @@ def _ensure_export_anchor(row: Dict[str, Any], review: Dict[str, Any]) -> Dict[s
     return output
 
 
+def _is_evidence_locked(row: Dict[str, Any]) -> bool:
+    return (
+        _norm(row.get("guidance_type")) == "deterministic supervisory checklist"
+        or _norm(row.get("verification_status")) == "hard deterministic supervisory checklist"
+        or _norm(row.get("finding_id")).startswith("dsc hard ")
+    )
+
+
 def _raw_rows(review: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for source_key in ("academic_findings", "alignment_results", "revision_results"):
@@ -741,10 +750,21 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
         return [dict(row) for row in review.get("canonical_findings") or []]
     level = (review.get("summary") or {}).get("academic_level")
     terms = _study_terms(review)
+    runtime_paragraphs = _runtime_rows(review)
+    summary = review.get("summary") or {}
+    raw_rows = evidence_ledger_rows(_raw_rows(review), runtime_paragraphs, summary)
     polished: List[Dict[str, Any]] = []
-    for row in _raw_rows(review):
+    for row in raw_rows:
         row = _attach_runtime_evidence(row, review)
-        row = make_finding_student_friendly(row, level)
+        if _is_evidence_locked(row):
+            # Preserve the exact issue, action and scope produced by the
+            # evidence-based deterministic contract. Later stages may improve
+            # grammar, but may not replace it with a generic template.
+            row = dict(row)
+            row.setdefault("item", _clean(row.get("issue_title")))
+            row.setdefault("comment", _clean(row.get("assessment")))
+        else:
+            row = make_finding_student_friendly(row, level)
         row = _polish_row(row, review, terms)
         if row is not None:
             polished.append(row)
@@ -754,6 +774,9 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
     # removes irrelevant examples, adds conservative context checks and prepares
     # one natural student-facing comment for each retained issue.
     polished = edit_findings_for_human_review(polished, review, terms)
+    # The editorial pass may shorten wording, but it must not introduce a new
+    # example, construct or quotation. Re-run the evidence ledger after editing.
+    polished = evidence_ledger_rows(polished, runtime_paragraphs, summary)
     # Every numbered finding must have a current-document anchor. This prevents
     # the correction register from beginning at 1 while visible Word comments
     # begin at 2 or later.
