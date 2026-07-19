@@ -38,14 +38,14 @@ def test_legacy_batch_helper_remains_available():
 
 
 def test_issue_limits_are_concise_but_level_calibrated():
-    assert REVIEW_LEVEL_PROFILES["light"]["normal_issue_limit_per_section"] == 2
-    assert REVIEW_LEVEL_PROFILES["standard"]["normal_issue_limit_per_section"] == 4
-    assert REVIEW_LEVEL_PROFILES["advanced"]["normal_issue_limit_per_section"] == 5
+    assert REVIEW_LEVEL_PROFILES["light"]["normal_issue_limit_per_section"] == 0
+    assert REVIEW_LEVEL_PROFILES["standard"]["normal_issue_limit_per_section"] == 0
+    assert REVIEW_LEVEL_PROFILES["advanced"]["normal_issue_limit_per_section"] == 0
 
 
 def test_universal_accuracy_audit_is_present_for_all_depths():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-comment-audit-v1.9.8.6-final-mphil-depth" in source
+    assert "academic-comment-audit-v2.0.0-exact-anchor-statistical-adequacy" in source
     assert "Accuracy is mandatory at every review depth" in source
     assert "verification_batches" in source
     assert "_chapter_review_packets" in source

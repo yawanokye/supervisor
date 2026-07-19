@@ -78,10 +78,11 @@ def test_native_markers_are_sequential_and_never_split_words():
     comments = [comment.text for comment in output.comments]
     assert "teache [1]r" not in body.lower()
     assert "academi [2]c" not in body.lower()
-    assert "[1]" in output.paragraphs[1].text
-    assert "[2]" in output.paragraphs[2].text
+    assert "[1]" not in output.paragraphs[1].text
+    assert "[2]" not in output.paragraphs[2].text
     assert comments[0].startswith("1.")
     assert comments[1].startswith("2.")
+    assert "w:commentRangeStart" in output.element.body.xml
 
 
 def test_public_comment_uses_study_and_phd_level_language():

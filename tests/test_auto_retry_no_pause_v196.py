@@ -30,6 +30,7 @@ def test_last_mile_expert_rescue_prevents_empty_annotation_output():
 def test_native_word_comments_remain_required():
     source = Path("app/main.py").read_text(encoding="utf-8")
     exporter = Path("app/annotated_exporter.py").read_text(encoding="utf-8")
-    assert "native_comment_count(annotated_data) < 1" in source
+    assert "actual_comments = native_comment_count(annotated_data)" in source
+    assert "if actual_comments < 1" in source
     assert "document.add_comment" in exporter
-    assert "1.9.8.8-supervisory-comment-quality" in exporter
+    assert "2.0.0-exact-anchor-grouping" in exporter

@@ -181,8 +181,10 @@ def test_every_numbered_actionable_finding_has_a_current_anchor_and_visible_numb
     output = build_annotated_docx(source.getvalue(), review)
     reviewed = Document(io.BytesIO(output))
     body = "\n".join(paragraph.text for paragraph in reviewed.paragraphs)
-    assert "[1]" in body
+    assert "[1]" not in body
     assert not re.search(r"[A-Za-z]\s*\[\d+\]\s*[A-Za-z]", body)
+    assert len(list(reviewed.comments)) >= 1
+    assert "w:commentRangeStart" in reviewed.element.body.xml
 
 
 def test_problematic_quote_is_clipped_at_a_word_boundary():

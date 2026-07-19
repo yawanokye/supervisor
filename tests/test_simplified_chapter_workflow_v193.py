@@ -66,8 +66,8 @@ def test_fast_chapter_defaults(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
     config = HybridAIConfig.from_env()
-    assert config.chapter_review_concurrency == 4
-    assert config.chapter_packet_max_chars == 120000
+    assert config.chapter_review_concurrency == 2
+    assert config.chapter_packet_max_chars == 60000
     assert config.chapter_recovery_concurrency == 2
     assert config.chapter_recovery_max_output_tokens == 7000
     assert config.verification_batch_size == 12
@@ -75,7 +75,7 @@ def test_fast_chapter_defaults(monkeypatch):
 
 def test_old_three_stage_section_recovery_removed():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v1.9.8.6-final-mphil-depth" in source
+    assert "academic-review-v2.0.0-section-scope-professional-actions" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source

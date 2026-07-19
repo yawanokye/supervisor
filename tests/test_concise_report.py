@@ -125,31 +125,36 @@ def sample_review():
     }
 
 
-def test_report_is_concise_and_uses_summary_sections():
+def test_report_is_concise_and_uses_professional_action_sections():
     data = build_docx_report(sample_review())
     document = Document(BytesIO(data))
     text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    assert "SUPERVISOR’S SUMMARY REVIEW" in text
-    assert "Overall Supervisor Comment" in text
-    assert "Main Strengths" in text
-    assert "Strengths and Key Corrections by Chapter or Section" in text
-    assert "Supervisor’s Recommendation" in text
+    assert "SUPERVISORY REVIEW REPORT" in text
+    assert "Overall supervisory assessment" in text
+    assert "Main strengths" in text
+    assert "Actions Required Before Supervisor Approval or Submission" in text
+    assert "Professional recommendation" in text
     assert "Review point 1" not in text
     assert "Illustrative guidance" not in text
 
 
-def test_report_summary_table_lists_material_section_corrections():
+def test_report_action_table_lists_each_material_correction_with_verification():
     data = build_docx_report(sample_review())
     document = Document(BytesIO(data))
-    summary_tables = [table for table in document.tables if len(table.columns) == 3]
-    assert summary_tables
-    problem_row = next(
-        row for row in summary_tables[0].rows
-        if "Statement of the Problem" in row.cells[0].text
-    )
-    numbered = [
-        paragraph.text
-        for paragraph in problem_row.cells[2].paragraphs
-        if paragraph.text.strip()
+    action_tables = [table for table in document.tables if len(table.columns) == 5]
+    assert action_tables
+    headers = [cell.text for cell in action_tables[0].rows[0].cells]
+    assert headers == [
+        "Priority",
+        "Location",
+        "Specific action required",
+        "Why this must be corrected",
+        "How to verify completion",
     ]
-    assert len(numbered) >= 2
+    problem_rows = [
+        row for row in action_tables[0].rows[1:]
+        if "Statement of the Problem" in row.cells[1].text
+    ]
+    assert len(problem_rows) >= 2
+    assert all(row.cells[2].text.strip() for row in problem_rows)
+    assert all(row.cells[4].text.strip() for row in problem_rows)

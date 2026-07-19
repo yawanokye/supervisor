@@ -19,12 +19,14 @@ def test_browser_handles_paused_recoverable_jobs():
     assert "completed checkpoint" in javascript
 
 
-def test_render_blueprint_uses_persistent_checkpoint_storage():
+def test_render_blueprint_uses_shared_database_artifact_storage():
     render = Path("render.yaml").read_text(encoding="utf-8")
-    assert "mountPath: /var/data" in render
+    assert "VPROF_DB_ARTIFACT_STORAGE" in render
+    assert "value: true" in render
     assert "REVIEW_STORAGE_DIR" in render
-    assert "value: /var/data/reviews" in render
+    assert "value: /tmp/vprofessor/reviews" in render
     assert "AUTO_RESUME_JOBS" in render
+    assert "mountPath: /var/data" not in render
 
 
 def test_external_assessment_runs_three_examiners_then_one_adjudicator():

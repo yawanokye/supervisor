@@ -16,22 +16,22 @@ from app.supervisory_accuracy_guard import deterministic_expert_issues
 
 
 @pytest.mark.parametrize(
-    "level,issue_limit,audit_capacity,orientation",
+    "level,audit_capacity,orientation",
     [
-        ("Bachelors", 4, 24, "foundational-research"),
-        ("Non-Research Masters", 5, 30, "applied-master's"),
-        ("Research Masters / MPhil", 6, 36, "research-intensive-master's"),
-        ("Professional Doctorate", 7, 48, "practice-based-doctoral"),
-        ("PhD", 8, 56, "knowledge-creation-doctoral"),
+        ("Bachelors", 32, "foundational-research"),
+        ("Non-Research Masters", 42, "applied-master's"),
+        ("Research Masters / MPhil", 56, "research-intensive-master's"),
+        ("Professional Doctorate", 68, "practice-based-doctoral"),
+        ("PhD", 80, "knowledge-creation-doctoral"),
     ],
 )
-def test_every_level_has_distinct_standard_depth(level, issue_limit, audit_capacity, orientation):
+def test_every_level_has_distinct_standard_depth_without_comment_quotas(level, audit_capacity, orientation):
     contract = _degree_specific_review_contract(level, 1, "standard")
-    assert _degree_issue_limit(level, "standard") == issue_limit
+    assert _degree_issue_limit(level, "standard") == 0
     assert _degree_audit_max_findings(level, "standard") == audit_capacity
     assert contract["orientation"] == orientation
-    assert contract["per_section_issue_ceiling_not_quota"] == issue_limit
-    assert contract["independent_audit_material_finding_capacity"] == audit_capacity
+    assert contract["coverage_driven_review"] is True
+    assert "No predetermined comment count" in contract["comment_count_rule"]
     assert len(contract["chapter_specific_mandatory_checks"]) >= 8
     assert len(contract["mandatory_dimensions"]) >= 9
 
@@ -45,7 +45,7 @@ def test_professional_doctorate_and_phd_have_different_contribution_contracts():
 
 
 def test_all_chapter_types_receive_mandatory_checks():
-    for chapter in range(1, 6):
+    for chapter in range(1, 8):
         for level in ("Bachelors", "Non-Research Masters", "Research Masters / MPhil", "Professional Doctorate", "PhD"):
             contract = _degree_specific_review_contract(level, chapter, "standard")
             assert contract["chapter_specific_mandatory_checks"], (level, chapter)
@@ -53,7 +53,6 @@ def test_all_chapter_types_receive_mandatory_checks():
 
 def test_degree_specific_tokens_and_audits(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     config = HybridAIConfig.from_env()
 
     assert _degree_primary_output_tokens("Bachelors", "standard", config) == config.standard_max_output_tokens
@@ -83,7 +82,6 @@ def test_degree_specific_tokens_and_audits(monkeypatch):
 
 def test_research_intensive_route_is_reserved_for_research_degrees(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
     config = HybridAIConfig.from_env()
     assert not _use_research_intensive_route("Bachelors", config)
     assert not _use_research_intensive_route("Non-Research Masters", config)

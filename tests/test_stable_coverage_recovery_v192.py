@@ -46,15 +46,16 @@ def test_unresolved_fallback_never_calls_present_section_missing():
         "part": 1,
         "paragraphs": [{"text": "A sampling procedure is described."}],
     })
-    assert "is present" in review["section_assessment"]
-    assert "missing" not in review["section_assessment"].lower()
+    assert review["section_assessment"] == ""
+    assert review["coverage_warning"] == ""
     assert review["issues"] == []
 
 
 def test_browser_does_not_auto_resume_forever():
     javascript = Path("app/static/app.js").read_text(encoding="utf-8")
     assert "job.auto_resume_allowed !== false" in javascript
-    assert "Automatic recovery stopped after repeated attempts" in javascript
+    assert "Automatic recovery stopped" in javascript
+    assert "job.auto_resume_allowed !== false" in javascript
 
 
 def test_server_exposes_auto_resume_guard():
@@ -65,7 +66,7 @@ def test_server_exposes_auto_resume_guard():
 
 def test_bounded_chapter_recovery_pipeline_is_present():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v1.9.8.6-final-mphil-depth" in source
+    assert "academic-review-v2.0.0-section-scope-professional-actions" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source

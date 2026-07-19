@@ -161,7 +161,7 @@ def test_citation_issue_is_visible_comment_one_and_appendix_is_professional(monk
     output = build_annotated_docx(source.getvalue(), review)
     reviewed = Document(io.BytesIO(output))
     body = "\n".join(paragraph.text for paragraph in reviewed.paragraphs)
-    assert "[1]" in body
+    assert "[1]" not in body
     assert "SUPERVISORY REVIEW SUMMARY" in body
     assert "Overall decision:" in body
     assert "Priority corrections" in body

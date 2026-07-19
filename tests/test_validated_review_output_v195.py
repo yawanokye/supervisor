@@ -60,12 +60,13 @@ def test_limited_completed_review_has_rebuild_controls():
     assert "Rebuild review" in portal
     assert "Rebuild review and comments" in detail
     assert "Rebuild requested for the limited review output" in main
-    assert "review-pipeline-v1.9.8.6-final-degree-quality-gate" in main
+    assert "review-pipeline-v2.0.0-section-scope-professional-actions" in main
 
 
 def test_empty_annotated_output_is_rejected():
     main = Path("app/main.py").read_text(encoding="utf-8")
     engine = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "native_comment_count(annotated_data) < 1" in main
+    assert "actual_comments = native_comment_count(annotated_data)" in main
+    assert "if actual_comments < 1" in main
     assert "ReviewOutputValidationError" in engine
     assert "fresh automatic expert" in engine
