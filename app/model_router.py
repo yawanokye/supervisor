@@ -270,18 +270,31 @@ class CostAwareAIProvider:
         escalation_enabled = escalation if self._enabled(escalation) else None
         selected_primary = primary_enabled or fallback_enabled or escalation_enabled
         if selected_primary is None:
+            configured_but_paused = (
+                (self.config.enable_openai_routing and self.openai)
+                or (self.config.enable_deepseek_routing and self.deepseek)
+            )
+            if configured_but_paused:
+                raise AIProviderError(
+                    "The configured AI provider is temporarily paused after repeated "
+                    "transport or service failures. Retry after the provider circuit "
+                    "cooldown; the API key is present."
+                )
             raise AIProviderError(
                 "No enabled AI provider is configured. Add OPENAI_API_KEY or "
                 "DEEPSEEK_API_KEY and enable the corresponding router provider."
             )
         selected_fallback = (
             fallback_enabled
-            if fallback_enabled is not None and fallback_enabled != selected_primary
+            if fallback_enabled is not None
+            and not self._same_endpoint(fallback_enabled, selected_primary)
             else None
         )
         if selected_fallback is None:
             for candidate in (primary_enabled, escalation_enabled):
-                if candidate is not None and candidate != selected_primary:
+                if candidate is not None and not self._same_endpoint(
+                    candidate, selected_primary
+                ):
                     selected_fallback = candidate
                     break
         selected_escalation = (
@@ -514,6 +527,63 @@ class CostAwareAIProvider:
             requested_effort=requested_effort,
         ).signature()
 
+    @staticmethod
+    def _same_endpoint(
+        first: Optional[RouteTarget], second: Optional[RouteTarget]
+    ) -> bool:
+        """Return True when two routes call the same provider/model endpoint.
+
+        A different reasoning effort is useful for expert escalation, but it is
+        not a genuine provider fallback. Treating the same model as its own
+        fallback repeated truncation failures without adding resilience.
+        """
+        return bool(
+            first
+            and second
+            and first.provider is second.provider
+            and first.model == second.model
+        )
+
+    @staticmethod
+    def _should_trip_circuit(exc: Exception) -> bool:
+        """Trip the provider circuit only for transport or service failures.
+
+        Truncation, schema validation and evidence-contract failures are
+        request-level problems. The provider is reachable, so opening the
+        circuit would incorrectly turn the next packet into a misleading
+        ``No enabled AI provider`` error.
+        """
+        message = str(exc or "").strip().lower()
+        request_level = (
+            "truncated because the output-token limit" in message,
+            "failed schema validation" in message,
+            "invalid json" in message,
+            "empty json content" in message,
+            "must be a json object" in message,
+            "returned no structured text" in message,
+            "returned an incomplete response" in message,
+            "returned an empty academic" in message,
+            "refused the request" in message,
+        )
+        if any(request_level):
+            return False
+        service_signals = (
+            "http 408",
+            "http 409",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+            "timed out",
+            "timeout",
+            "connection error",
+            "connection reset",
+            "temporarily unavailable",
+            "provider resources were unavailable",
+        )
+        return any(signal in message for signal in service_signals)
+
     async def _call(
         self,
         target: RouteTarget,
@@ -542,8 +612,13 @@ class CostAwareAIProvider:
                 request_max_retries=request_max_retries,
                 thinking_enabled=target.thinking_enabled,
             )
-        except Exception:
-            _CircuitState.failure(target.provider)
+        except Exception as exc:
+            if self._should_trip_circuit(exc):
+                _CircuitState.failure(target.provider)
+            else:
+                # The provider returned a response, but this particular request
+                # exceeded its output/schema contract. Keep the provider live.
+                _CircuitState.success(target.provider)
             raise
         _CircuitState.success(target.provider)
         return result

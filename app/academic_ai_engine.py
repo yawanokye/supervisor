@@ -553,6 +553,25 @@ def _degree_primary_output_tokens(academic_level: Any, depth: str, config: Hybri
     }[key]
 
 
+def _audit_issue_batch_limit(
+    *, depth: str, audit_tokens: int, config: HybridAIConfig
+) -> int:
+    """Return a safe number of findings for one strict verification response.
+
+    AcademicIssueVerification repeats several evidence and action fields. A
+    100-finding batch cannot fit a 3,200-token response and caused repeated
+    truncation. The limit is therefore bounded by both configuration and the
+    available output-token budget.
+    """
+    configured = (
+        config.fast_audit_batch_issue_limit
+        if depth in {"light", "standard"}
+        else config.verification_batch_size
+    )
+    token_capacity = max(3, min(12, int(audit_tokens) // 440))
+    return max(3, min(int(configured), int(config.verification_batch_size), token_capacity))
+
+
 def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConfig) -> Tuple[str, str, int, ReviewStage]:
     key = _degree_key(academic_level)
     research_stage = (
@@ -2037,7 +2056,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.1.0-evidence-ledger-professional-actions",
+            "pipeline": "academic-review-v2.1.1-evidence-ledger-professional-actions",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2440,13 +2459,25 @@ async def enrich_review_with_academic_ai(
         verification_batches: List[List[Dict[str, Any]]] = []
         pending: List[Dict[str, Any]] = []
         pending_issues = 0
-        batch_limit = (
-            max(4, config.fast_audit_batch_issue_limit)
-            if depth in {"light", "standard"}
-            else max(4, config.verification_batch_size)
+        batch_limit = _audit_issue_batch_limit(
+            depth=depth, audit_tokens=audit_tokens, config=config
         )
+
+        # Split a section with many findings before packing batches. Without
+        # this step, a single section containing 20 findings bypassed the batch
+        # limit and produced a truncated strict JSON response.
+        audit_sections: List[Dict[str, Any]] = []
         for section_review in section_reviews:
-            count = max(1, len(section_review.get("issues") or []))
+            issues = list(section_review.get("issues") or [])
+            if not issues:
+                continue
+            for offset in range(0, len(issues), batch_limit):
+                copy = dict(section_review)
+                copy["issues"] = issues[offset : offset + batch_limit]
+                audit_sections.append(copy)
+
+        for section_review in audit_sections:
+            count = len(section_review.get("issues") or [])
             if pending and pending_issues + count > batch_limit:
                 verification_batches.append(pending)
                 pending = []
@@ -2456,10 +2487,8 @@ async def enrich_review_with_academic_ai(
         if pending:
             verification_batches.append(pending)
 
-        # A normal chapter review should make at most one OpenAI audit request.
-        # If a very large chapter exceeds the limit, remaining findings still
-        # pass through the deterministic evidence/placement gate instead of
-        # triggering an unbounded series of paid requests.
+        # Bound paid verification calls. Remaining findings still pass through
+        # the deterministic evidence and placement gate rather than being lost.
         deferred_audit_sections: List[Dict[str, Any]] = []
         audit_scope = str((review.get("summary") or {}).get("review_scope") or "chapter")
         if depth in {"light", "standard"} and audit_scope == "chapter" and len(verification_batches) > config.fast_audit_max_batches:
@@ -2489,7 +2518,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.1.0-evidence-ledger-statistical-adequacy",
+                "pipeline": "academic-comment-audit-v2.1.1-bounded-provider-recovery",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,

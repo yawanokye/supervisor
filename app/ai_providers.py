@@ -543,19 +543,40 @@ class OpenAIProvider:
 
         last_error: Optional[Exception] = None
         attempts = max(1, self.config.structured_output_retries + 1)
+        requested_output_tokens = int(
+            max_output_tokens or self.config.max_output_tokens
+        )
         for attempt in range(attempts):
             body = dict(base_body)
             if attempt:
+                previous_message = str(last_error or "").lower()
+                if "truncated because the output-token limit" in previous_message:
+                    # A strict JSON response cannot be repaired from a cut-off
+                    # object. Give the one structured-output retry enough room,
+                    # bounded by the application's global output ceiling.
+                    expanded = max(
+                        requested_output_tokens + 1600,
+                        requested_output_tokens * 2,
+                    )
+                    body["max_output_tokens"] = min(
+                        int(self.config.max_output_tokens), int(expanded)
+                    )
+                    retry_instruction = (
+                        "The previous JSON object was truncated. Return a complete, "
+                        "concise JSON object. Preserve every required field, avoid "
+                        "repeating the source text, and keep explanations direct."
+                    )
+                else:
+                    retry_instruction = (
+                        "The previous response was empty, incomplete, or did not "
+                        "match the required schema. Return one complete JSON object "
+                        "that follows the supplied schema exactly."
+                    )
                 body["input"] = [
                     base_input[0],
                     {
                         "role": "user",
-                        "content": (
-                            user_prompt
-                            + "\n\nThe previous response was empty, incomplete, or did not "
-                              "match the required schema. Return one complete JSON object "
-                              "that follows the supplied schema exactly."
-                        ),
+                        "content": user_prompt + "\n\n" + retry_instruction,
                     },
                 ]
             try:

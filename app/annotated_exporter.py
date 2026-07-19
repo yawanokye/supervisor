@@ -28,8 +28,8 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "2.1.0-evidence-ledger-exact-anchor-grouping"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.1.0-professional-evidence-ledger-review"
+ANNOTATION_EXPORT_VERSION = "2.1.1-evidence-ledger-exact-anchor-grouping"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.1.1-professional-evidence-ledger-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)

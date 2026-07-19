@@ -666,10 +666,11 @@ def deterministic_expert_issues(
     *,
     academic_level: Any = "",
     research_approach: Any = "",
+    submission_scope: Any = "",
 ) -> List[Dict[str, Any]]:
     """Add high-confidence cross-section checks that should not depend on model luck.
 
-    Every declared degree level receives deterministic coherence, source-traceability and scholarly-presentation checks. These checks are evidence anchored and complement, rather than replace, the expert model.
+    Every declared degree level receives deterministic coherence, source-traceability and scholarly-presentation checks. These checks are evidence anchored and complement, rather than replace, the expert model. ``submission_scope`` is accepted so the academic engine can use one stable interface for chapter-only, selected-section and full-thesis reviews.
     """
     current = [row for row in paragraphs if row.get("document_role", "current") == "current"]
     output: List[Dict[str, Any]] = []
