@@ -317,6 +317,31 @@
             <em id="fileName">No file selected</em>
           </label>
 
+          <div class="context-card section-scope-card hidden" id="sectionScopeCard">
+            <div class="context-heading">
+              <div>
+                <span class="optional-badge">Supervisor-controlled scope</span>
+                <h3>Select the sections to review</h3>
+              </div>
+              <span class="context-icon">§</span>
+            </div>
+            <p>Review the whole selected chapter or restrict the review and annotations to specific detected sections. Unselected sections will not receive findings or comments.</p>
+            <div class="segmented section-scope-options">
+              <label><input type="radio" name="section_scope_mode" value="whole_chapter" checked><span>Whole chapter</span></label>
+              <label><input type="radio" name="section_scope_mode" value="selected_sections"><span>Selected sections</span></label>
+            </div>
+            <input type="hidden" name="selected_sections_json" id="selectedSectionsJson" value="[]">
+            <div class="section-selector hidden" id="sectionSelector">
+              <div class="section-selector-toolbar">
+                <button type="button" class="secondary-button compact-button" id="scanSectionsButton">Scan chapter headings</button>
+                <button type="button" class="text-button" id="selectAllSectionsButton">Select all</button>
+                <button type="button" class="text-button" id="clearSectionsButton">Clear</button>
+              </div>
+              <p class="field-help" id="sectionScanStatus">Upload the chapter and choose its chapter number, then scan the headings.</p>
+              <div class="section-checklist" id="detectedSectionsList"></div>
+            </div>
+          </div>
+
           <div class="context-card hidden" id="previousChaptersField">
             <div class="context-heading">
               <div>
