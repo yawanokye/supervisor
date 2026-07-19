@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "2.0.0-exact-anchor-grouping"
+    assert ANNOTATION_EXPORT_VERSION == "2.1.0-evidence-ledger-exact-anchor-grouping"
     after_paragraphs, after_tables = _visible_content(after)
     before_paragraphs, before_tables = _visible_content(before)
     assert after_tables == before_tables
@@ -126,6 +126,8 @@ def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native
                 "evidence": [],
                 "headings": ["Definition of Terms"],
                 "annotation_eligible": True,
+                "section_contract_verified": True,
+                "section_status": "missing",
             }
         ]
     }
@@ -213,7 +215,7 @@ def test_grouped_native_comment_numbers_related_findings_and_keeps_one_context_e
     assert "2. " in comments[0].text
     text = " ".join(comment.text for comment in comments)
     assert "Applies to" not in text
-    assert "For example," in text
+    assert "Assinman Rural Bank" not in text
     assert output.paragraphs[1].text.endswith("boundary.")
     stream = io.BytesIO()
     output.save(stream)

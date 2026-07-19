@@ -89,7 +89,7 @@ def test_current_year_reference_is_not_labelled_future_dated():
     assert stats["dropped"] == 1
 
 
-def test_repeated_hypothesis_comments_are_consolidated_and_conditional():
+def test_hypothesis_comments_on_distinct_evidence_anchors_remain_separate_and_conditional():
     base = {
         "category": "objectives_questions_hypotheses",
         "section": "Research Objectives",
@@ -114,9 +114,9 @@ def test_repeated_hypothesis_comments_are_consolidated_and_conditional():
         },
     ]
     cleaned, _ = prepare_public_issues(issues)
-    assert len(cleaned) == 1
-    assert "Where required by the programme's thesis format" in cleaned[0]["required_action"]
-    assert cleaned[0]["evidence_paragraph_ids"] == ["P20", "P21"]
+    assert len(cleaned) == 2
+    assert all("Where required by the programme's thesis format" in row["required_action"] for row in cleaned)
+    assert {tuple(row["evidence_paragraph_ids"]) for row in cleaned} == {("P20",), ("P21",)}
 
 
 def test_document_placeholders_and_stage_tense_are_detected_deterministically():

@@ -141,14 +141,15 @@ def test_report_is_concise_and_uses_professional_action_sections():
 def test_report_action_table_lists_each_material_correction_with_verification():
     data = build_docx_report(sample_review())
     document = Document(BytesIO(data))
-    action_tables = [table for table in document.tables if len(table.columns) == 5]
+    action_tables = [table for table in document.tables if len(table.columns) == 6]
     assert action_tables
     headers = [cell.text for cell in action_tables[0].rows[0].cells]
     assert headers == [
         "Priority",
-        "Location",
-        "Specific action required",
-        "Why this must be corrected",
+        "Exact location and text",
+        "Problem identified",
+        "Action required",
+        "Why it matters",
         "How to verify completion",
     ]
     problem_rows = [
@@ -156,5 +157,5 @@ def test_report_action_table_lists_each_material_correction_with_verification():
         if "Statement of the Problem" in row.cells[1].text
     ]
     assert len(problem_rows) >= 2
-    assert all(row.cells[2].text.strip() for row in problem_rows)
-    assert all(row.cells[4].text.strip() for row in problem_rows)
+    assert all(row.cells[3].text.strip() for row in problem_rows)
+    assert all(row.cells[5].text.strip() for row in problem_rows)

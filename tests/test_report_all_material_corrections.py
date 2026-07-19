@@ -16,7 +16,7 @@ def test_summary_report_summarises_material_corrections_without_repeating_every_
             "status": "partly_meets_requirement",
             "required_action": f"Required correction number {index}.",
             "comment": f"Comment {index}.",
-            "evidence": [{"chapter_number": 1, "paragraph": index}],
+            "evidence": [{"chapter_number": 1, "paragraph": index, "paragraph_id": f"P{index}", "text": f"Problem sentence {index}.", "document_role": "current"}],
         })
 
     review = {
@@ -47,6 +47,10 @@ def test_summary_report_summarises_material_corrections_without_repeating_every_
         "priority_actions": [],
         "alignment_results": [],
         "revision_results": [],
+        "_runtime_context": {"current_paragraphs": [
+            {"chapter_number": 1, "paragraph": i, "paragraph_id": f"P{i}", "text": f"Problem sentence {i}.", "document_role": "current"}
+            for i in range(1, 6)
+        ]},
     }
 
     document = Document(BytesIO(build_docx_report(review)))
