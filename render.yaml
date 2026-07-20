@@ -48,7 +48,7 @@ services:
       - key: VPROF_EXPERT_PROVIDER_MODE
         value: combined_openai_pipeline
       - key: VPROF_DEFAULT_CALL_BUDGET_USD
-        value: 0.45
+        value: 0.25
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
         value: 1.50
       - key: OPENAI_FAST_MODEL
@@ -66,7 +66,7 @@ services:
       - key: OPENAI_FINAL_AUDIT_MODEL
         value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-sol
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
         value: gpt-5.6-terra
       - key: OPENAI_PHD_FINAL_SYNTHESIS_MODEL
@@ -94,7 +94,7 @@ services:
       - key: OPENAI_EXPERT_REASONING_EFFORT
         value: high
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
-        value: high
+        value: medium
       - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
         value: medium
       - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
@@ -118,31 +118,31 @@ services:
       - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
         value: 4500
       - key: AI_LIGHT_MAX_OUTPUT_TOKENS
-        value: 3500
+        value: 3000
       - key: AI_STANDARD_MAX_OUTPUT_TOKENS
-        value: 5500
+        value: 4800
       - key: AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
-        value: 6500
+        value: 5800
       - key: AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS
-        value: 7500
+        value: 6800
       - key: AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS
-        value: 8500
+        value: 7600
       - key: AI_PHD_MAX_OUTPUT_TOKENS
-        value: 9000
+        value: 8200
       - key: AI_ADVANCED_MAX_OUTPUT_TOKENS
         value: 9000
       - key: AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS
         value: 2600
       - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 3200
+        value: 2600
       - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
-        value: 4000
+        value: 3200
       - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
-        value: 5000
+        value: 4200
       - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
-        value: 5500
+        value: 4800
       - key: AI_PHD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 6000
+        value: 5500
       - key: AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS
         value: 5500
       - key: AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS
@@ -166,11 +166,11 @@ services:
       - key: AI_STRICT_FAILURE
         value: true
       - key: AI_FAST_AUDIT_BATCH_ISSUE_LIMIT
-        value: "8"
+        value: 6
       - key: AI_FAST_AUDIT_MAX_BATCHES
-        value: 8
+        value: 1
       - key: AI_MAX_MAP_INPUT_CHARS
-        value: 90000
+        value: 60000
       - key: AI_JOB_MAX_SECONDS
         value: 5400
       - key: AI_ADVANCED_SECOND_PASS
@@ -204,9 +204,11 @@ services:
       - key: VPROF_SUPPRESS_INTERNAL_AUDIT_NOTICES
         value: true
       - key: VPROF_COMMENT_MAX_CHARS
-        value: 1100
+        value: 900
       - key: VPROF_GROUPED_COMMENT_MAX_CHARS
-        value: 4200
+        value: 3600
+      - key: VPROF_INLINE_COMMENT_MAX_CHARS
+        value: 480
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
         value: 0.92
       - key: VPROF_DEVELOPMENTAL_COMMENTS
@@ -228,7 +230,7 @@ services:
       - key: VPROF_MEASUREMENT_AUDIT
         value: true
       - key: VPROF_COVERAGE_PARAGRAPHS_PER_UNIT
-        value: 7
+        value: 8
       - key: VPROF_COVERAGE_CONTEXT_PARAGRAPHS
         value: 1
       - key: VPROF_COVERAGE_UNIT_MAX_CHARS
@@ -236,11 +238,11 @@ services:
       - key: VPROF_COVERAGE_TABLE_ROWS_PER_UNIT
         value: 10
       - key: VPROF_COVERAGE_UNITS_PER_REQUEST
-        value: 4
+        value: 6
       - key: VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST
-        value: 2
+        value: 3
       - key: VPROF_COVERAGE_REQUEST_MAX_CHARS
-        value: 28000
+        value: 36000
       - key: VPROF_COVERAGE_RELEASE_GATE
         value: true
       - key: VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS
@@ -260,7 +262,7 @@ services:
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
         value: false
       - key: VPROF_COMMENT_MERGE_BY_SECTION
-        value: true
+        value: false
       - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
         value: 8
       - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS

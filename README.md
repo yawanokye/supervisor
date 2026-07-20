@@ -1,30 +1,52 @@
-# V-Professor Supervisory Review 2.1.1
+# V-Professor Supervisory Review 2.2.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
-## Professional supervisory workflow
+## Final professional review workflow
 
-- Supervisors may review a complete chapter or scan the uploaded file and select individual sections.
-- Bachelor’s, Master’s and Professional Doctorate submissions normally use the five-chapter research structure.
-- PhD submissions may use a justified custom chapter architecture, but all prescribed doctoral research elements must be present and integrated.
-- Every material finding must pass an evidence-grounding gate before release.
-- Findings are anchored to the exact sentence, paragraph, table caption, row or cell requiring action.
-- Findings on the same exact sentence or paragraph share one numbered native Word comment box. Different anchors retain separate comments.
-- Native comments and inline comments use the same canonical finding ledger and state the issue, problem identified, action required, academic reason and verification test.
-- The inline annotated copy places the supervisor action immediately after the affected paragraph without changing the original text.
-- The report presents direct actions required before supervisor approval or submission, including the exact text, action, academic reason and completion test.
-- Methods and results receive route-specific checks for internal statistical accuracy, reporting adequacy and analysis appropriateness. Definitive recalculation still requires the original dataset, syntax and software output.
+- Supervisors may review a complete chapter or select individual sections after the document is scanned.
+- Bachelor’s, Master’s and Professional Doctorate work uses a five-chapter structure by default.
+- PhD work may use any defensible chapter arrangement, but the system verifies the required doctoral elements and their integration.
+- Every released finding must have current-document evidence, an exact sentence or paragraph anchor, a direct action and a completion test.
+- Findings tied to the same exact passage share one numbered native Word comment box. Findings tied to different sentences remain separate.
+- Native comments, inline annotations and the appended correction schedule are generated from one canonical finding ledger.
+- Inline annotations are concise so the student’s text remains readable. The native comments and report retain the full issue, academic reason, action and verification requirement.
+- Methods, measurements, tables and statistical results receive route-specific checks for accuracy, adequacy and analytical appropriateness. Definitive recalculation still requires the original data, syntax and software output.
 
-## Quality safeguards introduced in 2.1.0 and stabilised in 2.1.1
+## Quality safeguards in 2.2.0
 
-- chapter-only uploads are not falsely treated as complete theses;
-- examples quoted in comments must be present in the current work or clearly marked as illustrative guidance;
-- previous-study terminology is rejected unless grounded in the current document;
-- unresolved supervisor instructions and incomplete citations are detected;
-- Chapter One checks cover problem evidence, construct consistency, unit of analysis, purpose-objective-question alignment, causal language, grammar and limitation-versus-delimitation;
-- decimals, p-values, temperatures, equations, citations, URLs and DOI strings are protected during annotation;
-- later editing stages cannot replace evidence-locked findings with generic comments.
+- Reads visible tracked insertions and detects unresolved supervisor or editor instructions embedded in the academic text.
+- Detects incomplete citation fragments such as an unfinished author-date citation.
+- Prevents organisation-of-study sentences such as “Chapter two reviews…” from being misclassified as a new chapter heading.
+- Strengthens Chapter One review of the background, current context, problem evidence, research gap, constructs, purpose, objectives, questions, significance, scope and limitations.
+- Detects construct drift, one-firm versus several-firms inconsistency, unsupported causal wording, unnamed study settings and common language or citation errors.
+- Uses issue-specific verification rather than one generic verification sentence.
+- Deduplicates genuine root causes while preserving distinct findings on different sentences, tables or statistical defects.
+- Protects decimals, p-values, equations, citations, URLs and DOI strings during annotation.
+- Reconciles finding numbers only after evidence filtering, consolidation and anchor validation.
+
+## Cost-efficient routing
+
+- Deterministic evidence checks handle high-confidence structural, citation and language defects without another model call.
+- Routine Light and Standard review uses GPT-5.6 Terra.
+- Standard review does not automatically escalate to a second premium synthesis model.
+- A second paid accuracy audit is limited to validity-critical, statistical, methodological, causal or low-confidence major findings.
+- Standard chapter review is limited to one compact accuracy-audit batch. Findings outside that paid batch still pass deterministic evidence and export gates.
+- GPT-5.6 Sol is reserved for PhD final synthesis and external-examiner adjudication, or selective escalation in Advanced review.
+- Output limits, batching and checkpoint reuse reduce repeated paid processing after recovery or redeployment.
 
 ## Deployment
 
-The web service runs with `uvicorn app.main:app`. Long reviews are processed by the background worker with `python -m app.worker`. Both services must use the same PostgreSQL database and OpenAI API key. See `DEPLOYMENT.md` and `.env.example`.
+The web service runs with:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+The background worker runs with:
+
+```bash
+python -m app.worker
+```
+
+Both services must use the same PostgreSQL database and OpenAI API key. Deploy the complete package and submit unfinished reviews as new jobs because the 2.2.0 checkpoint identifiers differ from earlier versions. See `DEPLOYMENT.md` and `.env.example`.
