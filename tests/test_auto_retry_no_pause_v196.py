@@ -33,4 +33,4 @@ def test_native_word_comments_remain_required():
     assert "actual_comments = native_comment_count(annotated_data)" in source
     assert "if actual_comments < 1" in source
     assert "document.add_comment" in exporter
-    assert "2.1.1-evidence-ledger-exact-anchor-grouping" in exporter
+    assert "2.2.0-final-cost-efficient-exact-review" in exporter

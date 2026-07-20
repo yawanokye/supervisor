@@ -199,10 +199,12 @@ def test_combined_pipeline_allows_selective_section_escalation(monkeypatch):
     monkeypatch.setenv("OPENAI_FINAL_SYNTHESIS_MODEL", "gpt-5.6-sol")
     config = HybridAIConfig.from_env()
     provider = CostAwareAIProvider(config)
-    plan = provider.plan(stage=ReviewStage.STANDARD_REVIEW)
-    assert plan.allow_escalation is True
+    plan = provider.plan(stage=ReviewStage.STANDARD_REVIEW, review_depth="standard")
+    assert plan.allow_escalation is False
     assert plan.escalation is not None
     assert plan.escalation.model == "gpt-5.6-sol"
+    advanced = provider.plan(stage=ReviewStage.ADVANCED_REVIEW, review_depth="advanced")
+    assert advanced.allow_escalation is True
 
 
 def test_no_previous_study_terms_remain_in_generic_generators():

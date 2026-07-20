@@ -77,8 +77,8 @@ def test_research_masters_defaults_enable_deep_review(monkeypatch) -> None:
 
     config = HybridAIConfig.from_env()
     assert config.research_masters_deep_review is True
-    assert config.research_masters_max_output_tokens == 7500
-    assert config.research_masters_audit_max_output_tokens == 6500
+    assert config.research_masters_max_output_tokens == 6800
+    assert config.research_masters_audit_max_output_tokens == 4200
     assert config.research_masters_audit_reasoning_effort == "high"
 
 
@@ -127,5 +127,5 @@ def test_pipeline_uses_degree_calibrated_v200_stages() -> None:
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     assert "ReviewStage.RESEARCH_INTENSIVE_REVIEW" in source
     assert "ReviewStage.RESEARCH_INTENSIVE_AUDIT" in source
-    assert "academic-review-v2.1.1-evidence-ledger-professional-actions" in source
-    assert "academic-comment-audit-v2.1.1-bounded-provider-recovery" in source
+    assert "academic-review-v2.2.0-cost-efficient-evidence-ledger" in source
+    assert "academic-comment-audit-v2.2.0-risk-selected-bounded-recovery" in source

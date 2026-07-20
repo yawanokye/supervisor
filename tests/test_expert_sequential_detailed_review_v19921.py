@@ -124,9 +124,10 @@ def test_inline_annotation_is_detailed_and_uses_same_number():
     body = "\n".join(p.text for p in output.paragraphs)
     assert "[1]" in output.paragraphs[1].text
     assert "Detailed supervisor comment:" in body
-    assert "magnitude, precision" in body
+    assert "Report and interpret the complete model result" in body
+    assert "magnitude, precision" not in body  # detailed rationale remains in native/report output
     assert "Report and interpret" in body
-    assert "For example," in body
+    assert "For example," not in body  # examples remain in native comments and the report
     assert "At PhD level" not in body
     assert 'w:val="C00000"' in output.element.xml
 
