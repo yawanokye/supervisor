@@ -281,11 +281,32 @@ def _verification(row: Mapping[str, Any]) -> str:
     if existing:
         return existing
     category = _norm(row.get("category"))
-    if category in {"statistical accuracy", "analysis appropriateness", "measurement and scoring", "results and interpretation"}:
-        return "Verify the correction against the original dataset, syntax and full software output, then confirm that the revised table and narrative agree."
-    if category in {"citations and sources", "reference integrity"} or row.get("source_verification_required"):
-        return "Verify the corrected citation against the original source and confirm that the in-text citation and reference-list entry agree."
-    return "Confirm that the revised sentence or paragraph now performs the stated academic function and remains aligned with the relevant objective, method and evidence."
+    issue = _norm(" ".join(_clean(row.get(field)) for field in ("issue_title", "item", "required_action")))
+    if "supervisor" in issue or "editor instruction" in issue or "tracked" in issue:
+        return "Open the document with tracked changes visible and confirm that the instruction has been accepted, rejected or removed and that no unresolved editing notes remain in the selected scope."
+    if category in {"statistical accuracy", "analysis appropriateness", "measurement and scoring", "results and interpretation"} or any(term in issue for term in ("coefficient", "p value", "regression", "anova", "statistical", "model estimate")):
+        return "Re-run or inspect the original analysis, then confirm that the corrected table, statistics, decision rule and narrative interpretation agree exactly."
+    if category in {"citations and sources", "reference integrity"} or row.get("source_verification_required") or any(term in issue for term in ("citation", "reference", "source attribution", "bibliographic")):
+        if "incomplete" in issue or "unfinished" in issue:
+            return "Confirm that the sentence and citation are complete, the year and closing punctuation are present, and the source has a matching reference-list entry."
+        return "Check the citation against the original source and the required referencing style, then confirm that the in-text citation and reference-list entry match."
+    if category in {"academic writing", "writing", "language"} or any(term in issue for term in ("spelling", "grammar", "subject verb", "punctuation", "british english")):
+        return "Search the full selected scope for the same language pattern and confirm that the corrected form is used consistently without altering direct quotations or publication titles."
+    if any(term in issue for term in ("causal language", "causal effect", "impact must be justified", "causal wording")):
+        return "Confirm that causal terms are retained only where the research design, identification strategy and analysis can support causal inference; otherwise replace them with descriptive or associational wording."
+    if category in {"scope", "scope and context"} or any(term in issue for term in ("one firm", "several firms", "unit and scope", "population", "sampling frame", "study setting is not identified")):
+        return "Confirm that the same unit of analysis, population and study setting appear consistently in the title, purpose, objectives, questions, scope, limitations and methodology."
+    if "limitation" in issue or "delimitation" in issue:
+        return "Confirm that the scope or delimitation states the investigator's chosen boundaries, while each limitation is an unavoidable design, data, measurement, sampling or access constraint with a stated implication."
+    if category in {"research gap and problem", "problem statement"} or any(term in issue for term in ("research gap", "problem context", "problem statement", "study context")):
+        return "Confirm that the revised problem statement presents verified evidence of the practical problem, synthesises the closest studies, states the precise unresolved gap and leads directly to the study purpose."
+    if category in {"cross section coherence", "alignment"} or any(term in issue for term in ("purpose", "objective", "research question", "hypothesis", "align")):
+        return "Use an alignment table to confirm a one-to-one match among the purpose, each objective, its question or hypothesis, the required data, the analysis and the expected result."
+    if category in {"conceptual clarity", "theoretical grounding"} or any(term in issue for term in ("construct", "conceptual", "theoretical", "framework")):
+        return "Confirm that each principal construct has one clear definition and is used consistently in the title, background, purpose, objectives, questions and methodology."
+    if "significance" in issue or "contribution" in issue:
+        return "Confirm that the section states distinct, realistic scholarly, practical and policy contributions that follow from the study's purpose, design and intended evidence."
+    return "Confirm that the marked passage directly performs the stated purpose of its section and that the required correction is visible in the revised text."
 
 
 def evidence_ledger_rows(

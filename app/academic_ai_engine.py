@@ -572,6 +572,33 @@ def _audit_issue_batch_limit(
     return max(3, min(int(configured), int(config.verification_batch_size), token_capacity))
 
 
+def _requires_paid_comment_audit(issue: Dict[str, Any], *, depth: str, academic_level: Any) -> bool:
+    """Select only findings whose risk justifies a second paid model call.
+
+    Exact evidence, placement and public-language gates already validate every
+    finding. A second model is reserved for validity-critical, statistical or
+    uncertain claims instead of re-reading every minor editorial correction.
+    """
+    severity = str(issue.get("severity") or "minor").strip().lower()
+    confidence = float(issue.get("confidence") or 0.0)
+    category = normalised(issue.get("category") or "")
+    text = normalised(" ".join(str(issue.get(field) or "") for field in (
+        "issue_title", "item", "assessment", "required_action"
+    )))
+    high_risk = any(term in text or term in category for term in (
+        "statistical", "regression", "coefficient", "p value", "anova",
+        "measurement", "validity", "reliability", "sampling", "causal",
+        "model specification", "diagnostic", "ethics", "plagiarism",
+    )) or bool(issue.get("requires_original_output"))
+    if severity == "critical" or high_risk:
+        return True
+    if depth == "advanced":
+        return severity in {"major", "moderate"} or confidence < 0.86
+    if depth == "standard":
+        return severity == "major" and confidence < 0.90
+    return severity == "major" and confidence < 0.76
+
+
 def _degree_audit_settings(academic_level: Any, depth: str, config: HybridAIConfig) -> Tuple[str, str, int, ReviewStage]:
     key = _degree_key(academic_level)
     research_stage = (
@@ -2056,7 +2083,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.1.1-evidence-ledger-professional-actions",
+            "pipeline": "academic-review-v2.2.0-cost-efficient-evidence-ledger",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2463,18 +2490,29 @@ async def enrich_review_with_academic_ai(
             depth=depth, audit_tokens=audit_tokens, config=config
         )
 
-        # Split a section with many findings before packing batches. Without
-        # this step, a single section containing 20 findings bypassed the batch
-        # limit and produced a truncated strict JSON response.
+        # Audit only validity-critical, statistical or uncertain findings.
+        # All other findings have already passed exact evidence and placement
+        # gates and are preserved under the deterministic cost guard.
         audit_sections: List[Dict[str, Any]] = []
+        deferred_audit_sections: List[Dict[str, Any]] = []
         for section_review in section_reviews:
             issues = list(section_review.get("issues") or [])
             if not issues:
                 continue
-            for offset in range(0, len(issues), batch_limit):
+            paid = [
+                issue for issue in issues
+                if _requires_paid_comment_audit(issue, depth=depth, academic_level=academic_level)
+            ]
+            deferred = [issue for issue in issues if issue not in paid]
+            if deferred:
+                deferred_copy = dict(section_review)
+                deferred_copy["issues"] = deferred
+                deferred_audit_sections.append(deferred_copy)
+            for offset in range(0, len(paid), batch_limit):
                 copy = dict(section_review)
-                copy["issues"] = issues[offset : offset + batch_limit]
-                audit_sections.append(copy)
+                copy["issues"] = paid[offset : offset + batch_limit]
+                if copy["issues"]:
+                    audit_sections.append(copy)
 
         for section_review in audit_sections:
             count = len(section_review.get("issues") or [])
@@ -2489,7 +2527,6 @@ async def enrich_review_with_academic_ai(
 
         # Bound paid verification calls. Remaining findings still pass through
         # the deterministic evidence and placement gate rather than being lost.
-        deferred_audit_sections: List[Dict[str, Any]] = []
         audit_scope = str((review.get("summary") or {}).get("review_scope") or "chapter")
         if depth in {"light", "standard"} and audit_scope == "chapter" and len(verification_batches) > config.fast_audit_max_batches:
             deferred = verification_batches[config.fast_audit_max_batches:]
@@ -2518,7 +2555,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.1.1-bounded-provider-recovery",
+                "pipeline": "academic-comment-audit-v2.2.0-risk-selected-bounded-recovery",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,
@@ -3378,6 +3415,8 @@ async def enrich_review_with_academic_ai(
         "advanced_second_pass": bool(depth == "advanced" and all_primary),
         "advanced_audit_mode": "single_compact_evidence_audit" if depth == "advanced" and all_primary else "not_applicable",
         "api_call_count": len(usage_records),
+        "paid_comment_audit_candidates": sum(1 for section in audit_sections for _ in (section.get("issues") or [])) if all_primary else 0,
+        "evidence_gated_without_second_paid_audit": sum(1 for section in deferred_audit_sections for _ in (section.get("issues") or [])) if all_primary else 0,
         "primary_batch_count": len(section_batches),
         "primary_packet_mode": "systematic_paragraph_and_table_units" if config.systematic_coverage_review_enabled else "chapter_level_parallel",
         "chapter_packet_max_chars": config.chapter_packet_max_chars,

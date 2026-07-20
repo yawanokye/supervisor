@@ -446,11 +446,20 @@ def _section_plain(rows: Sequence[Dict[str, Any]]) -> str:
 
 
 def _first_substantive(rows: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def usable(row: Dict[str, Any], minimum: int) -> bool:
+        text = clean_text(row.get("text", ""))
+        if row.get("is_heading") or len(text.split()) < minimum:
+            return False
+        if row.get("contains_tracked_changes") and re.search(r"^(?:delete|remove|revise|rewrite|correct|insert|add|change)\b", text, flags=re.I):
+            return False
+        if re.search(r"^delete all numbering|this is not .{1,40} style", text, flags=re.I):
+            return False
+        return True
     for row in rows:
-        if not row.get("is_heading") and len(clean_text(row.get("text", "")).split()) >= 4:
+        if usable(row, 4):
             return row
     for row in rows:
-        if len(clean_text(row.get("text", "")).split()) >= 1:
+        if usable(row, 1):
             return row
     return None
 
@@ -670,9 +679,9 @@ def hard_chapter_one_supervisory_issues(
             code="DOC-UNRESOLVED-SUPERVISOR-INSTRUCTION",
             section=source_section(instruction_row) or "Chapter One",
             title="An unresolved supervisor or editor instruction remains in the academic text",
-            assessment=f"The sentence ‘{instruction_text}’ reads as an editing instruction rather than part of the student's scholarly argument.",
+            assessment=(f"The sentence ‘{instruction_text}’ reads as an editing instruction rather than part of the student's scholarly argument." + (" It is also stored as a tracked insertion that has not been resolved." if instruction_row.get("contains_tracked_changes") else "")),
             consequence="Leaving supervisor instructions in the body makes the chapter look unfinished and may cause the instruction to be mistaken for the student's own text.",
-            action="Remove the instruction from the academic narrative, implement the intended formatting correction where appropriate, and inspect the full document for other embedded review notes.",
+            action="Accept or reject the tracked change as appropriate, remove the instruction from the academic narrative, implement the intended formatting correction, and inspect the full document for other embedded review notes.",
             anchor=instruction_row,
             category="document_completeness",
             severity="major",
@@ -693,7 +702,7 @@ def hard_chapter_one_supervisory_issues(
             code="CIT-INCOMPLETE-PARENTHETICAL",
             section=source_section(incomplete_citation_row) or "Chapter One",
             title="A sentence ends with an incomplete parenthetical citation",
-            assessment=f"The citation fragment ‘{incomplete_quote}’ has no complete year and closing parenthesis, so the sentence and source attribution are visibly unfinished.",
+            assessment="The marked citation fragment has no complete year and closing parenthesis, so the sentence and source attribution are visibly unfinished.",
             consequence="An incomplete citation prevents source verification and may also conceal missing text at the end of the sentence.",
             action="Restore the complete sentence and citation from the original source, including the author, year and closing punctuation, then verify the corresponding reference-list entry.",
             anchor=incomplete_citation_row,
@@ -724,7 +733,10 @@ def hard_chapter_one_supervisory_issues(
     # Detect singular/plural unit-of-analysis drift, such as 'a manufacturing
     # firm' in the title and 'manufacturing firms' in the scope or questions.
     singular_phrase = bool(re.search(r"\ba\s+[a-z -]{0,30}firm\b", title_text + " " + purpose_text, flags=re.I))
-    plural_scope_row = _row_with_pattern(current, r"\bmanufacturing firms\b|\bcompanies\b|\borganisations\b")
+    # Anchor the finding to the study's own scope wording, not to a general
+    # literature sentence mentioning companies or organisations.
+    scope_candidates = list(purpose) + list(objectives) + list(questions) + list(delimitations) + list(limitations)
+    plural_scope_row = _row_with_pattern(scope_candidates, r"\bmanufacturing firms\b") or _row_with_pattern(current, r"\bmanufacturing firms\b")
     if singular_phrase and plural_scope_row and re.search(r"\bmanufacturing firms\b", full_text, flags=re.I):
         plural_quote = _exact_match_text(plural_scope_row, r"\bmanufacturing firms\b") or "manufacturing firms"
         issues.append(_issue(
@@ -1228,6 +1240,73 @@ def hard_chapter_one_supervisory_issues(
             severity="minor",
             quote=quote,
         ))
+
+    # High-confidence sentence-level language and document-readiness checks.
+    # These are deterministic and therefore add no model cost. They are kept
+    # separate so findings on the same sentence can share one numbered native
+    # comment box while remaining individually traceable in the report.
+    language_checks = [
+        ("LANG-WITH-REGARDS", r"\bwith regards to\b", "The phrase ‘with regards to’ is non-standard in formal academic writing", "Replace ‘with regards to’ with ‘with regard to’ or ‘regarding’, then check the selected scope for the same expression."),
+        ("LANG-RESEARCHES-NOUN", r"\bresearches\b", "The plural noun ‘researches’ is used inaccurately", "Use ‘research’ when referring to the body of knowledge, or ‘studies’ when referring to separate investigations."),
+        ("LANG-BENEFITS-COMES", r"\bbenefits\s+that\s+comes\b", "A subject-verb agreement error appears in the purpose statement", "Revise ‘benefits that comes’ to ‘benefits that come’ and check the sentence for related agreement errors."),
+        ("LANG-ORGANISATIONS-ITS", r"\borganisations\s+should\s+have\s+its\b", "A plural subject is paired with a singular possessive pronoun", "Revise the sentence so the plural subject takes ‘their’, or recast it around a singular organisation."),
+        ("LANG-IN-YEAR-SPACING", r"\bIn(?:19|20)\d{2}s\b", "A missing space reduces sentence-level presentation quality", "Insert the missing space after ‘In’ and apply the same correction wherever a year or decade is joined to the preceding word."),
+    ]
+    for code, pattern, title, action in language_checks:
+        row = _row_with_pattern(current, pattern)
+        if not row:
+            continue
+        quote = _exact_match_text(row, pattern)
+        issues.append(_issue(
+            code=code,
+            section=source_section(row) or "Chapter One",
+            title=title,
+            assessment=f"The marked wording ‘{quote}’ requires direct language correction.",
+            consequence="Errors in core statements, objectives or questions reduce precision and make the work look insufficiently edited.",
+            action=action,
+            anchor=row,
+            category="academic_writing",
+            severity="minor" if code in {"LANG-IN-YEAR-SPACING"} else "moderate",
+            quote=quote,
+        ))
+
+    # The contemporary problem should dominate the background. A long historical
+    # opening beginning before 1900 is flagged only when it occupies several
+    # sentences and the chapter does not quickly move to the present study setting.
+    if background and re.search(r"\bprior to 1900\b", bg_text, flags=re.I):
+        historical_sentences = len(re.findall(r"\b(?:prior to|during|in)\s+(?:the\s+)?(?:19\d{2}|20th century|world war|1950s|1960s|1970s|1980s|1990s)\b", bg_text, flags=re.I))
+        if historical_sentences >= 4:
+            anchor = _row_with_pattern(background, r"\bprior to 1900\b") or _first_substantive(background)
+            issues.append(_issue(
+                code="B1-HISTORICAL-OVERWEIGHT",
+                section="Background to the Study",
+                title="The historical opening is disproportionate to the present research problem",
+                assessment="Several sentences trace procurement history from before 1900, but the background gives less attention to the current planning-and-control problem in the selected manufacturing setting.",
+                consequence="An extended chronology can obscure the contemporary constructs, context and evidence that should lead directly to the problem statement.",
+                action="Compress the historical account to one brief contextual sentence and use the saved space to define the main constructs, present recent evidence and narrow the discussion to the selected manufacturing context.",
+                anchor=anchor,
+                category="background_structure",
+                severity="moderate",
+                quote=_exact_match_text(anchor, r"\bPrior to 1900\b") if anchor else "",
+            ))
+
+    # When a single unnamed firm is central to the title and purpose, require the
+    # study to identify the setting or state and justify an anonymity decision.
+    if singular_phrase and not re.search(r"\b(?:anonym|confidential|pseudonym|identified as|case company|selected firm)\b", full_text, flags=re.I):
+        unnamed_anchor = _first_substantive(purpose) or _first_substantive(problem)
+        if unnamed_anchor:
+            issues.append(_issue(
+                code="B3-UNNAMED-STUDY-SETTING",
+                section=source_section(unnamed_anchor) or "Purpose of the Study",
+                title="The single manufacturing firm that defines the study setting is not identified or justified as anonymous",
+                assessment="The title and purpose refer to one manufacturing firm, but the chapter does not name the firm or explain why its identity is withheld.",
+                consequence="The reader cannot judge the organisational context, sampling frame or transferability of the proposed evidence without a clear setting statement.",
+                action="Identify the firm and its relevant context, or state that a pseudonym is used and briefly justify the confidentiality decision. Apply the same description throughout the work.",
+                anchor=unnamed_anchor,
+                category="scope_and_context",
+                severity="moderate",
+                quote=_exact_match_text(unnamed_anchor, r"\ba\s+[a-z -]{0,30}manufacturing firm\b") or clean_text(unnamed_anchor.get("text", ""))[:180],
+            ))
 
     if references:
         cited = _citation_tokens(full_text)

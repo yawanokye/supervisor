@@ -33,14 +33,16 @@ from .annotated_exporter import (
     _specific_corrections_required_enabled,
     _add_specific_corrections_required,
     _specific_correction_text,
+    _visible_runs,
+    _visible_paragraph_text,
 )
 from .comment_quality import public_text
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.1.1-evidence-ledger-exact-anchor-grouping"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.1.1-professional-evidence-ledger-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.2.0-final-cost-efficient-exact-review"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.2.0-final-professional-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -64,10 +66,10 @@ def _red_run_element(text: str, source_run: Optional[Run] = None):
 def _mark_span_red(paragraph: Paragraph, start: int, end: int, reference_numbers: Sequence[int] = ()) -> bool:
     if start < 0 or end <= start:
         return False
-    start, end = _expand_to_safe_text_span(paragraph.text or "", start, end)
+    start, end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
     if start < 0 or end <= start:
         return False
-    runs = list(paragraph.runs)
+    runs = _visible_runs(paragraph)
     cursor = 0
     changed = False
     trailing_element = None
@@ -135,7 +137,7 @@ def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
         else:
             body = value
     else:
-        body = _format_comment_group(comments, anchor_context=paragraph.text)
+        body = _format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))
     plain_body = _RICH_RED_RE.sub(lambda match: match.group(1), body)
     plain_body = public_text(plain_body, limit=2200, reject_placeholders=True, reject_incomplete=True)
     if not body or not plain_body or _PROHIBITED_PUBLIC_RE.search(plain_body):
@@ -161,9 +163,27 @@ def _clean_comment(value: str) -> str:
     return text
 
 
+def _inline_comment_limit() -> int:
+    try:
+        return max(260, min(720, int(__import__("os").getenv("VPROF_INLINE_COMMENT_MAX_CHARS", "480"))))
+    except (TypeError, ValueError):
+        return 480
+
+
 def _row_comment(row: Dict[str, Any]) -> str:
-    base = _comment_body(row)
-    return _clean_comment(_specific_correction_text(row, base) or base)
+    """Build a concise inline note from the same canonical finding record.
+
+    The native Word comment and readiness report retain the full explanation.
+    Inline annotations show only the issue and immediate action so the student's
+    chapter remains readable.
+    """
+    issue = clean_text(row.get("item") or row.get("issue_title"))
+    action = clean_text(row.get("required_action"))
+    if not action:
+        return ""
+    text = f"Issue: {issue.rstrip(' .')}. Action required: {action.rstrip(' .')}." if issue else f"Action required: {action.rstrip(' .')}."
+    text = professionalise_reviewer_language(text, row.get("_academic_level") or row.get("academic_level"))
+    return _clean_comment(public_text(text, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=True))
 
 
 def _rows_for_inline(review: Dict[str, Any], source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -193,7 +213,7 @@ def build_inline_annotated_docx(
     # fixed once and reused everywhere.
     review_rows = [
         {**row, "_academic_level": academic_level}
-        for row in build_canonical_finding_rows(review, force=True)
+        for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
     ]
 
     # Findings tied to the same exact sentence share one numbered inline note.
@@ -244,7 +264,7 @@ def build_inline_annotated_docx(
         if paragraph is None:
             continue
         quote = clean_text(row.get("problematic_quote", ""))
-        text = paragraph.text or ""
+        text = _visible_paragraph_text(paragraph)
         if quote and quote in text:
             quote_start = text.find(quote)
             start, end = _expand_to_safe_text_span(text, quote_start, quote_start + len(quote))
@@ -271,7 +291,7 @@ def build_inline_annotated_docx(
         if paragraph is None:
             continue
         comments = list(dict.fromkeys(comments))
-        text = paragraph.text or ""
+        text = _visible_paragraph_text(paragraph)
         grouped = _format_comment_group(comments, anchor_context=text[start:end])
         _mark_span_red(
             paragraph,

@@ -419,6 +419,9 @@ def _anchor_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     table_number = _clean(evidence.get("table_number"))
     if table_number:
         return (chapter_number(row), "table", table_number, _issue_family(row))
+    exact_anchor = _clean(row.get("anchor_key"))
+    if exact_anchor:
+        return (chapter_number(row), "sentence", exact_anchor, _issue_family(row))
     return (
         chapter_number(row),
         evidence.get("paragraph"),
@@ -432,6 +435,46 @@ def _similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
     a = _norm(" ".join(_clean(left.get(field)) for field in ("item", "issue_title", "required_action")))
     b = _norm(" ".join(_clean(right.get(field)) for field in ("item", "issue_title", "required_action")))
     return SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+
+
+def _action_similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    a = _norm(left.get("required_action"))
+    b = _norm(right.get("required_action"))
+    if not a or not b:
+        return 0.0
+    a_tokens = {token for token in a.split() if len(token) >= 4}
+    b_tokens = {token for token in b.split() if len(token) >= 4}
+    token_score = len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
+    return max(token_score, SequenceMatcher(None, a, b).ratio())
+
+
+def _same_root_cause(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    family = _issue_family(left)
+    left_code = _clean(left.get("finding_id") or left.get("code"))
+    right_code = _clean(right.get("finding_id") or right.get("code"))
+    code_pair = frozenset((left_code, right_code))
+    explicit_pairs = {
+        frozenset((
+            "DSC-HARD-B3.1-PURPOSE-OBJECTIVES",
+            "DSC-HARD-B3-PURPOSE-OBJECTIVE-CONTENT-MISMATCH",
+        )),
+        frozenset((
+            "DSC-HARD-B4.1-LEVEL-CONTRIBUTION",
+            "DSC-HARD-B4.1-THEORY-PRACTICE-POLICY",
+        )),
+    }
+    if code_pair in explicit_pairs:
+        return True
+    if family != _issue_family(right):
+        return False
+    title_blob = _norm(" ".join((_clean(left.get("item") or left.get("issue_title")), _clean(right.get("item") or right.get("issue_title")))))
+    if family == "writing" and any(term in title_blob for term in ("british american", "spelling", "language convention")):
+        return _action_similarity(left, right) >= 0.62
+    if family == "alignment" and all(term in title_blob for term in ("purpose", "objective")):
+        return _action_similarity(left, right) >= 0.35
+    if "significance" in title_blob and "contribution" in title_blob:
+        return _action_similarity(left, right) >= 0.35
+    return False
 
 
 def _severity_rank(value: Any) -> int:
@@ -494,14 +537,31 @@ def _consolidate(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # Even two statistical findings on the same table may concern
             # different defects. Merge only highly similar findings sharing the
             # same anchor and issue family.
-            if _similarity(existing, row) >= threshold:
+            if _similarity(existing, row) >= threshold or _action_similarity(existing, row) >= 0.86 or _same_root_cause(existing, row):
                 kept[index] = _merge_rows(existing, row)
                 merged = True
                 break
         if not merged:
             candidates.append(len(kept))
             kept.append(row)
-    return kept
+    globally_deduped: List[Dict[str, Any]] = []
+    for row in kept:
+        duplicate_index = next((
+            index for index, existing in enumerate(globally_deduped)
+            if (
+                _same_root_cause(existing, row)
+                or (
+                    _issue_family(existing) == _issue_family(row) == "writing"
+                    and _action_similarity(existing, row) >= 0.90
+                    and _norm(existing.get("section")) == _norm(row.get("section"))
+                )
+            )
+        ), None)
+        if duplicate_index is None:
+            globally_deduped.append(row)
+        else:
+            globally_deduped[duplicate_index] = _merge_rows(globally_deduped[duplicate_index], row)
+    return globally_deduped
 
 
 def _attach_runtime_evidence(row: Dict[str, Any], review: Dict[str, Any]) -> Dict[str, Any]:

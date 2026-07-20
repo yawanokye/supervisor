@@ -89,7 +89,7 @@ class HybridAIConfig:
     external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v2.1.1 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with Terra for extraction and section review and Sol for bounded final synthesis and adjudication. Existing strict schemas, checkpoints and token accounting remain active.
+    V-Professor v2.2.0 calibrates review depth and cost to the academic risk of each task. Terra handles routine extraction, section analysis and standard synthesis, while Sol is reserved for PhD final synthesis and external-examiner adjudication. Exact evidence gates, selective paid audits, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -322,7 +322,7 @@ class HybridAIConfig:
             os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "high")
         )
         audit_effort = _normalise_effort(
-            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", expert_effort)
+            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", "medium")
         )
         legacy_external_effort = _normalise_effort(
             os.getenv("OPENAI_EXTERNAL_REASONING_EFFORT", expert_effort)
@@ -347,7 +347,7 @@ class HybridAIConfig:
             default="high",
         )
 
-        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 6500)
+        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 4800)
         advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
 
         chapter_input_price = _env_float_alias(
@@ -447,7 +447,7 @@ class HybridAIConfig:
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
             max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 9000),
             light_max_output_tokens=_env_int(
-                "AI_LIGHT_MAX_OUTPUT_TOKENS", 4500
+                "AI_LIGHT_MAX_OUTPUT_TOKENS", 3000
             ),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
@@ -476,7 +476,7 @@ class HybridAIConfig:
                 "VPROF_SYSTEMATIC_COVERAGE_REVIEW", True
             ),
             coverage_prose_paragraphs_per_unit=_env_int(
-                "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 7
+                "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 8
             ),
             coverage_context_paragraphs=_env_int(
                 "VPROF_COVERAGE_CONTEXT_PARAGRAPHS", 1, 0
@@ -488,18 +488,18 @@ class HybridAIConfig:
                 "VPROF_COVERAGE_TABLE_ROWS_PER_UNIT", 10
             ),
             coverage_units_per_request=_env_int(
-                "VPROF_COVERAGE_UNITS_PER_REQUEST", 4
+                "VPROF_COVERAGE_UNITS_PER_REQUEST", 6
             ),
             coverage_high_risk_units_per_request=_env_int(
-                "VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 2
+                "VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 3
             ),
             coverage_request_max_chars=_env_int(
-                "VPROF_COVERAGE_REQUEST_MAX_CHARS", 28000
+                "VPROF_COVERAGE_REQUEST_MAX_CHARS", 36000
             ),
             coverage_release_gate_enabled=_env_bool(
                 "VPROF_COVERAGE_RELEASE_GATE", True
             ),
-            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
+            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 4),
             light_section_batch_size=_env_int(
                 "AI_LIGHT_SECTION_BATCH_SIZE", 6
             ),
@@ -536,22 +536,22 @@ class HybridAIConfig:
                 "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 2600
             ),
             standard_audit_max_output_tokens=_env_int(
-                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 3800
+                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 2600
             ),
             non_research_masters_max_output_tokens=_env_int(
-                "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
+                "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 5800
             ),
             non_research_masters_audit_max_output_tokens=_env_int(
-                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4500
+                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 3200
             ),
             non_research_masters_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "medium")
             ),
             research_masters_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
+                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 6800
             ),
             research_masters_audit_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 6500
+                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4200
             ),
             research_masters_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "high")
@@ -560,19 +560,19 @@ class HybridAIConfig:
                 "VPROF_RESEARCH_MASTERS_DEEP_REVIEW", True
             ),
             professional_doctorate_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 8500
+                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 7600
             ),
             professional_doctorate_audit_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 7500
+                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 4800
             ),
             professional_doctorate_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "high")
             ),
             phd_max_output_tokens=_env_int(
-                "AI_PHD_MAX_OUTPUT_TOKENS", 9000
+                "AI_PHD_MAX_OUTPUT_TOKENS", 8200
             ),
             phd_audit_max_output_tokens=_env_int(
-                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 8000
+                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 5500
             ),
             phd_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "high")
@@ -599,7 +599,7 @@ class HybridAIConfig:
                 "VPROF_STANDARD_PHD_MIN_FINDINGS", 58, 0
             ),
             fast_audit_batch_issue_limit=_env_int(
-                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100
+                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 6
             ),
             fast_audit_max_batches=_env_int(
                 "AI_FAST_AUDIT_MAX_BATCHES", 1
@@ -627,7 +627,7 @@ class HybridAIConfig:
                 "VPROF_ESCALATE_CONFIDENCE_BELOW", 0.78, 0.0, 1.0
             ),
             default_call_budget_usd=_env_float(
-                "VPROF_DEFAULT_CALL_BUDGET_USD", 0.75, 0.01
+                "VPROF_DEFAULT_CALL_BUDGET_USD", 0.25, 0.01
             ),
             external_call_budget_usd=_env_float(
                 "VPROF_EXTERNAL_CALL_BUDGET_USD", 2.00, 0.01

@@ -491,7 +491,12 @@ def is_heading(text: str, style_name: str = "") -> bool:
     if "heading" in (style_name or "").lower() or "title" in (style_name or "").lower():
         return True
     if explicit_chapter_marker(raw) is not None:
-        return True
+        # A chapter marker is a heading only when it is a short display line.
+        # Sentences such as “Chapter two reviews the related literature …” in
+        # an organisation-of-study paragraph must not switch the parser into a
+        # new chapter. Styled headings and all-uppercase display headings have
+        # already been accepted above.
+        return len(raw.split()) <= 8 and not re.search(r"[.!?]\s*$", raw)
     if section_number_from_heading(raw) is not None and len(raw.split()) <= 20:
         return True
     if raw.isupper() and len(raw.split()) <= 14:
@@ -897,6 +902,78 @@ def _iter_docx_blocks(document) -> Iterator[Any]:
             yield Table(child, document)
 
 
+def _is_within_revision_deletion(node: Any) -> bool:
+    """Return True when a WordprocessingML node belongs to deleted/moved-out text."""
+    if qn is None:
+        return False
+    blocked = {qn("w:del"), qn("w:moveFrom")}
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    while parent is not None:
+        if parent.tag in blocked:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def docx_visible_text(block: Any) -> str:
+    """Read the text Word displays, including tracked insertions.
+
+    ``python-docx`` omits runs nested in ``w:ins`` from ``Paragraph.text``.
+    Supervisor instructions and unresolved edits are often stored that way, so
+    the review parser must include inserted/moved-to text while excluding
+    deleted/moved-from text.
+    """
+    if qn is None:
+        return clean_text(getattr(block, "text", ""))
+    element = getattr(block, "_p", None)
+    if element is None:
+        element = getattr(block, "_tc", None)
+    if element is None:
+        element = getattr(block, "_element", None)
+    if element is None:
+        return clean_text(getattr(block, "text", ""))
+    chunks: List[str] = []
+    for node in element.iter():
+        if _is_within_revision_deletion(node):
+            continue
+        if node.tag == qn("w:t"):
+            chunks.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            chunks.append("	")
+        elif node.tag in {qn("w:br"), qn("w:cr")}:
+            chunks.append("\n")
+    return clean_text("".join(chunks))
+
+
+def docx_revision_metadata(block: Any) -> Dict[str, Any]:
+    """Return visible revision metadata for a paragraph or table cell."""
+    if qn is None:
+        return {"contains_tracked_changes": False, "tracked_inserted_text": ""}
+    element = getattr(block, "_p", None)
+    if element is None:
+        element = getattr(block, "_tc", None)
+    if element is None:
+        element = getattr(block, "_element", None)
+    if element is None:
+        return {"contains_tracked_changes": False, "tracked_inserted_text": ""}
+    inserted: List[str] = []
+    has_change = False
+    for node in element.iter():
+        if node.tag in {qn("w:ins"), qn("w:del"), qn("w:moveFrom"), qn("w:moveTo")}:
+            has_change = True
+        if node.tag == qn("w:t") and not _is_within_revision_deletion(node):
+            parent = node.getparent()
+            while parent is not None and parent is not element:
+                if parent.tag in {qn("w:ins"), qn("w:moveTo")}:
+                    inserted.append(node.text or "")
+                    break
+                parent = parent.getparent()
+    return {
+        "contains_tracked_changes": has_change,
+        "tracked_inserted_text": clean_text("".join(inserted)),
+    }
+
+
 def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     if Document is None:
         raise RuntimeError("python-docx is not installed.")
@@ -934,7 +1011,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 out[-1]["table_index"] = table_index
             current_path = _section_path(heading_stack)
             for row_index, row in enumerate(block.rows, start=1):
-                values = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
+                values = [docx_visible_text(cell) for cell in row.cells if docx_visible_text(cell)]
                 if not values:
                     continue
                 paragraph_no += 1
@@ -963,7 +1040,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             pending_caption_distance = 0
             continue
 
-        text = clean_text(block.text)
+        text = docx_visible_text(block)
         if not text:
             continue
         paragraph_no += 1
@@ -1062,6 +1139,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "table_number": caption.get("table_number") if caption else None,
             "table_title": caption.get("table_title") if caption else None,
             "table_caption": caption.get("table_caption") if caption else None,
+            **docx_revision_metadata(block),
         })
     return out
 

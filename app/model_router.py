@@ -162,6 +162,7 @@ class CostAwareAIProvider:
         *,
         requested_model: str = "",
         requested_effort: str = "",
+        review_depth: str = "standard",
     ) -> RoutePlan:
         """Three-role OpenAI thesis pipeline.
 
@@ -241,13 +242,21 @@ class CostAwareAIProvider:
         primary, fallback, escalation = self._normalise_targets(
             section, section_fallback, final
         )
+        # Routine chapter and section passes stay on the primary Terra route.
+        # Expert escalation is reserved for an explicitly Advanced review;
+        # otherwise a low-confidence result is handled by evidence gates and
+        # focused recovery rather than a second full-price call.
+        allow_escalation = (
+            self.config.selective_escalation_enabled
+            and str(review_depth or "standard").strip().lower() == "advanced"
+        )
         return RoutePlan(
             stage,
             profile,
             primary,
             fallback,
             escalation,
-            self.config.selective_escalation_enabled,
+            allow_escalation,
         )
 
     def _enabled(self, target: Optional[RouteTarget]) -> bool:
@@ -355,6 +364,7 @@ class CostAwareAIProvider:
                 profile,
                 requested_model=requested_model,
                 requested_effort=requested_effort,
+                review_depth=review_depth,
             )
 
         if self._deepseek_v4_pro_only_mode() and self._stage_allows_deepseek_pro_only(stage_value):
