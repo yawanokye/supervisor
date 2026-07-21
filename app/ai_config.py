@@ -45,6 +45,13 @@ def _env_float_alias(primary: str, legacy: str, default: float) -> float:
     return default
 
 
+
+
+def _env_choice(name: str, default: str, allowed: set[str]) -> str:
+    value = (os.getenv(name, default) or default).strip().lower()
+    return value if value in allowed else default
+
+
 def _normalise_effort(value: str, default: str = "high") -> str:
     effort = (value or default).strip().lower()
     allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
@@ -89,7 +96,7 @@ class HybridAIConfig:
     external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    V-Professor v2.2.0 calibrates review depth and cost to the academic risk of each task. Terra handles routine extraction, section analysis and standard synthesis, while Sol is reserved for PhD final synthesis and external-examiner adjudication. Exact evidence gates, selective paid audits, checkpoints and token accounting remain active.
+    V-Professor v2.3.0 applies research-design, submission-stage and contradiction gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -197,6 +204,9 @@ class HybridAIConfig:
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool
+    primary_provider: str
+    fallback_provider: str
+    provider_failover_enabled: bool
     selective_escalation_enabled: bool
     escalation_confidence_threshold: float
     default_call_budget_usd: float
@@ -620,6 +630,13 @@ class HybridAIConfig:
             ),
             enable_openai_routing=_env_bool("VPROF_ENABLE_OPENAI", True),
             enable_deepseek_routing=_env_bool("VPROF_ENABLE_DEEPSEEK", False),
+            primary_provider=_env_choice(
+                "VPROF_PRIMARY_PROVIDER", "auto", {"auto", "openai", "deepseek"}
+            ),
+            fallback_provider=_env_choice(
+                "VPROF_FALLBACK_PROVIDER", "auto", {"auto", "none", "openai", "deepseek"}
+            ),
+            provider_failover_enabled=_env_bool("VPROF_PROVIDER_FAILOVER", True),
             selective_escalation_enabled=_env_bool(
                 "VPROF_ENABLE_SELECTIVE_ESCALATION", True
             ),
@@ -880,6 +897,15 @@ class HybridAIConfig:
             or (self.enable_deepseek_routing and self.deepseek_configured)
         )
 
+    @property
+    def selected_provider_configured(self) -> bool:
+        preference = (self.primary_provider or "auto").strip().lower()
+        if preference == "openai":
+            return bool(self.enable_openai_routing and self.openai_configured)
+        if preference == "deepseek":
+            return bool(self.enable_deepseek_routing and self.deepseek_configured)
+        return self.any_provider_configured
+
     def resolve_mode(self, requested_mode: str, academic_level: str = "") -> str:
         requested = (requested_mode or "standard").strip().lower()
         requested = {
@@ -892,7 +918,14 @@ class HybridAIConfig:
             raise AIConfigurationError(
                 "Choose Light Review, Standard Review or Advanced Review."
             )
-        if not self.any_provider_configured:
+        if not self.selected_provider_configured:
+            preference = (self.primary_provider or "auto").strip().lower()
+            if preference in {"openai", "deepseek"}:
+                raise AIConfigurationError(
+                    f"The selected {preference.title()} provider is not configured. "
+                    f"Add its API key and enable VPROF_ENABLE_{preference.upper()}=true, "
+                    "or set VPROF_PRIMARY_PROVIDER=auto."
+                )
             raise AIConfigurationError(
                 "The academic review service is temporarily unavailable because "
                 "no enabled AI provider key is configured."
@@ -902,7 +935,7 @@ class HybridAIConfig:
     def public_status(self) -> Dict[str, Any]:
         available = (
             ["light", "standard", "advanced"]
-            if self.any_provider_configured
+            if self.selected_provider_configured
             else []
         )
         return {

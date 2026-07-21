@@ -313,6 +313,80 @@ class CostAwareAIProvider:
         )
         return selected_primary, selected_fallback, selected_escalation
 
+    def _explicit_provider_plan(
+        self,
+        *,
+        stage: ReviewStage,
+        profile: RoutingProfile,
+        review_depth: str,
+        requested_model: str,
+        requested_effort: str,
+        ds_fast: RouteTarget,
+        ds_quality: RouteTarget,
+        oa_chapter: RouteTarget,
+        oa_fast: RouteTarget,
+        oa_expert: RouteTarget,
+        oa_requested: RouteTarget,
+    ) -> Optional[RoutePlan]:
+        """Honor the administrator-selected provider before profile routing.
+
+        VPROF_PRIMARY_PROVIDER may be ``openai``, ``deepseek`` or ``auto``.
+        Explicit selection is authoritative, including for the combined pipeline.
+        A cross-provider fallback is used only when VPROF_PROVIDER_FAILOVER=true
+        and VPROF_FALLBACK_PROVIDER permits it.
+        """
+        preference = (getattr(self.config, "primary_provider", "auto") or "auto").strip().lower()
+        if preference == "auto":
+            return None
+
+        cheap = {
+            ReviewStage.DOCUMENT_TRIAGE,
+            ReviewStage.STRUCTURE_MAP,
+            ReviewStage.LANGUAGE_SCAN,
+            ReviewStage.COMMENT_DEDUPLICATION,
+            ReviewStage.JSON_REPAIR,
+        }
+        high_risk = {
+            ReviewStage.RESEARCH_INTENSIVE_REVIEW,
+            ReviewStage.ADVANCED_REVIEW,
+            ReviewStage.FINAL_AUDIT,
+            ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+            ReviewStage.EXTERNAL_EXAMINATION,
+        }
+
+        if preference == "deepseek":
+            primary = ds_fast if stage in cheap else ds_quality
+            if stage in high_risk:
+                primary = ds_quality
+            other = oa_fast if stage in cheap else (oa_requested if requested_model else oa_expert)
+        else:
+            if self._combined_openai_pipeline_enabled():
+                return self._combined_pipeline_plan(
+                    stage,
+                    profile,
+                    requested_model=requested_model,
+                    requested_effort=requested_effort,
+                    review_depth=review_depth,
+                )
+            primary = oa_fast if stage in cheap else (oa_requested if requested_model else oa_chapter)
+            if stage in high_risk:
+                primary = oa_requested if requested_model else oa_expert
+            other = ds_fast if stage in cheap else ds_quality
+
+        fallback_pref = (getattr(self.config, "fallback_provider", "auto") or "auto").strip().lower()
+        allow_failover = bool(getattr(self.config, "provider_failover_enabled", True))
+        fallback: Optional[RouteTarget] = None
+        if allow_failover and fallback_pref != "none":
+            if fallback_pref == "auto":
+                fallback = other
+            elif fallback_pref == "openai" and preference != "openai":
+                fallback = other if other.provider is ProviderName.OPENAI else None
+            elif fallback_pref == "deepseek" and preference != "deepseek":
+                fallback = other if other.provider is ProviderName.DEEPSEEK else None
+
+        primary, fallback, escalation = self._normalise_targets(primary, fallback, None)
+        return RoutePlan(stage, profile, primary, fallback, escalation, False)
+
     def plan(
         self,
         *,
@@ -357,6 +431,22 @@ class CostAwareAIProvider:
             requested_model or config.openai_chapter_model,
             requested_effort or config.openai_chapter_reasoning_effort,
         )
+
+        explicit_plan = self._explicit_provider_plan(
+            stage=stage_value,
+            profile=profile,
+            review_depth=review_depth,
+            requested_model=requested_model,
+            requested_effort=requested_effort,
+            ds_fast=ds_fast,
+            ds_quality=ds_quality,
+            oa_chapter=oa_chapter,
+            oa_fast=oa_fast,
+            oa_expert=oa_expert,
+            oa_requested=oa_requested,
+        )
+        if explicit_plan is not None:
+            return explicit_plan
 
         if self._combined_openai_pipeline_enabled():
             return self._combined_pipeline_plan(

@@ -127,7 +127,12 @@ def _evidence_locked_finding(row: Dict[str, Any]) -> bool:
 
 def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     chapter = chapter_number(row) or 999
-    section = _section_text(row)
+    # Use only actual location fields here. Including the issue title made words
+    # such as "scope" in a purpose-alignment finding masquerade as a Scope of
+    # the Study section and triggered the wrong supervisory template.
+    section = _norm(" ".join(_clean(row.get(field)) for field in (
+        "section_reference", "section", "reference_label"
+    )))
     finding_text = _finding_text(row)
     finding_id = _norm(row.get("finding_id")).replace("-", " ")
     category = _norm(row.get("category"))
@@ -1006,6 +1011,16 @@ def _scope_inconsistency_finding(review: Dict[str, Any]) -> Dict[str, Any] | Non
         return None
     rows = [row for row in _current_paragraphs(review) if int(row.get("chapter_number") or 0) == 1]
     if not rows:
+        return None
+    # A section-only upload cannot establish a cross-section population conflict.
+    # Require evidence from at least two substantive Chapter One sections before
+    # creating this whole-chapter judgement.
+    section_labels = {
+        _norm(_row_heading(row) or " ".join(_clean(v) for v in (row.get("section_path") or [])))
+        for row in rows
+        if _clean(_row_heading(row) or " ".join(_clean(v) for v in (row.get("section_path") or [])))
+    }
+    if len(section_labels) < 2:
         return None
     full_text = " ".join(_clean(row.get("text")) for row in rows)
     labels = extract_population_labels(full_text)

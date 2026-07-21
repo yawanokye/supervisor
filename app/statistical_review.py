@@ -231,13 +231,36 @@ def audit_statistical_consistency(paragraphs: Sequence[Dict[str, Any]]) -> List[
     return warnings
 
 
+
+
+def _has_results_evidence(paragraphs: Sequence[Dict[str, Any]]) -> bool:
+    """Return True only when a submitted results/findings section is present.
+
+    Methods that describe planned regression, moderation or confidence intervals
+    must not be treated as completed results.
+    """
+    for row in paragraphs:
+        chapter = int(row.get("chapter_number") or 0)
+        label = normalised(source_section(row) or row.get("heading") or "")
+        text = normalised(row.get("text", ""))
+        if chapter < 4 or not any(term in label for term in ("result", "finding", "analysis", "discussion")):
+            continue
+        if row.get("source_kind") == "table_row" or any(
+            term in text
+            for term in ("coefficient", "p value", "p-value", "r squared", "mean", "frequency", "theme", "finding")
+        ):
+            return True
+    return False
+
 def _first_row(paragraphs: Sequence[Dict[str, Any]], pattern: str) -> Dict[str, Any] | None:
     rx = re.compile(pattern, flags=re.I)
     return next((row for row in paragraphs if rx.search(clean_text(row.get("text", "")))), None)
 
 
 def audit_analysis_adequacy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Identify method-specific reporting omissions without pretending to recompute."""
+    """Identify result-reporting omissions only when results are submitted."""
+    if not _has_results_evidence(paragraphs):
+        return []
     text = normalised("\n".join(clean_text(row.get("text", "")) for row in paragraphs))
     warnings: List[Dict[str, Any]] = []
 
@@ -881,16 +904,16 @@ def audit_analysis_appropriateness(paragraphs: Sequence[Dict[str, Any]]) -> List
                     example="Use an independent-samples t-test for two independent groups or ANOVA for more than two groups only when the assumptions and data structure support that choice.",
                 ))
 
-    if any(term in text for term in ("moderating role", "moderates", "moderation")) and not any(term in text for term in ("interaction term", " x ", "×")):
+    if _has_results_evidence(paragraphs) and any(term in text for term in ("moderating role", "moderates", "moderation")) and not any(term in text for term in ("interaction term", " x ", "×")):
         anchor = _first_row(paragraphs, r"moderating role|moderates|moderation")
         if anchor:
             warnings.append(_warning(
                 "moderation_analysis_not_demonstrated",
-                "The study claims moderation, but the analysis does not clearly show the product interaction term required to test moderation.",
+                "The submitted results claim moderation, but the product interaction term is not clearly reported.",
                 anchor,
                 severity="critical",
                 verification="inappropriate analysis or interpretation",
-                action="Specify and report the interaction model, including all constituent main effects and the interaction term, then probe any significant interaction.",
+                action="Report the interaction model, including all constituent main effects and the interaction term, then probe any significant interaction.",
                 example="For X moderated by W, report X, W and X×W in the same model before interpreting the moderating effect.",
             ))
 

@@ -41,8 +41,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.2.0-final-cost-efficient-exact-review"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.2.0-final-professional-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.3.0-reconciled-exact-anchor-review"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.3.0-provider-selectable-professional-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 

@@ -11,6 +11,7 @@ from .finding_order import chapter_number, order_and_number_rows, primary_eviden
 from .student_friendly_review import make_finding_student_friendly
 from .human_supervisory_editor import edit_findings_for_human_review
 from .evidence_ledger import evidence_ledger_rows
+from .review_release_guard import filter_and_rewrite_release_findings
 
 
 _LEVEL_SENTENCE_RE = re.compile(
@@ -829,6 +830,7 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
         if row is not None:
             polished.append(row)
     polished = sanitise_finding_rows(polished)
+    polished = filter_and_rewrite_release_findings(polished, review)
     polished = _consolidate(polished)
     # A final human-supervisor editorial pass consolidates repeated root causes,
     # removes irrelevant examples, adds conservative context checks and prepares
@@ -837,6 +839,20 @@ def build_canonical_finding_rows(review: Dict[str, Any], *, force: bool = False)
     # The editorial pass may shorten wording, but it must not introduce a new
     # example, construct or quotation. Re-run the evidence ledger after editing.
     polished = evidence_ledger_rows(polished, runtime_paragraphs, summary)
+    polished = filter_and_rewrite_release_findings(polished, review)
+    polished = _consolidate(polished)
+    # Editorial and evidence-ledger passes can reconstruct rows and drop the
+    # derived table label. Restore it from the final evidence so table comments
+    # name both the section and the exact table in every export.
+    for row in polished:
+        evidence = primary_evidence(row)
+        if evidence.get("table_number") or evidence.get("table_title"):
+            number = _clean(evidence.get("table_number"))
+            title = _clean(evidence.get("table_title"))
+            table_reference = f"Table {number}" if number else "Table"
+            if title:
+                table_reference += f": {title}"
+            row["table_reference"] = table_reference
     # Every numbered finding must have a current-document anchor. This prevents
     # the correction register from beginning at 1 while visible Word comments
     # begin at 2 or later.

@@ -28,8 +28,8 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 
-ANNOTATION_EXPORT_VERSION = "2.2.0-final-cost-efficient-exact-review"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.2.0-final-professional-review"
+ANNOTATION_EXPORT_VERSION = "2.3.0-reconciled-exact-anchor-review"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.3.0-provider-selectable-professional-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -667,12 +667,15 @@ def _comment_body(row: Dict[str, Any]) -> str:
     parts: List[str] = []
     if issue:
         parts.append("Issue: " + issue.rstrip(" .") + ".")
-    if assessment and normalised(assessment) != normalised(issue):
-        parts.append("Problem identified: " + assessment.rstrip(" .") + ".")
+    # The correction must survive every output limit. Put it before the longer
+    # assessment so native and inline comments never explain a problem without
+    # telling the student what to do.
     if action:
         parts.append("Action required: " + action.rstrip(" .") + ".")
     elif reason:
         parts.append("Action required: Revise the marked passage so that the academic point is precise, supported and aligned with the section purpose.")
+    if assessment and normalised(assessment) != normalised(issue):
+        parts.append("Problem identified: " + assessment.rstrip(" .") + ".")
     if reason:
         parts.append("Why this matters: " + reason.rstrip(" .") + ".")
     if verification:
@@ -727,17 +730,77 @@ def _split_example(value: str) -> Tuple[str, str]:
 
 
 def _compact_group_item(value: str) -> Tuple[str, str]:
+    """Compact one grouped comment without sacrificing the required action.
+
+    Earlier versions shortened the full prose from left to right. Long
+    assessments therefore displaced the action, so a native comment could name
+    a problem but omit what the student had to do. Grouped comments now retain
+    the issue and full action first, then add the reason and verification only
+    where space remains.
+    """
     value = _strip_comment_reference(value)
     text = public_text(
-        value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True
+        value,
+        limit=max(comment_max_chars(), 1800),
+        reject_placeholders=True,
+        reject_incomplete=True,
     ).strip("[] ").rstrip(" ;.")
     text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
     text = _remove_level_repetition(text)
     core, example = _split_example(text)
-    # Preserve Issue, Action required, Why this matters and Verification labels.
-    # These make the correction immediately implementable and ensure that the
-    # native comment carries the same substance as the readiness report.
-    core = _shorten_comment(core, 720).rstrip(" .")
+
+    labels = (
+        "Issue",
+        "Problem identified",
+        "Action required",
+        "Why this matters",
+        "Verification",
+    )
+    issue_marker = re.search(r"\bIssue\s*:", core, flags=re.I)
+    reference_prefix = ""
+    if issue_marker and issue_marker.start() > 0:
+        reference_prefix = core[: issue_marker.start()].strip(" :.-")
+        core = core[issue_marker.start() :]
+    extracted: Dict[str, str] = {}
+    for index, label in enumerate(labels):
+        following = "|".join(re.escape(item) for item in labels[index + 1 :])
+        if following:
+            pattern = rf"\b{re.escape(label)}\s*:\s*(.*?)(?=\s+(?:{following})\s*:|$)"
+        else:
+            pattern = rf"\b{re.escape(label)}\s*:\s*(.*)$"
+        match = re.search(pattern, core, flags=re.I | re.S)
+        if match:
+            extracted[label] = re.sub(r"\s+", " ", match.group(1)).strip(" .;")
+
+    ordered: List[str] = []
+    if extracted.get("Issue"):
+        ordered.append("Issue: " + extracted["Issue"].rstrip(" .") + ".")
+    if extracted.get("Action required"):
+        ordered.append(
+            "Action required: " + extracted["Action required"].rstrip(" .") + "."
+        )
+    if extracted.get("Problem identified"):
+        ordered.append(
+            "Problem identified: "
+            + extracted["Problem identified"].rstrip(" .")
+            + "."
+        )
+    if extracted.get("Why this matters"):
+        ordered.append(
+            "Why this matters: " + extracted["Why this matters"].rstrip(" .") + "."
+        )
+    if extracted.get("Verification"):
+        ordered.append(
+            "Verification: " + extracted["Verification"].rstrip(" .") + "."
+        )
+
+    prioritised = " ".join(ordered).strip() or core
+    if reference_prefix:
+        prioritised = reference_prefix + ": " + prioritised
+    # Use a larger per-item allowance because one canonical finding may contain
+    # several numbered actions after issue-family consolidation. The final group
+    # still has its own hard ceiling.
+    core = _shorten_comment(prioritised, 1250).rstrip(" .")
     example = _shorten_comment(example, 240).rstrip(" .") if example else ""
     return core, example
 
