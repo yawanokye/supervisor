@@ -33,20 +33,54 @@ services:
         sync: false
       - key: OPENAI_BASE_URL
         value: https://api.openai.com/v1
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
       - key: AI_REVIEW_ENABLED
         value: true
       - key: VPROF_ENABLE_OPENAI
         value: true
       - key: VPROF_ENABLE_DEEPSEEK
         value: false
+      - key: VPROF_PRIMARY_PROVIDER
+        value: openai
+      - key: VPROF_FALLBACK_PROVIDER
+        value: none
+      - key: VPROF_PROVIDER_FAILOVER
+        value: false
+      - key: DEEPSEEK_REVIEW_MODEL
+        value: deepseek-v4-pro
+      - key: DEEPSEEK_ADVANCED_MODEL
+        value: deepseek-v4-pro
+      - key: DEEPSEEK_QUALITY_MODEL
+        value: deepseek-v4-pro
+      - key: DEEPSEEK_FAST_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_THINKING_ENABLED
+        value: true
+      - key: DEEPSEEK_REASONING_EFFORT
+        value: high
+      - key: DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT
+        value: max
+      - key: PRICE_DEEPSEEK_PRO_INPUT
+        value: "0.435"
+      - key: PRICE_DEEPSEEK_PRO_CACHED_INPUT
+        value: "0.003625"
+      - key: PRICE_DEEPSEEK_PRO_OUTPUT
+        value: "0.87"
+      - key: PRICE_DEEPSEEK_FLASH_INPUT
+        value: "0.14"
+      - key: PRICE_DEEPSEEK_FLASH_CACHED_INPUT
+        value: "0.0028"
+      - key: PRICE_DEEPSEEK_FLASH_OUTPUT
+        value: "0.28"
       - key: VPROF_ENABLE_SELECTIVE_ESCALATION
         value: true
       - key: VPROF_ROUTING_PROFILE
         value: quality
       - key: VPROF_COMBINED_APP_PIPELINE
         value: true
-      - key: VPROF_EXPERT_PROVIDER_MODE
-        value: combined_openai_pipeline
       - key: VPROF_DEFAULT_CALL_BUDGET_USD
         value: 0.25
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD

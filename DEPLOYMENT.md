@@ -140,3 +140,25 @@ PYTHONPATH=. pytest -q
 python -m compileall -q app
 node --check app/static/app.js
 ```
+
+## Selecting OpenAI or DeepSeek in Render
+
+Add the provider configuration to both `vprofessor-web` and `vprofessor-worker`, or edit the shared environment anchor in `render.yaml`.
+
+For DeepSeek V4 Pro, set:
+
+```env
+VPROF_PRIMARY_PROVIDER=deepseek
+VPROF_ENABLE_DEEPSEEK=true
+VPROF_ENABLE_OPENAI=false
+DEEPSEEK_API_KEY=<secret>
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
+DEEPSEEK_ADVANCED_MODEL=deepseek-v4-pro
+DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+VPROF_PROVIDER_FAILOVER=false
+VPROF_FALLBACK_PROVIDER=none
+```
+
+For OpenAI, set `VPROF_PRIMARY_PROVIDER=openai`, enable OpenAI, disable DeepSeek, and provide `OPENAI_API_KEY`. Redeploy the web service and worker after changing providers. Unfinished jobs should be submitted again so the selected provider is recorded in the new job route.

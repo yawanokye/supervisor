@@ -50,3 +50,41 @@ python -m app.worker
 ```
 
 Both services must use the same PostgreSQL database and OpenAI API key. Deploy the complete package and submit unfinished reviews as new jobs because the 2.2.0 checkpoint identifiers differ from earlier versions. See `DEPLOYMENT.md` and `.env.example`.
+
+## AI provider selection
+
+V-Professor 2.3.0 can use OpenAI or DeepSeek without code changes. Set the same provider variables on the web service and background worker.
+
+Use OpenAI:
+
+```env
+VPROF_PRIMARY_PROVIDER=openai
+VPROF_ENABLE_OPENAI=true
+VPROF_ENABLE_DEEPSEEK=false
+OPENAI_API_KEY=your-key
+VPROF_FALLBACK_PROVIDER=none
+VPROF_PROVIDER_FAILOVER=false
+```
+
+Use DeepSeek V4 Pro:
+
+```env
+VPROF_PRIMARY_PROVIDER=deepseek
+VPROF_ENABLE_DEEPSEEK=true
+VPROF_ENABLE_OPENAI=false
+DEEPSEEK_API_KEY=your-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
+DEEPSEEK_ADVANCED_MODEL=deepseek-v4-pro
+DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_THINKING_ENABLED=true
+DEEPSEEK_REASONING_EFFORT=high
+DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT=max
+VPROF_FALLBACK_PROVIDER=none
+VPROF_PROVIDER_FAILOVER=false
+```
+
+To use V4 Pro for every stage, set `DEEPSEEK_FAST_MODEL=deepseek-v4-pro`. To permit a controlled fallback, enable both providers, set `VPROF_PROVIDER_FAILOVER=true`, and choose `VPROF_FALLBACK_PROVIDER=openai` or `deepseek`.
+
+`VPROF_PRIMARY_PROVIDER` is authoritative even when `VPROF_COMBINED_APP_PIPELINE=true`.
