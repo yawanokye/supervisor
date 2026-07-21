@@ -127,5 +127,5 @@ def test_pipeline_uses_degree_calibrated_v200_stages() -> None:
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     assert "ReviewStage.RESEARCH_INTENSIVE_REVIEW" in source
     assert "ReviewStage.RESEARCH_INTENSIVE_AUDIT" in source
-    assert "academic-review-v2.2.0-cost-efficient-evidence-ledger" in source
-    assert "academic-comment-audit-v2.2.0-risk-selected-bounded-recovery" in source
+    assert "academic-review-v2.3.0-design-stage-gated-evidence-ledger" in source
+    assert "academic-comment-audit-v2.3.0-risk-selected-release-guard" in source

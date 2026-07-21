@@ -66,7 +66,7 @@ def test_server_exposes_auto_resume_guard():
 
 def test_bounded_chapter_recovery_pipeline_is_present():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v2.2.0-cost-efficient-evidence-ledger" in source
+    assert "academic-review-v2.3.0-design-stage-gated-evidence-ledger" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source
