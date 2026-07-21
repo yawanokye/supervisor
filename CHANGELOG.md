@@ -1,4 +1,26 @@
-# V-Professor 2.3.0
+# V-Professor 2.3.2
+
+## DeepSeek length-recovery and cost-control hotfix
+
+- Uses one compact coverage unit per DeepSeek request.
+- Limits prose units to three target paragraphs and table units to four rows.
+- Uses a compact DeepSeek primary schema with short evidence-grounded actions.
+- Does not repeat the same truncated academic packet at a larger budget.
+- Splits a truncated unit into one-target recovery requests and merges them into the original canonical coverage record.
+- Continues with grounded deterministic findings and an explicit unresolved-coverage flag when an isolated target still cannot be recovered.
+- Keeps bounded audit retry behaviour for non-primary audit requests.
+- Introduces new checkpoint identifiers so cut-off 2.3.1 responses are not reused.
+
+# V-Professor 2.3.1
+
+## DeepSeek truncation recovery
+
+- Reduced DeepSeek primary review packets to two coverage units, one high-risk unit and 18,000 characters by default.
+- Disabled hidden thinking for strict-JSON chapter packets while retaining it for bounded final audits.
+- Added one adaptive truncation retry that increases the completion allowance, disables thinking and requests compact schema-compliant JSON.
+- Allowed a failed all-DeepSeek first pass to continue into smaller packet recovery instead of stopping immediately.
+- Kept non-truncation structured-output failures fail-fast for Light and Standard review to avoid repeated paid full passes.
+- Added separate DeepSeek environment controls for primary thinking, audit thinking, output ceiling and packet size.
 
 ## Review accuracy
 
@@ -22,7 +44,7 @@
 
 ## Validation
 
-- 342 automated tests passed from a clean test environment.
+- 345 automated tests passed from a clean test environment.
 - Python compilation passed.
 - Provider-selection, wrong-design, wrong-stage, false-positive, exact-anchor grouping and table-reference regression tests passed.
 # v2.2.0, final exact-anchor and cost-efficient professional review

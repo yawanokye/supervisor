@@ -1,4 +1,4 @@
-# V-Professor v2.2.0 Deployment Guide
+# V-Professor v2.3.2 Deployment Guide
 
 ## Architecture
 
@@ -28,12 +28,13 @@ Start: python -m app.worker
 
 ## Required secrets
 
-Set `OPENAI_API_KEY` in Render. Render generates `SESSION_SECRET` and injects `DATABASE_URL` from the PostgreSQL resource when the Blueprint is used.
+Set the API key for the selected provider in Render. Render generates `SESSION_SECRET` and injects `DATABASE_URL` from the PostgreSQL resource when the Blueprint is used.
 
 For a manual deployment, set:
 
 ```env
 OPENAI_API_KEY=<secret>
+DEEPSEEK_API_KEY=<secret-if-selected>
 SESSION_SECRET=<long-random-secret>
 DATABASE_URL=<postgresql-connection-string>
 ```
@@ -83,6 +84,32 @@ OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-sol
 
 Terra handles routine extraction and section review. Sol handles bounded final synthesis and external-examiner adjudication.
 
+For DeepSeek as the selected provider, use the same settings on the web service and worker:
+
+```env
+VPROF_PRIMARY_PROVIDER=deepseek
+VPROF_ENABLE_DEEPSEEK=true
+VPROF_ENABLE_OPENAI=false
+DEEPSEEK_REVIEW_MODEL=deepseek-v4-pro
+DEEPSEEK_QUALITY_MODEL=deepseek-v4-pro
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_PRIMARY_THINKING_ENABLED=false
+DEEPSEEK_AUDIT_THINKING_ENABLED=true
+DEEPSEEK_TRUNCATION_RECOVERY=true
+DEEPSEEK_MAX_OUTPUT_TOKENS=12000
+DEEPSEEK_PRIMARY_MAX_OUTPUT_TOKENS=7000
+DEEPSEEK_SINGLE_TARGET_RECOVERY_MAX_OUTPUT_TOKENS=4200
+DEEPSEEK_COMPACT_ISSUE_LIMIT_PER_TARGET=2
+DEEPSEEK_COVERAGE_PARAGRAPHS_PER_UNIT=3
+DEEPSEEK_COVERAGE_UNIT_MAX_CHARS=7000
+DEEPSEEK_COVERAGE_TABLE_ROWS_PER_UNIT=4
+DEEPSEEK_COVERAGE_UNITS_PER_REQUEST=1
+DEEPSEEK_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST=1
+DEEPSEEK_COVERAGE_REQUEST_MAX_CHARS=9000
+```
+
+These provider-specific packet limits are intentionally lower than the general coverage limits. They prevent repeated cut-off JSON responses and are usually cheaper than retrying large failed packets.
+
 ## Native and inline comments
 
 Recommended settings:
@@ -129,7 +156,7 @@ These values do not overwrite an administrator already stored in PostgreSQL.
 7. Confirm the status moves from queued to document preparation within one or two polling cycles.
 8. Confirm the output contains the annotated DOCX, inline-annotated DOCX and supervisory action report.
 
-Old review checkpoints should not be reused because the v2.2.0 evidence-ledger, exact-anchor and cost-efficient pipeline identifiers changed.
+Old review checkpoints should not be reused because the v2.3.2 provider, packet and evidence-ledger identifiers changed.
 
 ## Validation
 

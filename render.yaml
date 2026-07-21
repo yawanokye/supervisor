@@ -59,10 +59,38 @@ services:
         value: deepseek-v4-flash
       - key: DEEPSEEK_THINKING_ENABLED
         value: true
+      - key: DEEPSEEK_PRIMARY_THINKING_ENABLED
+        value: false
+      - key: DEEPSEEK_AUDIT_THINKING_ENABLED
+        value: true
       - key: DEEPSEEK_REASONING_EFFORT
         value: high
       - key: DEEPSEEK_ADVANCED_PRIMARY_REASONING_EFFORT
         value: max
+      - key: DEEPSEEK_TRUNCATION_RECOVERY
+        value: true
+      - key: DEEPSEEK_TRUNCATION_RETRY_MULTIPLIER
+        value: "1.6"
+      - key: DEEPSEEK_MAX_OUTPUT_TOKENS
+        value: 12000
+      - key: DEEPSEEK_PRIMARY_MAX_OUTPUT_TOKENS
+        value: 7000
+      - key: DEEPSEEK_SINGLE_TARGET_RECOVERY_MAX_OUTPUT_TOKENS
+        value: 4200
+      - key: DEEPSEEK_COMPACT_ISSUE_LIMIT_PER_TARGET
+        value: 2
+      - key: DEEPSEEK_COVERAGE_PARAGRAPHS_PER_UNIT
+        value: 3
+      - key: DEEPSEEK_COVERAGE_UNIT_MAX_CHARS
+        value: 7000
+      - key: DEEPSEEK_COVERAGE_TABLE_ROWS_PER_UNIT
+        value: 4
+      - key: DEEPSEEK_COVERAGE_UNITS_PER_REQUEST
+        value: 1
+      - key: DEEPSEEK_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST
+        value: 1
+      - key: DEEPSEEK_COVERAGE_REQUEST_MAX_CHARS
+        value: 9000
       - key: PRICE_DEEPSEEK_PRO_INPUT
         value: "0.435"
       - key: PRICE_DEEPSEEK_PRO_CACHED_INPUT
