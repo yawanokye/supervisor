@@ -254,6 +254,60 @@ def coverage_packets(
     return packets
 
 
+
+
+def split_coverage_units_to_single_targets(
+    units: Sequence[Dict[str, Any]],
+    *,
+    context_paragraphs: int = 1,
+) -> List[Dict[str, Any]]:
+    """Split failed coverage units into one-target recovery units.
+
+    The returned units retain ``parent_section_key`` and the parent's full
+    target list so the academic engine can merge several compact recovery
+    responses back into one canonical coverage record. This is used only after
+    a provider has returned ``finish_reason=length``.
+    """
+    context_paragraphs = max(0, int(context_paragraphs or 0))
+    output: List[Dict[str, Any]] = []
+    for unit in units:
+        targets = list(dict.fromkeys(unit.get("target_paragraph_ids") or []))
+        if len(targets) <= 1:
+            row = dict(unit)
+            row["parent_section_key"] = unit.get("parent_section_key") or unit.get("section_key")
+            row["parent_target_paragraph_ids"] = list(
+                unit.get("parent_target_paragraph_ids") or targets
+            )
+            output.append(row)
+            continue
+
+        paragraphs = list(unit.get("paragraphs") or [])
+        index_by_id = {_pid(row): index for index, row in enumerate(paragraphs)}
+        parent_key = unit.get("parent_section_key") or unit.get("section_key")
+        parent_targets = list(unit.get("parent_target_paragraph_ids") or targets)
+        for target_index, target_id in enumerate(targets, start=1):
+            position = index_by_id.get(target_id)
+            if position is None:
+                continue
+            start = max(0, position - context_paragraphs)
+            end = min(len(paragraphs), position + context_paragraphs + 1)
+            selected = paragraphs[start:end]
+            row = dict(unit)
+            row["section_key"] = f"{unit.get('section_key')}T{target_index:03d}"
+            row["parent_section_key"] = parent_key
+            row["parent_target_paragraph_ids"] = parent_targets
+            row["target_paragraph_ids"] = [target_id]
+            row["context_paragraph_ids"] = [
+                _pid(item) for item in selected if _pid(item) != target_id
+            ]
+            row["paragraphs"] = selected
+            row["coverage_unit_index"] = target_index
+            row["coverage_unit_total"] = len(targets)
+            row["single_target_recovery"] = True
+            output.append(row)
+    return output
+
+
 def build_coverage_ledger(
     units: Sequence[Dict[str, Any]],
     section_reviews: Sequence[Dict[str, Any]],

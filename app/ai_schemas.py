@@ -120,6 +120,41 @@ class AcademicReviewBatch(StrictModel):
     reviews: List[AcademicSectionReviewItem] = Field(default_factory=list)
 
 
+class CompactAcademicIssue(StrictModel):
+    """Cost-bounded issue schema for DeepSeek coverage packets.
+
+    The primary pass returns only the evidence, judgement and correction needed
+    to build the canonical finding ledger. Rich explanatory fields are added
+    later by deterministic enrichment and the bounded verification stage.
+    """
+
+    finding_id: str
+    category: AcademicCategory
+    section: str
+    issue_title: str
+    severity: Severity
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence_paragraph_ids: List[str] = Field(default_factory=list)
+    problematic_quote: str = ""
+    assessment: str = ""
+    required_action: str = ""
+    source_verification_required: bool = False
+
+
+class CompactAcademicSectionReview(StrictModel):
+    section_key: str
+    section_name: str
+    section_score: float = Field(ge=0.0, le=100.0)
+    section_assessment: str = ""
+    assessed_paragraph_ids: List[str] = Field(default_factory=list)
+    issues: List[CompactAcademicIssue] = Field(default_factory=list)
+    coverage_warning: str = ""
+
+
+class CompactAcademicReviewBatch(StrictModel):
+    reviews: List[CompactAcademicSectionReview] = Field(default_factory=list)
+
+
 class AcademicIssueVerification(StrictModel):
     finding_id: str
     keep: bool

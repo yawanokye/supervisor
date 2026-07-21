@@ -405,11 +405,20 @@ class CostAwareAIProvider:
             config.deepseek_reasoning_effort or "high",
             False,
         )
+        deepseek_thinking = (
+            config.deepseek_audit_thinking_enabled
+            if stage_value in {
+                ReviewStage.FINAL_AUDIT,
+                ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+                ReviewStage.EXTERNAL_EXAMINATION,
+            }
+            else config.deepseek_primary_thinking_enabled
+        )
         ds_quality = RouteTarget(
             ProviderName.DEEPSEEK,
             config.deepseek_quality_model,
             config.deepseek_advanced_primary_reasoning_effort or "high",
-            True,
+            deepseek_thinking,
         )
         oa_chapter = RouteTarget(
             ProviderName.OPENAI,

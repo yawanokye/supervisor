@@ -96,7 +96,7 @@ class HybridAIConfig:
     external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    V-Professor v2.3.0 applies research-design, submission-stage and contradiction gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
+    V-Professor v2.3.2 applies research-design, submission-stage and contradiction gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -108,6 +108,20 @@ class HybridAIConfig:
     deepseek_advanced_reasoning_effort: str
     deepseek_advanced_primary_reasoning_effort: str
     deepseek_thinking_enabled: bool
+    deepseek_primary_thinking_enabled: bool
+    deepseek_audit_thinking_enabled: bool
+    deepseek_truncation_recovery_enabled: bool
+    deepseek_truncation_retry_multiplier: float
+    deepseek_max_output_tokens: int
+    deepseek_primary_max_output_tokens: int
+    deepseek_single_target_recovery_max_output_tokens: int
+    deepseek_compact_issue_limit_per_target: int
+    deepseek_coverage_prose_paragraphs_per_unit: int
+    deepseek_coverage_unit_max_chars: int
+    deepseek_coverage_table_rows_per_unit: int
+    deepseek_coverage_units_per_request: int
+    deepseek_coverage_high_risk_units_per_request: int
+    deepseek_coverage_request_max_chars: int
 
     openai_api_key: str
     openai_base_url: str
@@ -426,6 +440,52 @@ class HybridAIConfig:
             ).strip().lower(),
             deepseek_thinking_enabled=_env_bool(
                 "DEEPSEEK_THINKING_ENABLED", True
+            ),
+            # Strict JSON chapter packets are much more reliable and cheaper
+            # when hidden reasoning does not consume the same completion
+            # budget needed for the final JSON object. Keep deeper thinking for
+            # bounded audits unless the administrator explicitly overrides it.
+            deepseek_primary_thinking_enabled=_env_bool(
+                "DEEPSEEK_PRIMARY_THINKING_ENABLED", False
+            ),
+            deepseek_audit_thinking_enabled=_env_bool(
+                "DEEPSEEK_AUDIT_THINKING_ENABLED", True
+            ),
+            deepseek_truncation_recovery_enabled=_env_bool(
+                "DEEPSEEK_TRUNCATION_RECOVERY", True
+            ),
+            deepseek_truncation_retry_multiplier=_env_float(
+                "DEEPSEEK_TRUNCATION_RETRY_MULTIPLIER", 1.6, 1.0, 3.0
+            ),
+            deepseek_max_output_tokens=_env_int(
+                "DEEPSEEK_MAX_OUTPUT_TOKENS", 12000
+            ),
+            deepseek_primary_max_output_tokens=_env_int(
+                "DEEPSEEK_PRIMARY_MAX_OUTPUT_TOKENS", 7000
+            ),
+            deepseek_single_target_recovery_max_output_tokens=_env_int(
+                "DEEPSEEK_SINGLE_TARGET_RECOVERY_MAX_OUTPUT_TOKENS", 4200
+            ),
+            deepseek_compact_issue_limit_per_target=_env_int(
+                "DEEPSEEK_COMPACT_ISSUE_LIMIT_PER_TARGET", 2, 1
+            ),
+            deepseek_coverage_prose_paragraphs_per_unit=_env_int(
+                "DEEPSEEK_COVERAGE_PARAGRAPHS_PER_UNIT", 3, 1
+            ),
+            deepseek_coverage_unit_max_chars=_env_int(
+                "DEEPSEEK_COVERAGE_UNIT_MAX_CHARS", 7000
+            ),
+            deepseek_coverage_table_rows_per_unit=_env_int(
+                "DEEPSEEK_COVERAGE_TABLE_ROWS_PER_UNIT", 4, 1
+            ),
+            deepseek_coverage_units_per_request=_env_int(
+                "DEEPSEEK_COVERAGE_UNITS_PER_REQUEST", 1
+            ),
+            deepseek_coverage_high_risk_units_per_request=_env_int(
+                "DEEPSEEK_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 1
+            ),
+            deepseek_coverage_request_max_chars=_env_int(
+                "DEEPSEEK_COVERAGE_REQUEST_MAX_CHARS", 9000
             ),
 
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),

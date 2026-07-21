@@ -28,11 +28,17 @@ from .ai_schemas import (
     AcademicIssue,
     AcademicReviewBatch,
     AcademicSectionReviewItem,
+    CompactAcademicReviewBatch,
     AcademicVerificationBatch,
 )
 from .document_parser import clean_text, normalised
 from .comment_quality import prepare_public_issues
-from .coverage_review import build_coverage_ledger, build_coverage_units, coverage_packets
+from .coverage_review import (
+    build_coverage_ledger,
+    build_coverage_units,
+    coverage_packets,
+    split_coverage_units_to_single_targets,
+)
 from .review_enrichment import enrich_finding_row
 from .student_friendly_review import make_issue_student_friendly, make_finding_student_friendly
 from .supervisory_review_algorithm import algorithm_contract
@@ -1011,6 +1017,9 @@ def _batch_prompt(
     supervisor_comments: Sequence[Dict[str, Any]],
     context_lock: Dict[str, Any],
     depth: str = "standard",
+    *,
+    compact_mode: bool = False,
+    max_issues_per_target: int = 2,
 ) -> str:
     summary = review.get("summary") or {}
     profile = _review_profile(depth)
@@ -1147,6 +1156,17 @@ def _batch_prompt(
         "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "objective_to_conclusion_traceability_matrix": review.get("objective_alignment_matrix") or {},
         "chapter_review_dimensions": _chapter_dimensions(review),
+        "output_contract": {
+            "compact_primary_mode": bool(compact_mode),
+            "maximum_model_issues_per_target": max(1, int(max_issues_per_target or 1)),
+            "section_assessment_max_words": 45 if compact_mode else 120,
+            "issue_title_max_words": 12 if compact_mode else 24,
+            "assessment_max_words": 55 if compact_mode else 140,
+            "required_action_max_words": 65 if compact_mode else 170,
+            "problematic_quote_max_words": 25,
+            "strengths_in_compact_mode": "omit unless exceptional",
+            "do_not_repeat_source_passages": True,
+        },
         "coverage_contract": {
             "review_every_section_and_subsection": True,
             "return_exactly_one_review_for_each_section_key": True,
@@ -1195,7 +1215,11 @@ def _batch_prompt(
         },
         "instruction": (
             "Review every supplied coverage unit against the applicable programme standard, without repeating the programme label in routine comments. Return exactly one review for every section_key. "
-            "For each coverage unit, assess every target_paragraph_id or target table row individually, use context_paragraph_ids only to understand continuity, and return all target IDs in assessed_paragraph_ids. Internally assign each target PASS, COMMENT, VERIFY SOURCE or RE-ANALYSE. Return no visible issue for PASS. "
+            + (
+                "Use compact JSON. For each target, return no more than the maximum_model_issues_per_target highest-impact evidence-grounded issues. Deterministic checks separately cover routine grammar, spelling, citation syntax and formatting. Keep the section assessment, issue title, assessment and required action within the output_contract word limits. Do not return strengths unless one is exceptional and directly evidenced. "
+                if compact_mode else ""
+            )
+            + "For each coverage unit, assess every target_paragraph_id or target table row individually, use context_paragraph_ids only to understand continuity, and return all target IDs in assessed_paragraph_ids. Internally assign each target PASS, COMMENT, VERIFY SOURCE or RE-ANALYSE. Return no visible issue for PASS. "
             "Use the internal academic guide flexibly rather than mechanically. Do not omit short or apparently adequate passages. "
             "A target passage may have zero issues only after a substantive assessment. There is no predetermined number of comments: report every distinct material issue and do not invent issues to reach a count. "
             "When one chapter is selected from a composite document, review only the supplied current sections and use the other chapters solely for alignment. "
@@ -1918,6 +1942,18 @@ async def enrich_review_with_academic_ai(
     academic_level = str((review.get("summary") or {}).get("academic_level") or "")
     depth = config.resolve_mode(requested_mode, academic_level)
     router = CostAwareAIProvider(config)
+    primary_route_stage = (
+        ReviewStage.RESEARCH_INTENSIVE_REVIEW
+        if _use_research_intensive_route(academic_level, config)
+        else stage_for_depth(depth)
+    )
+    route_plan = router.plan(
+        stage=primary_route_stage,
+        review_depth=depth,
+        requested_model=config.openai_chapter_model,
+        requested_effort=config.openai_chapter_reasoning_effort,
+    )
+    deepseek_primary = route_plan.primary.provider.value == "deepseek"
 
     current = list(runtime.get("current_paragraphs") or [])
     context = list(runtime.get("context_paragraphs") or [])
@@ -1929,12 +1965,31 @@ async def enrich_review_with_academic_ai(
     factual_index = build_factual_index(current)
 
     if config.systematic_coverage_review_enabled:
+        prose_per_unit = config.coverage_prose_paragraphs_per_unit
+        unit_max_chars = config.coverage_unit_max_chars
+        table_rows_per_unit = config.coverage_table_rows_per_unit
+        if deepseek_primary:
+            # DeepSeek first-pass packets are intentionally small. One compact
+            # coverage unit is cheaper and more reliable than paying twice for
+            # a large strict-JSON response that ends with finish_reason=length.
+            prose_per_unit = min(
+                prose_per_unit,
+                config.deepseek_coverage_prose_paragraphs_per_unit,
+            )
+            unit_max_chars = min(
+                unit_max_chars,
+                config.deepseek_coverage_unit_max_chars,
+            )
+            table_rows_per_unit = min(
+                table_rows_per_unit,
+                config.deepseek_coverage_table_rows_per_unit,
+            )
         sections = build_coverage_units(
             current,
-            prose_paragraphs_per_unit=config.coverage_prose_paragraphs_per_unit,
+            prose_paragraphs_per_unit=prose_per_unit,
             context_paragraphs=config.coverage_context_paragraphs,
-            max_chars_per_unit=config.coverage_unit_max_chars,
-            table_rows_per_unit=config.coverage_table_rows_per_unit,
+            max_chars_per_unit=unit_max_chars,
+            table_rows_per_unit=table_rows_per_unit,
         )
     else:
         groups = _section_groups(current)
@@ -2045,17 +2100,41 @@ async def enrich_review_with_academic_ai(
         raise AIProviderError(
             "The selected review service is not configured on the server."
         )
+    if deepseek_primary:
+        primary_tokens = min(
+            primary_tokens,
+            config.deepseek_primary_max_output_tokens,
+        )
 
     # Systematic mode reviews small sequential paragraph/table units instead of
     # sampling or sending a whole chapter as one broad request. Every substantive
     # paragraph and table row belongs to one target unit. Context paragraphs help
     # interpretation but are not substitute review targets.
     if config.systematic_coverage_review_enabled:
+        units_per_request = config.coverage_units_per_request
+        high_risk_units_per_request = config.coverage_high_risk_units_per_request
+        request_max_chars = config.coverage_request_max_chars
+        if deepseek_primary:
+            # DeepSeek strict JSON responses can spend part of the completion
+            # allowance on reasoning. Small evidence packets are cheaper than
+            # paying for several unusable cut-off chapter responses.
+            units_per_request = min(
+                units_per_request,
+                config.deepseek_coverage_units_per_request,
+            )
+            high_risk_units_per_request = min(
+                high_risk_units_per_request,
+                config.deepseek_coverage_high_risk_units_per_request,
+            )
+            request_max_chars = min(
+                request_max_chars,
+                config.deepseek_coverage_request_max_chars,
+            )
         section_batches = coverage_packets(
             sections,
-            max_units_per_request=config.coverage_units_per_request,
-            high_risk_units_per_request=config.coverage_high_risk_units_per_request,
-            max_chars_per_request=config.coverage_request_max_chars,
+            max_units_per_request=units_per_request,
+            high_risk_units_per_request=high_risk_units_per_request,
+            max_chars_per_request=request_max_chars,
         )
     else:
         section_batches = _chapter_review_packets(
@@ -2078,12 +2157,24 @@ async def enrich_review_with_academic_ai(
         route_stage: Optional[ReviewStage] = None,
     ) -> ProviderResult:
         nonlocal completed_primary_batches
+        compact_mode = bool(deepseek_primary)
         user_prompt = _batch_prompt(
-            review, batch, supervisor_comments, context_lock, depth
+            review,
+            batch,
+            supervisor_comments,
+            context_lock,
+            depth,
+            compact_mode=compact_mode,
+            max_issues_per_target=config.deepseek_compact_issue_limit_per_target,
+        )
+        primary_schema = (
+            CompactAcademicReviewBatch
+            if compact_mode
+            else AcademicReviewBatch
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.3.0-design-stage-gated-evidence-ledger",
+            "pipeline": "academic-review-v2.3.2-adaptive-compact-deepseek-evidence-ledger",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2119,7 +2210,7 @@ async def enrich_review_with_academic_ai(
                 model=model,
                 system_prompt=primary_system_prompt,
                 user_prompt=user_prompt,
-                schema_model=AcademicReviewBatch,
+                schema_model=primary_schema,
                 purpose=purpose,
                 reasoning_effort=effort,
                 max_output_tokens=tokens,
@@ -2170,11 +2261,7 @@ async def enrich_review_with_academic_ai(
                 "batched_academic_review",
                 primary_tokens,
                 track_primary_progress=True,
-                route_stage=(
-                    ReviewStage.RESEARCH_INTENSIVE_REVIEW
-                    if _use_research_intensive_route(academic_level, config)
-                    else None
-                ),
+                route_stage=primary_route_stage,
             )
             for batch in section_batches
         ],
@@ -2266,11 +2353,25 @@ async def enrich_review_with_academic_ai(
             target_ids = set(section.get("target_paragraph_ids") or [])
             allowed_ids = target_ids or all_unit_ids
             canonical_section = clean_text(section.get("heading", "Untitled section"))
+
+            def expanded_issue(item: Dict[str, Any]) -> Dict[str, Any]:
+                row = dict(item or {})
+                row.setdefault("academic_consequence", "")
+                row.setdefault("illustrative_guidance", "")
+                row.setdefault(
+                    "guidance_type",
+                    "source_verification"
+                    if row.get("source_verification_required")
+                    else "direct_correction",
+                )
+                row.setdefault("context_guard_adjusted", False)
+                return row
+
             valid_issues = [
                 valid
                 for item in data.get("issues") or []
                 if (valid := _valid_issue(
-                    item,
+                    expanded_issue(item),
                     paragraph_index,
                     context_lock,
                     allowed_ids=allowed_ids,
@@ -2313,28 +2414,114 @@ async def enrich_review_with_academic_ai(
                 assessed_ids = list(section.get("target_paragraph_ids") or [])
                 assessment_inferred = True
             assessed_ids = list(dict.fromkeys(assessed_ids))
-            coverage_complete = not target_ids or target_ids.issubset(set(assessed_ids))
+            row_key = str(
+                section.get("parent_section_key")
+                or section.get("section_key")
+                or ""
+            )
+            expected_target_ids = set(
+                section.get("parent_target_paragraph_ids")
+                or section.get("target_paragraph_ids")
+                or []
+            )
+            coverage_complete = (
+                not expected_target_ids
+                or expected_target_ids.issubset(set(assessed_ids))
+            )
             review_row = {
-                "section_key": section["section_key"], "heading": clean_text(section.get("heading", "Untitled section")),
+                "section_key": row_key,
+                "heading": clean_text(section.get("heading", "Untitled section")),
                 "chapter_number": section.get("chapter_number"),
                 "section_path": list(section.get("section_path") or []),
-                "part": section.get("part", 1), "paragraph_count": len(section.get("paragraphs") or []),
-                "target_paragraph_count": len(target_ids),
+                "part": section.get("part", 1),
+                "paragraph_count": len(section.get("paragraphs") or []),
+                "target_paragraph_count": len(expected_target_ids),
+                "expected_target_paragraph_ids": sorted(expected_target_ids),
                 "assessed_paragraph_ids": assessed_ids,
                 "coverage_complete": coverage_complete,
                 "coverage_assessment_inferred": assessment_inferred,
                 "section_score": float(data.get("section_score") or 0),
                 "section_assessment": section_assessment,
                 "coverage_warning": coverage_warning,
-                "strengths": valid_strengths, "issues": valid_issues, "source_section": section,
+                "strengths": valid_strengths,
+                "issues": valid_issues,
+                "source_section": section,
             }
-            # Recovery may return a more complete version of the same unit. Keep
-            # one canonical row per section_key and prefer complete coverage.
-            existing_index = next((i for i, row in enumerate(section_reviews) if row.get("section_key") == section["section_key"]), None)
+            # Compact single-target recovery calls are merged back into their
+            # parent coverage unit so the final ledger remains one canonical
+            # record per original section key.
+            existing_index = next(
+                (
+                    i
+                    for i, row in enumerate(section_reviews)
+                    if row.get("section_key") == row_key
+                ),
+                None,
+            )
             if existing_index is None:
                 section_reviews.append(review_row)
-            elif coverage_complete or not section_reviews[existing_index].get("coverage_complete"):
-                section_reviews[existing_index] = review_row
+            else:
+                existing = dict(section_reviews[existing_index])
+                merged_assessed = list(dict.fromkeys(
+                    list(existing.get("assessed_paragraph_ids") or [])
+                    + assessed_ids
+                ))
+                merged_expected = set(
+                    existing.get("expected_target_paragraph_ids")
+                    or expected_target_ids
+                ) | expected_target_ids
+                merged_issues = _deduplicate_issues(
+                    list(existing.get("issues") or []) + valid_issues
+                )
+                merged_strengths = list(existing.get("strengths") or [])
+                seen_strengths = {
+                    (
+                        normalised(item.get("category", "")),
+                        tuple(item.get("evidence_paragraph_ids") or []),
+                        normalised(item.get("observation", "")),
+                    )
+                    for item in merged_strengths
+                }
+                for strength in valid_strengths:
+                    signature = (
+                        normalised(strength.get("category", "")),
+                        tuple(strength.get("evidence_paragraph_ids") or []),
+                        normalised(strength.get("observation", "")),
+                    )
+                    if signature not in seen_strengths:
+                        seen_strengths.add(signature)
+                        merged_strengths.append(strength)
+                assessments = [
+                    clean_text(existing.get("section_assessment", "")),
+                    section_assessment,
+                ]
+                merged_assessment = " ".join(
+                    dict.fromkeys(value for value in assessments if value)
+                )
+                existing.update({
+                    "expected_target_paragraph_ids": sorted(merged_expected),
+                    "target_paragraph_count": len(merged_expected),
+                    "assessed_paragraph_ids": merged_assessed,
+                    "coverage_complete": (
+                        not merged_expected
+                        or merged_expected.issubset(set(merged_assessed))
+                    ),
+                    "coverage_assessment_inferred": bool(
+                        existing.get("coverage_assessment_inferred")
+                        or assessment_inferred
+                    ),
+                    "section_score": (
+                        float(existing.get("section_score") or 0)
+                        + float(data.get("section_score") or 0)
+                    ) / 2.0,
+                    "section_assessment": merged_assessment,
+                    "coverage_warning": clean_text(
+                        existing.get("coverage_warning") or coverage_warning
+                    ),
+                    "strengths": merged_strengths,
+                    "issues": merged_issues,
+                })
+                section_reviews[existing_index] = existing
 
     for idx, (batch, result) in enumerate(zip(section_batches, primary_results)):
         if isinstance(result, Exception):
@@ -2357,11 +2544,18 @@ async def enrich_review_with_academic_ai(
     recovery_errors: Dict[str, str] = {}
     verification_failed = False
 
+    truncation_only = bool(failed_batches) and all(
+        isinstance(primary_results[idx], Exception)
+        and "truncated because the output-token limit" in str(primary_results[idx]).lower()
+        for idx in failed_batches
+    )
+
     if (
         missing_sections
         and failed_batches
         and not section_reviews
         and depth in {"light", "standard"}
+        and not truncation_only
     ):
         failure_details = []
         for failed_idx in failed_batches[:3]:
@@ -2381,21 +2575,60 @@ async def enrich_review_with_academic_ai(
         )
 
     if missing_sections:
+        recovery_source_sections = list(missing_sections)
+        recovery_units = max(1, config.coverage_units_per_request // 2)
+        recovery_high_risk_units = 1
+        recovery_chars = max(10000, config.coverage_request_max_chars // 2)
+        recovery_purpose = "chapter_packet_coverage_recovery"
+        if truncation_only and config.systematic_coverage_review_enabled:
+            # A length-truncated packet is not retried at the same granularity.
+            # Split it into one-target requests and merge the responses into the
+            # original coverage record. This prevents three expensive cut-off
+            # attempts from terminating the job.
+            recovery_source_sections = split_coverage_units_to_single_targets(
+                missing_sections,
+                context_paragraphs=1,
+            )
+            recovery_units = 1
+            recovery_high_risk_units = 1
+            recovery_chars = min(
+                config.deepseek_coverage_request_max_chars,
+                config.deepseek_coverage_unit_max_chars + 1800,
+            )
+            recovery_purpose = "single_target_coverage_recovery"
+        elif deepseek_primary:
+            recovery_units = min(
+                recovery_units,
+                config.deepseek_coverage_units_per_request,
+            )
+            recovery_high_risk_units = min(
+                recovery_high_risk_units,
+                config.deepseek_coverage_high_risk_units_per_request,
+            )
+            recovery_chars = min(
+                recovery_chars,
+                config.deepseek_coverage_request_max_chars,
+            )
         recovery_packets = (
             coverage_packets(
-                missing_sections,
-                max_units_per_request=max(1, config.coverage_units_per_request // 2),
-                high_risk_units_per_request=1,
-                max_chars_per_request=max(10000, config.coverage_request_max_chars // 2),
+                recovery_source_sections,
+                max_units_per_request=recovery_units,
+                high_risk_units_per_request=recovery_high_risk_units,
+                max_chars_per_request=recovery_chars,
             )
             if config.systematic_coverage_review_enabled
             else _chapter_review_packets(
-                missing_sections,
+                recovery_source_sections,
                 max(24000, config.chapter_packet_max_chars // 2),
             )
         )
-        recovery_tokens = min(
-            primary_tokens, config.chapter_recovery_max_output_tokens
+        recovery_tokens = (
+            min(
+                primary_tokens,
+                config.deepseek_single_target_recovery_max_output_tokens,
+            )
+            if truncation_only
+            else min(primary_tokens, config.chapter_recovery_max_output_tokens)
         )
         completed_recovery_packets = 0
         recovery_progress_lock = asyncio.Lock()
@@ -2407,7 +2640,7 @@ async def enrich_review_with_academic_ai(
             result = await primary_call(
                 packet,
                 *_batch_model_route(packet, academic_level, config),
-                "chapter_packet_coverage_recovery",
+                recovery_purpose,
                 recovery_tokens,
             )
             async with recovery_progress_lock:
@@ -2430,7 +2663,9 @@ async def enrich_review_with_academic_ai(
         for packet, result in zip(recovery_packets, recovery_results):
             if isinstance(result, Exception):
                 for section in packet:
-                    recovery_errors[section["section_key"]] = str(result)
+                    recovery_errors[
+                        str(section.get("parent_section_key") or section["section_key"])
+                    ] = str(result)
                 continue
             consume_batch(packet, result)
 
@@ -2445,11 +2680,33 @@ async def enrich_review_with_academic_ai(
     if still_missing:
         verification_failed = True
         for section in still_missing:
-            section_reviews.append(
-                _unresolved_section_fallback(
-                    section, recovery_errors.get(section["section_key"], "")
-                )
+            section_key = str(section.get("section_key") or "")
+            existing_index = next(
+                (
+                    i
+                    for i, row in enumerate(section_reviews)
+                    if str(row.get("section_key") or "") == section_key
+                ),
+                None,
             )
+            fallback = _unresolved_section_fallback(
+                section,
+                recovery_errors.get(section_key, ""),
+            )
+            if existing_index is None:
+                section_reviews.append(fallback)
+            else:
+                # Preserve any successfully recovered target findings and mark
+                # only the remaining targets unresolved. Do not create a second
+                # row with the same canonical section key.
+                existing = dict(section_reviews[existing_index])
+                existing["coverage_complete"] = False
+                existing["coverage_warning"] = fallback.get(
+                    "coverage_warning",
+                    existing.get("coverage_warning", ""),
+                )
+                existing["manual_confirmation_required"] = True
+                section_reviews[existing_index] = existing
         await _notify(
             progress_callback,
             64,
@@ -2555,7 +2812,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.3.0-risk-selected-release-guard",
+                "pipeline": "academic-comment-audit-v2.3.2-risk-selected-release-guard",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,

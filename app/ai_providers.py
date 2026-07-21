@@ -409,9 +409,34 @@ class DeepSeekProvider:
 
         last_error: Optional[Exception] = None
         attempts = max(1, self.config.structured_output_retries + 1)
+        requested_output_tokens = int(
+            max_output_tokens or self.config.max_output_tokens
+        )
 
         for attempt in range(attempts):
             request_body = dict(body)
+            previous_message = str(last_error or "").strip().lower()
+            if (
+                attempt
+                and self.config.deepseek_truncation_recovery_enabled
+                and "truncated because the output-token limit" in previous_message
+            ):
+                expanded = max(
+                    requested_output_tokens + 1200,
+                    int(
+                        requested_output_tokens
+                        * self.config.deepseek_truncation_retry_multiplier
+                    ),
+                )
+                request_body["max_tokens"] = min(
+                    self.config.deepseek_max_output_tokens,
+                    expanded,
+                )
+                # A cut-off strict JSON object cannot be repaired while hidden
+                # reasoning continues to consume the same completion budget.
+                # The bounded retry therefore prioritises the complete schema.
+                request_body["thinking"] = {"type": "disabled"}
+                request_body.pop("reasoning_effort", None)
             if attempt:
                 request_body["messages"] = [
                     request_body["messages"][0],
@@ -420,8 +445,9 @@ class DeepSeekProvider:
                         "content": (
                             user_prompt
                             + "\n\nThe previous response was empty, incomplete, or did not "
-                              "match the required schema. Return one complete JSON object "
-                              "matching the schema exactly."
+                              "match the required schema. Return one complete compact JSON object "
+                              "matching the schema exactly. Do not repeat source passages, do not "
+                              "add commentary outside JSON, and keep assessments and actions concise."
                         ),
                     },
                 ]
@@ -485,6 +511,19 @@ class DeepSeekProvider:
 
             except (ValidationError, AIProviderError) as exc:
                 last_error = exc
+                message = str(exc).lower()
+                if (
+                    "truncated because the output-token limit" in message
+                    and purpose in {
+                        "batched_academic_review",
+                        "chapter_packet_coverage_recovery",
+                        "single_target_coverage_recovery",
+                    }
+                ):
+                    # Do not pay for the same oversized academic packet twice.
+                    # The academic engine responds to finish_reason=length by
+                    # splitting the unit into one-target recovery requests.
+                    break
                 if attempt + 1 >= attempts:
                     break
 
