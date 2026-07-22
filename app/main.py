@@ -26,6 +26,7 @@ from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_i
 from .auth import (
     authenticate,
     create_bootstrap_admin,
+    initialise_admin_from_environment,
     generate_recovery_pin,
     generate_temporary_password,
     hash_secret,
@@ -86,7 +87,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -133,12 +134,32 @@ async def _run_startup_tasks() -> None:
     init_db()
     ensure_storage()
     with SessionLocal() as db:
-        generated = create_bootstrap_admin(db)
-        if generated:
+        admin_state = initialise_admin_from_environment(db)
+        if admin_state.get("created") and admin_state.get("generated_password"):
             logger.warning(
                 "No administrator existed. A bootstrap administrator was created. Username=%s TemporaryPassword=%s. Change it immediately.",
-                os.getenv("ADMIN_USERNAME", "admin"),
-                generated,
+                admin_state.get("username"),
+                admin_state.get("generated_password"),
+            )
+        elif admin_state.get("created"):
+            logger.info(
+                "The first administrator was created from ADMIN_USERNAME and ADMIN_PASSWORD. Username=%s.",
+                admin_state.get("username"),
+            )
+        elif admin_state.get("reset"):
+            logger.warning(
+                "The administrator credential was reset from ADMIN_PASSWORD because "
+                "VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP=true. Username=%s. Disable the "
+                "reset flag and redeploy after confirming access.",
+                admin_state.get("username"),
+            )
+        else:
+            logger.info(
+                "An administrator already exists in the database. ADMIN_PASSWORD is "
+                "bootstrap-only and was not reapplied. Username=%s. Use the account "
+                "password or enable VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP for one "
+                "controlled reset.",
+                admin_state.get("username"),
             )
     config = HybridAIConfig.from_env()
     logger.info(
