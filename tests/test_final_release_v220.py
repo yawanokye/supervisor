@@ -167,7 +167,7 @@ def test_same_anchor_findings_share_one_sorted_native_comment_box(monkeypatch):
     document = Document(io.BytesIO(output))
     comment_texts = [" ".join(p.text for p in comment.paragraphs) for comment in document.comments]
     assert native_comment_count(output) < len(canonical)
-    purpose_comment = next(text for text in comment_texts if "benefits that come" in text)
+    purpose_comment = next(text for text in comment_texts if "purpose, objectives" in text.lower())
     purpose_numbers = [int(token[:-1]) for token in purpose_comment.split() if token[:-1].isdigit() and token.endswith(".")]
     assert purpose_numbers == sorted(purpose_numbers)
     assert "unit and scope" in purpose_comment.lower()

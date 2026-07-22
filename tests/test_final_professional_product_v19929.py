@@ -98,20 +98,21 @@ def test_examples_are_clean_and_specific_to_the_bank_study():
     ))
 
 
-def test_scope_conflict_and_scope_completeness_are_both_retained():
+def test_scope_conflict_and_scope_completeness_are_consolidated_into_one_actionable_finding():
     review = {
         "summary": {"academic_level": "MPhil", "study_title": "Internal Controls and Fraud Prevention at Assinman Rural Bank PLC"},
         "academic_findings": [],
         "_runtime_context": {"current_paragraphs": _runtime()},
     }
     rows = build_canonical_finding_rows(review, force=True)
-    ids = {row.get("finding_id") for row in rows}
-    assert "HUMAN-SCOPE-CONSISTENCY" in ids
-    assert "HUMAN-SCOPE-COMPLETENESS" in ids
-    conflict = next(row for row in rows if row.get("finding_id") == "HUMAN-SCOPE-CONSISTENCY")
-    assert "commercial banks" in conflict["student_comment"].lower()
-    assert "rural banks" in conflict["student_comment"].lower()
-    assert "assinman rural bank plc" in conflict["student_comment"].lower()
+    scope_rows = [row for row in rows if "scope" in (row.get("item") or "").lower()]
+    assert len(scope_rows) == 1
+    merged = set(scope_rows[0].get("merged_finding_ids") or [])
+    assert {"HUMAN-SCOPE-CONSISTENCY", "HUMAN-SCOPE-COMPLETENESS"}.issubset(merged)
+    combined = scope_rows[0]
+    assert "assinman rural bank plc" in combined["student_comment"].lower()
+    evidence_text = " ".join(item.get("text", "") for item in combined.get("evidence") or []).lower()
+    assert "commercial banks" in evidence_text and "rural banks" in evidence_text
 
 
 def test_two_limitations_findings_are_consolidated_into_one_human_comment():
