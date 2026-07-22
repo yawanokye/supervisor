@@ -483,6 +483,12 @@ def _severity_rank(value: Any) -> int:
 
 
 def _merge_rows(primary: Dict[str, Any], duplicate: Dict[str, Any]) -> Dict[str, Any]:
+    # Keep the more specific deterministic finding as the public root when an
+    # AI finding describes the same defect more broadly. This preserves exact
+    # title-purpose, setting, citation and structural evidence while still
+    # consolidating duplicate actions.
+    if _is_evidence_locked(duplicate) and not _is_evidence_locked(primary):
+        primary, duplicate = duplicate, primary
     output = dict(primary)
     if _severity_rank(duplicate.get("severity")) < _severity_rank(output.get("severity")):
         output["severity"] = duplicate.get("severity")
@@ -500,6 +506,16 @@ def _merge_rows(primary: Dict[str, Any], duplicate: Dict[str, Any]) -> Dict[str,
     output["evidence_paragraph_ids"] = list(dict.fromkeys(
         list(output.get("evidence_paragraph_ids") or []) + list(duplicate.get("evidence_paragraph_ids") or [])
     ))[:12]
+    merged_ids = list(output.get("merged_finding_ids") or [])
+    for identifier in (output.get("finding_id"), duplicate.get("finding_id")):
+        identifier = _clean(identifier)
+        if identifier and identifier not in merged_ids:
+            merged_ids.append(identifier)
+    for identifier in duplicate.get("merged_finding_ids") or []:
+        identifier = _clean(identifier)
+        if identifier and identifier not in merged_ids:
+            merged_ids.append(identifier)
+    output["merged_finding_ids"] = merged_ids
     family = _issue_family(output)
     if family == "statistical_model":
         table_label = _derive_section_label(output)

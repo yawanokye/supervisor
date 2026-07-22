@@ -2187,7 +2187,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.5.0-isolated-generic-natural-evidence-ledger",
+            "pipeline": "academic-review-v2.7.0-final-isolated-generic-natural-evidence-ledger",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2825,7 +2825,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.5.0-isolated-risk-selected-natural-release-guard",
+                "pipeline": "academic-comment-audit-v2.7.0-final-isolated-risk-selected-release-guard",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,

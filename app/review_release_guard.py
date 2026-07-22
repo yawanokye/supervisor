@@ -671,6 +671,18 @@ def filter_and_rewrite_release_findings(
             blob = _row_blob(row)
         if section_key == "organisation" and any(term in blob for term in ("missing content", "contains no text", "section is empty")) and _organisation_is_present(runtime):
             continue
+        if section_key == "organisation" and any(term in blob for term in (
+            "sparse chapter descriptions", "chapter descriptions are very brief",
+            "chapter outline is too brief", "expand each chapter description",
+        )):
+            # Concision alone is not an academic defect. Retain an organisation
+            # finding only when the outline is inaccurate, internally
+            # inconsistent or omits a chapter that is actually planned.
+            if not any(term in blob for term in (
+                "does not match", "inaccurate", "contradict", "omits", "missing chapter",
+                "different chapter", "wrong chapter",
+            )):
+                continue
 
         if any(term in blob for term in ("hypotheses", "hypothesis")) and any(term in blob for term in ("missing", "without corresponding", "formulate hypotheses")):
             contract_requires = bool(row.get("section_contract_verified") and row.get("missing_section_label"))
@@ -738,9 +750,11 @@ def _family(row: Mapping[str, Any]) -> str:
     if "construct terminology" in finding_id or "principal construct" in title:
         return "construct_consistency"
     if any(term in title for term in (
-        "undefined central construct", "undefined key construct", "constructs not defined",
-        "constructs are undefined", "missing conceptual framing", "constructs not connected",
-        "conceptual anchor", "theoretical or conceptual anchor", "brief conceptual link",
+        "undefined central construct", "undefined key construct", "undefined supply chain management",
+        "use of supply chain management is undefined", "it and scm concepts undefined",
+        "constructs not defined", "constructs are undefined", "missing conceptual framing",
+        "constructs not connected", "conceptual anchor", "theoretical or conceptual anchor",
+        "brief conceptual link", "central constructs are not defined",
     )):
         return "construct_definition"
     if "background" in section and any(term in title for term in (
@@ -770,7 +784,7 @@ def _family(row: Mapping[str, Any]) -> str:
     ):
         return "background_local_context"
     if "problem" in section and not any(term in title for term in ("citation", "source", "verify", "verification", "reference", "spelling", "grammar", "punctuation")) and any(
-        term in title for term in ("gap", "evidence", "specific", "problem statement", "informal sector", "study title", "repetitive", "unsupported", "vague", "focus")
+        term in title for term in ("gap", "evidence", "specific", "problem statement", "problem not specified", "informal sector", "study title", "repetitive", "unsupported", "vague", "focus")
     ):
         return "problem_local_gap"
     if "significance" in section and not any(term in title for term in ("research gap", "problem statement", "gap is placed")) and any(
@@ -871,7 +885,17 @@ def consolidate_release_families(rows: Sequence[Mapping[str, Any]], review: Mapp
         if not family:
             output.append(row)
             continue
-        key = (chapter_number(row), family, _consolidation_scope(row, family))
+        finding_id = _norm(row.get("finding_id"))
+        preserve_exact = any(marker in finding_id for marker in (
+            "title purpose relationship term", "study setting drift",
+            "incomplete parenthetical", "unresolved supervisor instruction",
+            "citation",
+        ))
+        # Preserve a small set of exact high-confidence deterministic checks
+        # until the final canonical pass. Broader deterministic alignment checks
+        # may still consolidate with equivalent AI findings.
+        scope = ("hard:" + finding_id) if preserve_exact else _consolidation_scope(row, family)
+        key = (chapter_number(row), family, scope)
         if key not in family_index:
             family_index[key] = len(output)
             output.append(row)
@@ -895,14 +919,14 @@ def consolidate_release_families(rows: Sequence[Mapping[str, Any]], review: Mapp
         "ethics_permissions": "Ethical clearance and institutional access procedures are not fully reported",
         "numeric_source": "A numerical empirical claim needs clearer source support",
         "moderation_alignment": "The proposed moderation role is not aligned with the objectives and analysis plan",
-        "background_local_context": "The background does not narrow clearly to the study constructs, setting and research gap",
+        "background_local_context": "The background needs a clearer evidence-led progression",
         "problem_local_gap": "The problem statement needs a concise, locally evidenced problem and a precise research gap",
         "significance_contribution": "The significance claims need to be specific to the study's scholarly, practical and policy contribution",
         "terminology_consistency": "The chapter uses overlapping labels for the main construct without defining or applying them consistently",
     }
     standard_actions = {
         "background_local_context": (
-            f"Restructure the background from the wider topic to {setting}. Define {construct_phrase}, use relevant evidence from the closest applicable context, remove tangential material and end with the exact gap addressed by the study."
+            f"Restructure the background from the wider topic to {setting}, use relevant evidence from the closest applicable context, remove tangential material and end with the exact problem or gap addressed by the study. Reserve detailed comparison of individual studies for the literature review chapter."
         ),
         "construct_definition": (
             f"Define {construct_phrase} as they are used in this study, distinguish overlapping labels, and show how the constructs connect to the objectives and proposed analysis."

@@ -46,6 +46,49 @@ def _sentence(value: Any) -> str:
     return text if text.endswith((".", "?", "!")) else text + "."
 
 
+
+
+def _sentences(value: Any) -> List[str]:
+    """Split prose into complete sentences without breaking quoted examples."""
+    text = _clean(value)
+    if not text:
+        return []
+    output: List[str] = []
+    start = 0
+    round_depth = 0
+    square_depth = 0
+    curly_quote_open = False
+    straight_quote_open = False
+    for index, char in enumerate(text):
+        if char == "(":
+            round_depth += 1
+        elif char == ")" and round_depth:
+            round_depth -= 1
+        elif char == "[":
+            square_depth += 1
+        elif char == "]" and square_depth:
+            square_depth -= 1
+        elif char == "‘":
+            curly_quote_open = True
+        elif char == "’" and curly_quote_open:
+            curly_quote_open = False
+        elif char == '"':
+            straight_quote_open = not straight_quote_open
+        if char not in ".!?" or round_depth or square_depth or curly_quote_open or straight_quote_open:
+            continue
+        next_char = text[index + 1:index + 2]
+        if next_char and not next_char.isspace():
+            continue
+        sentence = text[start:index + 1].strip()
+        if sentence:
+            output.append(sentence)
+        start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        output.append(tail)
+    return output
+
+
 def _direct_action(value: Any) -> str:
     text = _clean(value)
     if not text or any(phrase in _norm(text) for phrase in _GENERIC_ACTIONS):
@@ -113,19 +156,20 @@ def natural_supervisor_comment(
     verification = _clean(row.get("verification_test") or row.get("verification"))
     example = _clean(row.get("illustrative_guidance"))
 
-    opening = assessment or issue
+    opening_parts: List[str] = []
     if issue and assessment and SequenceMatcher(None, _norm(issue), _norm(assessment)).ratio() < 0.70:
-        opening = f"{issue.rstrip(' .')}. {assessment}"
+        opening_parts.append(issue)
+    opening_parts.extend(_sentences(assessment or issue)[:2])
 
     sentences: List[str] = []
-    sentences.extend(_unique_sentences([opening], limit=2))
+    sentences.extend(_unique_sentences(opening_parts, limit=2))
     if action:
-        sentences.extend(_unique_sentences([action], limit=1))
+        sentences.extend(_unique_sentences(_sentences(action)[:1], limit=1))
 
-    if not compact and include_reason and reason:
-        # Consequences often arrive as complete sentences. Keep them direct rather
-        # than adding another visible label such as "Why this matters".
-        sentences.extend(_unique_sentences([reason], limit=1))
+    if not compact and include_reason and reason and len(sentences) < 3:
+        # Consequences are retained only when the diagnostic and action have not
+        # already filled the three-sentence student-facing limit.
+        sentences.extend(_unique_sentences(_sentences(reason)[:1], limit=1))
 
     if not compact and include_verification and verification and not _is_generic_verification(verification):
         verification = re.sub(r"^(?:verify|confirm|check)\s+", "", verification, flags=re.I)

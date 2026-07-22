@@ -149,10 +149,8 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     # Keep conservative human-judgement findings distinct from broader section
     # findings. Otherwise a useful scope conflict, citation example or language
     # example can disappear during root-cause consolidation.
-    if finding_id == "human scope consistency":
-        return (chapter, "scope_population_inconsistency")
-    if finding_id == "human scope completeness":
-        return (chapter, "scope_completeness")
+    if finding_id in {"human scope consistency", "human scope completeness"}:
+        return (chapter, "scope_boundary_population_and_period")
     if finding_id == "human citation presentation":
         return (chapter, "citation_presentation_and_verification")
     if finding_id == "human language editing":
@@ -162,6 +160,35 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
         term in finding_text for term in ("citation", "reference list", "source attribution", "source verification")
     ):
         return (chapter, "citation_presentation_and_verification")
+
+    # Consolidate one academic root cause even when different reviewers attach
+    # it to adjacent sections. This is intentionally domain-generic and uses
+    # only the current submission's wording.
+    construct_markers = (
+        "undefined construct", "constructs are not defined", "constructs not defined",
+        "concepts undefined", "term is undefined", "terms are undefined",
+        "operationally defined", "used consistently", "overlapping labels",
+        "terminology consistency", "define the main study constructs",
+        "define the key constructs",
+    )
+    if any(marker in finding_text for marker in construct_markers) and not any(
+        marker in finding_text for marker in ("table", "coefficient", "measurement model", "factor loading")
+    ):
+        return (chapter, "construct_definition_and_terminology")
+
+    if "background" in section:
+        if any(marker in finding_text for marker in (
+            "does not narrow", "narrow clearly", "study setting", "local context",
+            "declared study setting", "informal sector", "formal sector",
+            "transition", "context and research gap", "contextual relevance",
+            "broad topic", "tangential",
+        )):
+            return (chapter, "background_context_and_progression")
+        if any(marker in finding_text for marker in (
+            "critical synthesis", "descriptive rather than", "descriptive without critique",
+            "compare the most relevant studies", "literature is descriptive",
+        )):
+            return (chapter, "background_critical_synthesis")
 
     table = _norm(_table_reference(row))
     if table and any(term in finding_text for term in (
@@ -183,6 +210,8 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
         if any(term in finding_text for term in (
             "local evidence", "empirical evidence", "policy evidence", "magnitude", "scale",
             "research gap", "unresolved", "full purpose", "does not yet perform",
+            "problem not specified", "problem lacks specificity", "vague and unevidenced",
+            "precise problem", "practical problem", "problem is not localised",
         )):
             return (chapter, "problem_evidence_and_gap")
 
@@ -196,12 +225,10 @@ def _root_cause_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
     if any(term in section for term in ("scope", "delimitation")):
         if category == "scope completeness" or any(term in finding_text for term in (
             "scope section is incomplete", "unit of analysis", "study period", "important exclusions",
+            "case study", "population", "sampling frame", "generalisation", "generalization",
+            "not used consistently", "institutional scope", "geographical boundary",
         )):
-            return (chapter, "scope_completeness")
-        if any(term in finding_text for term in (
-            "case study", "population", "scope", "unit of analysis", "sampling frame", "generalisation", "generalization",
-        )):
-            return (chapter, "scope_and_population", paragraph)
+            return (chapter, "scope_boundary_population_and_period")
 
     if any(term in section for term in ("question", "objective", "hypoth", "purpose")):
         if any(term in finding_text for term in ("align", "inferential", "relational", "impact", "effect", "hypoth")):
@@ -245,7 +272,44 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
     joined = _join_terms(construct_values[:4])
     setting = _setting_term(terms)
 
-    if family == "problem_evidence_and_gap":
+    if family == "construct_definition_and_terminology":
+        output["item"] = output["issue_title"] = "The central constructs need clear and consistent definitions"
+        focus = joined or "the study's main constructs"
+        output["comment"] = output["assessment"] = (
+            f"The chapter uses {focus} without defining their precise meaning, dimensions or relationship in the current study."
+        )
+        output["academic_consequence"] = (
+            "Unclear or shifting construct labels weaken the problem, alignment, measurement and interpretation of the study."
+        )
+        output["required_action"] = (
+            "Define each central construct in the study context, distinguish any overlapping labels, specify the dimensions to be examined and use the selected terminology consistently across the title, purpose, objectives, questions and methodology."
+        )
+
+    elif family == "background_context_and_progression":
+        output["item"] = output["issue_title"] = "The background needs a clearer evidence-led progression"
+        output["comment"] = output["assessment"] = (
+            "The discussion remains broad and does not build a clear evidence-led progression from the wider topic to the declared setting, practical problem and unresolved research issue."
+        )
+        output["academic_consequence"] = (
+            "The reader cannot see why the general literature leads to this particular study."
+        )
+        output["required_action"] = (
+            "Retain only the most relevant wider evidence, introduce the closest applicable context, explain how it relates to the current setting and end the background with the exact gap addressed by the study."
+        )
+
+    elif family == "background_critical_synthesis":
+        output["item"] = output["issue_title"] = "The background relies on description rather than focused synthesis"
+        output["comment"] = output["assessment"] = (
+            "The sources are mainly presented one after another without comparing their contexts, methods, findings or limitations. Chapter One does not require the full study-by-study critical synthesis expected in Chapter Two, but it should still show the evidence-led progression that justifies the study."
+        )
+        output["academic_consequence"] = (
+            "This makes the background informative but does not establish the scholarly basis for the present study."
+        )
+        output["required_action"] = (
+            "Compare the most relevant studies by context, method and finding, then explain which limitations, disagreements or omissions justify the current study. Keep this discussion proportionate to Chapter One."
+        )
+
+    elif family == "problem_evidence_and_gap":
         output["item"] = output["issue_title"] = "The problem statement needs stronger evidence and a precise unresolved issue"
         focus = joined or "the study's main constructs"
         output["comment"] = output["assessment"] = (
@@ -317,6 +381,19 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
             output["illustrative_guidance"] = (
                 f"use the same terms for {joined} in the objective, question or hypothesis, method and reported result"
             )
+
+    elif family == "scope_boundary_population_and_period":
+        output["item"] = output["issue_title"] = "The study population and institutional scope need one consistent definition"
+        output["comment"] = output["assessment"] = (
+            "The scope does not state all the boundaries needed to understand the study, and the population or setting is not used consistently across the chapter."
+        )
+        output["academic_consequence"] = (
+            "This affects the sampling frame, unit of analysis, interpretation and the limits of the conclusions."
+        )
+        output["required_action"] = (
+            "State one geographical or institutional setting, participant group or unit of analysis, main constructs, study period and important exclusions, then use that scope consistently across the title, problem, purpose, objectives, methods and conclusions."
+        )
+        output["illustrative_guidance"] = _clean(output.get("illustrative_guidance"))
 
     elif family == "scope_completeness":
         output["item"] = output["issue_title"] = "The scope section is incomplete"
@@ -1078,7 +1155,11 @@ def _citation_presentation_finding(review: Dict[str, Any]) -> Dict[str, Any] | N
         duplicate = len(citation_keys) != len(set(citation_keys))
         spacing = bool(re.search(r"[A-Za-z0-9]\((?:[A-Z][A-Za-z'’-]+|[A-Z]{2,})", text))
         fragmented = bool(re.search(r"\)\s*,\s*\(", text))
-        if not (duplicate or spacing or fragmented):
+        parenthetical_and = bool(re.search(
+            r"\([A-Z][A-Za-z'’\-]+(?:\s+[A-Z][A-Za-z'’\-]+){0,3}\s+and\s+[A-Z][A-Za-z'’\-]+(?:\s+[A-Z][A-Za-z'’\-]+){0,3},\s*(?:19|20)\d{2}[a-z]?\)",
+            text, flags=re.I,
+        ))
+        if not (duplicate or spacing or fragmented or parenthetical_and):
             continue
         unique_inner: List[str] = []
         seen = set()
@@ -1102,9 +1183,9 @@ def _citation_presentation_finding(review: Dict[str, Any]) -> Dict[str, Any] | N
             "section_reference": _clean(row.get("heading") or row.get("section_reference") or "Academic presentation"),
             "category": "citation_and_reference_integrity",
             "item": "The citation presentation contains duplication and punctuation errors",
-            "comment": "Some citations are repeated in the same sentence, run directly into the preceding word or are separated into unnecessary citation groups.",
+            "comment": "The marked citation contains duplication, spacing, punctuation or author-format problems that prevent consistent source attribution.",
             "academic_consequence": "These errors interrupt the flow of the argument and make source checking unnecessarily difficult.",
-            "required_action": "Remove exact duplicate citations, insert the required space before each citation and combine sources supporting the same claim into one correctly punctuated citation group.",
+            "required_action": "Check the author names against the original source, use the required author-date convention, remove exact duplicates, insert the required spacing and combine sources supporting the same claim into one correctly punctuated citation group.",
             "illustrative_guidance": example,
             "problematic_quote": _safe_excerpt(text),
             "evidence": [{**row, "document_role": "current"}],
@@ -1124,6 +1205,11 @@ def _language_editing_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
         (r"\brationalization\b", "rationalization", "rationalisation"),
         (r"\bgeneralization\b", "generalization", "generalisation"),
         (r"\banalyzing\b", "analyzing", "analysing"),
+        (r"\bbehavior\b", "behavior", "behaviour"),
+        (r"\borganization\b", "organization", "organisation"),
+        (r"\butilization\b", "utilization", "utilisation"),
+        (r"\bet\s+al\.\s*\((?:19|20)\d{2}[a-z]?\)\s+defines\b", "et al. (...) defines", "et al. (...) define"),
+        (r"\bet\s+al\.\s*\((?:19|20)\d{2}[a-z]?\)\s+shows\b", "et al. (...) shows", "et al. (...) show"),
     )
     rows = [row for row in _current_paragraphs(review) if clean_text(row.get("text"))]
     examples: List[Tuple[str, str]] = []
@@ -1163,6 +1249,96 @@ def _language_editing_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
         "human_deterministic_finding": True,
     }
 
+
+
+def _limitations_quality_finding(review: Dict[str, Any], terms: Sequence[str]) -> Dict[str, Any] | None:
+    """Flag generic limitations only when their consequences are not explained."""
+    if not _env_enabled("VPROF_LIMITATIONS_CONSEQUENCE_AUDIT", True):
+        return None
+    rows = [
+        row for row in _section_rows(review, "limitations of the study", "study limitations", "limitations")
+        if not row.get("is_heading") and _clean(row.get("text"))
+    ]
+    if not rows:
+        return None
+    text = " ".join(_clean(row.get("text")) for row in rows)
+    low = _norm(text)
+    constraint_markers = (
+        "time constraint", "limited time", "financial constraint", "cost constraint",
+        "difficulty retrieving", "data access", "reluctance", "non response", "nonresponse",
+        "respondents", "sample", "measurement", "self reported", "self-reported",
+    )
+    consequence_markers = (
+        "may affect", "affected", "may limit", "limited the", "may reduce", "reduced the",
+        "may bias", "bias the", "restricts", "restricted", "consequence", "implication",
+        "interpretation", "generalis", "transferab", "validity", "reliability", "response rate",
+    )
+    if not any(marker in low for marker in constraint_markers):
+        return None
+    # A bare assertion that mitigation "ensured validity and reliability" is not
+    # an explanation of how each limitation affected the evidence.
+    explained = sum(1 for marker in consequence_markers if marker in low)
+    if explained >= 2 and any(marker in low for marker in ("may affect", "may limit", "may bias", "interpretation", "generalis", "transferab")):
+        return None
+    anchor = rows[0]
+    return {
+        "finding_id": "HUMAN-LIMITATIONS-CONSEQUENCES",
+        "status": "partly_meets_requirement",
+        "severity": "moderate",
+        "confidence": 0.95,
+        "chapter_number": 1,
+        "section": _row_heading(anchor) or "Limitations of the Study",
+        "section_reference": _row_heading(anchor) or "Limitations of the Study",
+        "category": "limitations_quality",
+        "item": "The limitations are listed without explaining their effect on the evidence",
+        "comment": "The section names practical constraints, but it does not explain how each one affected data quality, measurement, response, interpretation or the limits of the conclusions.",
+        "academic_consequence": "A general list of constraints does not allow the reader to judge the strength or boundaries of the evidence.",
+        "required_action": "For each material limitation, state what occurred, how it affected the study, what mitigation was used and what uncertainty remains. Distinguish limitations encountered from constraints that were only anticipated.",
+        "illustrative_guidance": _limitations_example(review, terms),
+        "problematic_quote": _safe_excerpt(anchor.get("text")),
+        "evidence": [{**anchor, "document_role": "current"}],
+        "annotation_eligible": True,
+        "human_deterministic_finding": True,
+    }
+
+
+def _absolute_claim_finding(review: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Identify an unsupported absolute scholarly claim in the current submission."""
+    if not _env_enabled("VPROF_ABSOLUTE_CLAIM_AUDIT", True):
+        return None
+    pattern = re.compile(
+        r"\b(?:eliminates?|guarantees?|completely\s+prevents?|fully\s+prevents?|removes?\s+all|zero\s+risk\s+of)\b[^.!?]{0,90}",
+        flags=re.I,
+    )
+    for row in _current_paragraphs(review):
+        if row.get("is_heading") or not _clean(row.get("text")):
+            continue
+        text = _clean(row.get("text"))
+        match = pattern.search(text)
+        if not match:
+            continue
+        quote = _safe_excerpt(match.group(0), 180)
+        return {
+            "finding_id": "HUMAN-ABSOLUTE-CLAIM",
+            "status": "partly_meets_requirement",
+            "severity": "moderate",
+            "confidence": 0.97,
+            "chapter_number": row.get("chapter_number"),
+            "section": _row_heading(row) or "Academic argument",
+            "section_reference": _row_heading(row) or "Academic argument",
+            "category": "claim_precision",
+            "item": "An absolute claim is stronger than the available evidence can normally support",
+            "comment": f"The statement ‘{quote}’ presents the claimed outcome as certain rather than conditional on context, implementation and evidence.",
+            "academic_consequence": "Absolute wording can overstate the literature and weaken the credibility of the argument.",
+            "required_action": "Replace the absolute claim with a proportionate expression such as may improve, can reduce or is associated with, unless a cited source directly supports the stronger wording in the same context.",
+            "illustrative_guidance": "state the likely contribution and the conditions under which it may occur rather than claiming complete prevention or guaranteed outcomes",
+            "problematic_quote": quote,
+            "evidence": [{**row, "document_role": "current"}],
+            "annotation_eligible": True,
+            "human_deterministic_finding": True,
+        }
+    return None
+
 def add_human_judgement_findings(
     rows: Sequence[Dict[str, Any]],
     review: Dict[str, Any],
@@ -1176,6 +1352,8 @@ def add_human_judgement_findings(
         _scope_completeness_finding(review, terms),
         _citation_presentation_finding(review),
         _language_editing_finding(review),
+        _limitations_quality_finding(review, terms),
+        _absolute_claim_finding(review),
     ]
     existing_ids = {_norm(row.get("finding_id")) for row in output if _norm(row.get("finding_id"))}
     existing_codes = {_norm(row.get("checklist_code")) for row in output if _norm(row.get("checklist_code"))}

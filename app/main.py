@@ -87,7 +87,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.6.1"
+APP_VERSION = "2.7.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -1520,7 +1520,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v2.5.0-current-submission-isolated-natural-release",
+            "pipeline": "review-pipeline-v2.7.0-final-current-submission-isolated-reconciled",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1549,7 +1549,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v2.5.0-generic-whole-section-contradiction-gated",
+                "pipeline": "document-analysis-v2.7.0-final-generic-whole-section-contradiction-gated",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1643,7 +1643,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v2.5.0-isolated-natural-reconciled-ledger",
+                "pipeline": "academic-review-complete-v2.7.0-final-isolated-natural-reconciled-ledger",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,

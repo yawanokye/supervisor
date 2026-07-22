@@ -29,8 +29,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.6.0-final-generic-natural-reconciled-review"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.6.0-final-generic-natural-reconciled-review"
+ANNOTATION_EXPORT_VERSION = "2.7.0-final-professional-reconciled-review"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.0-final-professional-reconciled-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -44,28 +44,96 @@ def _existing_comment_policy() -> str:
     return value if value in {"label", "preserve"} else "label"
 
 
-def _label_existing_source_comments(document) -> None:
-    """Distinguish comments already present in the submitted DOCX.
+def _remove_comment_from_document(document, comment) -> None:
+    """Remove an empty source comment and its Word range markers safely."""
+    comment_id = str(getattr(comment, "comment_id", ""))
+    if not comment_id:
+        return
+    for tag in ("commentRangeStart", "commentRangeEnd"):
+        for node in list(document.element.xpath(f".//w:{tag}[@w:id='{comment_id}']")):
+            parent = node.getparent()
+            if parent is not None:
+                parent.remove(node)
+    for node in list(document.element.xpath(f".//w:commentReference[@w:id='{comment_id}']")):
+        run = node.getparent()
+        if run is not None:
+            run.remove(node)
+            if not run.xpath(".//w:t") and not run.xpath(".//w:drawing"):
+                parent = run.getparent()
+                if parent is not None:
+                    parent.remove(run)
+    element = getattr(comment, "_element", None)
+    if element is not None and element.getparent() is not None:
+        element.getparent().remove(element)
 
-    Existing comments are source evidence, not V-Professor findings. Labelling
-    them prevents old numbering or obsolete advice from satisfying the current
-    release reconciliation check.
+
+def _source_comment_status(original_text: str, document_text: str) -> str:
+    """Return a conservative status for an earlier source-document comment.
+
+    Only directly verifiable missing-section comments are marked as addressed.
+    Other earlier comments remain clearly separated without being silently
+    accepted, rejected or treated as new V-Professor findings.
+    """
+    low = normalised(original_text)
+    if not any(term in low for term in ("missing", "where is", "not present", "is absent")):
+        return ""
+    section_patterns = (
+        ("purpose of the study", ("purpose of the study", "aim of the study", "general aim")),
+        ("introduction", ("introduction",)),
+        ("research objectives", ("research objectives", "objectives of the study", "specific objectives")),
+        ("research questions", ("research questions",)),
+        ("significance of the study", ("significance of the study",)),
+        ("scope of the study", ("scope of the study", "delimitation of the study", "delimitations of the study")),
+        ("limitations of the study", ("limitations of the study", "study limitations")),
+        ("organisation of the study", ("organisation of the study", "organization of the study")),
+        ("definition of terms", ("definition of terms", "operational definitions")),
+        ("research hypotheses", ("research hypotheses", "hypotheses")),
+    )
+    doc_low = normalised(document_text)
+    for canonical, variants in section_patterns:
+        if canonical in low or any(value in low for value in variants):
+            if any(re.search(rf"(?:^|\n)\s*(?:\d+(?:\.\d+)*)?\s*{re.escape(value)}\s*(?:\n|$)", document_text, flags=re.I) for value in variants):
+                return "appears addressed in the current version"
+            if any(value in doc_low for value in variants):
+                return "appears addressed in the current version"
+    return ""
+
+
+def _label_existing_source_comments(document) -> None:
+    """Separate earlier comments from current V-Professor findings.
+
+    Empty source comments are removed. A previous missing-section comment is
+    marked as apparently addressed only when the section is visibly present in
+    the current document. No topic, institution or correction from an example
+    document is retained as a future review rule.
     """
     if _existing_comment_policy() != "label":
         return
-    prefix = "[Previous comment from source document] "
+    document_text = "\n".join(
+        clean_text(paragraph.text) for paragraph in document.paragraphs if clean_text(paragraph.text)
+    )
     try:
         comments = list(document.comments)
     except Exception:
         comments = []
+    prefix_re = re.compile(r"^\[Previous comment from source document(?:\s*\|[^\]]+)?\]\s*", flags=re.I)
     for comment in comments:
-        text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
-        if not text or text.startswith(prefix.strip()):
+        raw = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+        original = prefix_re.sub("", raw).strip()
+        if not original:
+            _remove_comment_from_document(document, comment)
             continue
+        status = _source_comment_status(original, document_text)
+        prefix = "[Previous comment from source document"
+        if status:
+            prefix += f" | {status}"
+        prefix += "] "
         if comment.paragraphs:
-            comment.paragraphs[0].text = prefix + comment.paragraphs[0].text
+            comment.paragraphs[0].text = prefix + original
+            for paragraph in list(comment.paragraphs[1:]):
+                paragraph._element.getparent().remove(paragraph._element)
         else:
-            comment.add_paragraph(prefix + text)
+            comment.add_paragraph(prefix + original)
 
 
 def _is_current_vprof_comment(comment, author: str = "") -> bool:
@@ -1785,7 +1853,7 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
             0 if target_table and item_table == target_table else 1,
             0 if quote and quote in text else 1,
             0 if target_section and item_section == target_section else 1,
-            0 if item.get("is_heading") else 1,
+            1 if item.get("is_heading") else 0,
             int(item.get("paragraph") or 0),
         )
     return sorted(evidence, key=rank)
@@ -2312,7 +2380,13 @@ def _ensure_native_comment_reconciliation(
     the appended correction register from containing findings absent from the
     native comments.
     """
-    expected = {int(number): (row, comment) for number, row, comment in numbered_rows if int(number or 0) > 0}
+    expected = {
+        int(number): (row, comment)
+        for number, row, comment in numbered_rows
+        if int(number or 0) > 0
+        and row.get("annotation_eligible") is not False
+        and not _is_missing_section_finding(row)
+    }
     missing = sorted(set(expected) - _represented_finding_numbers(document, author=author))
     if not missing:
         return
@@ -2327,6 +2401,13 @@ def _ensure_native_comment_reconciliation(
             fallback,
             author=author,
             initials=initials,
+        )
+    remaining = sorted(set(expected) - _represented_finding_numbers(document, author=author))
+    if remaining and _env_bool("VPROF_STRICT_NATIVE_RECONCILIATION", True):
+        raise RuntimeError(
+            "The reviewed DOCX could not be released because canonical finding numbers "
+            + ", ".join(str(number) for number in remaining)
+            + " are absent from the native Word comments."
         )
 
 
