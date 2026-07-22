@@ -225,3 +225,75 @@ def contains_uncited_empirical_count(sentence: str) -> bool:
 
 def sentence_has_citation(sentence: str) -> bool:
     return bool(CITATION_PATTERN.search(clean_text(sentence)))
+
+# Generic study-setting extraction used by alignment and contradiction guards.
+# The patterns deliberately describe institution/geography types rather than any
+# named example study. They are evaluated anew for every submitted document.
+SETTING_SUFFIX_HEADS = {
+    "market", "municipality", "district", "metropolis", "region", "province",
+    "county", "city", "town", "community", "bank", "hospital", "university",
+    "college", "school", "firm", "company", "organisation", "organization",
+    "institution", "agency", "ministry", "department", "enterprise",
+}
+
+
+def extract_named_settings(text: str) -> List[str]:
+    """Extract explicit named study settings without relying on topic fixtures.
+
+    The extractor is conservative. It returns only phrases that include a clear
+    institutional or geographical head, so ordinary mentions such as "the
+    market" or "the organisation" do not become false study-setting names.
+    """
+    value = clean_text(text)
+    if not value:
+        return []
+
+    token_pattern = r"(?:[A-Z][A-Za-z'’.-]*|[A-Z]{2,}|[A-Z][a-z]+)"
+    suffixes = "|".join(sorted((re.escape(item) for item in SETTING_SUFFIX_HEADS), key=len, reverse=True))
+    patterns = (
+        (
+            "suffix",
+            rf"\b({token_pattern}(?:\s+{token_pattern}){{0,5}}\s+(?i:{suffixes}))\b",
+        ),
+        (
+            "prefix",
+            rf"\b((?i:University|College|School|Bank|Hospital|Ministry|Department|Agency)\s+(?i:of)\s+{token_pattern}(?:\s+(?:(?i:and|of|the)|{token_pattern})){{0,5}})\b",
+        ),
+    )
+
+    output: List[str] = []
+    seen = set()
+    boundaries = {"in", "at", "within", "among", "of", "on", "for", "to", "the", "a", "an"}
+    for mode, pattern in patterns:
+        for match in re.finditer(pattern, value):
+            phrase = clean_text(match.group(1)).strip(" ,:;.-")
+            if mode == "suffix":
+                words = phrase.split()
+                cut = -1
+                for index, word in enumerate(words[:-1]):
+                    if normalised(word) in boundaries:
+                        cut = index
+                if cut >= 0:
+                    words = words[cut + 1:]
+                # Limit the retained proper name to the closest four tokens plus
+                # the institutional/geographical head.
+                if len(words) > 5:
+                    words = words[-5:]
+                phrase = " ".join(words)
+            if len(phrase.split()) < 2:
+                continue
+            key = normalised(phrase)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            output.append(phrase)
+    return output[:12]
+
+
+def principal_study_terms(*values: str, limit: int = 12) -> List[str]:
+    """Return domain-neutral substantive terms from current study statements."""
+    combined = " ".join(clean_text(value) for value in values if clean_text(value))
+    tokens = content_tokens(combined)
+    # Prefer longer, more distinctive terms while remaining deterministic.
+    ordered = sorted(tokens, key=lambda token: (-len(token), token))
+    return ordered[:max(1, int(limit))]

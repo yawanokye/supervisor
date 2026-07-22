@@ -42,8 +42,8 @@ from .reviewer_language import professionalise_reviewer_language
 from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.4.0-natural-paragraph-grouped-review"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.4.0-natural-accurate-provider-selectable-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.5.0-isolated-natural-paragraph-grouped-review"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.5.0-current-submission-isolated-natural-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 

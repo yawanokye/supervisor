@@ -11,6 +11,8 @@ from .study_semantics import (
     contains_uncited_empirical_count,
     has_traceable_context_evidence,
     omitted_objective_focuses,
+    content_tokens,
+    extract_named_settings,
 )
 
 
@@ -562,17 +564,42 @@ def _exact_match_text(row: Optional[Dict[str, Any]], pattern: str) -> str:
 
 
 def _context_tokens_from_title(title_text: str) -> Set[str]:
-    low = normalised(title_text)
-    stop = {
-        "impact", "effect", "effects", "effective", "planning", "control", "procurement",
-        "activities", "activity", "study", "analysis", "assessment", "relationship", "role",
-        "firm", "firms", "company", "companies", "organisation", "organization", "of", "a",
-        "the", "in", "on", "and", "among", "within",
+    """Return current-study context terms without topic-specific defaults."""
+    relation_terms = {
+        "contribution", "relationship", "association", "impact", "effect", "effects",
+        "influence", "role", "assessment", "analysis", "study", "research",
     }
     return {
-        token for token in re.findall(r"[a-z][a-z-]{2,}", low)
-        if token not in stop and len(token) >= 4
+        token for token in content_tokens(title_text)
+        if token not in relation_terms and len(token) >= 4
     }
+
+
+def _single_entity_phrase(text: str) -> tuple[str, str] | None:
+    """Return a singular named/typed study entity and its head noun."""
+    heads = (
+        "firm", "company", "organisation", "organization", "institution", "bank",
+        "hospital", "university", "college", "school", "market", "enterprise",
+        "agency", "department", "municipality", "district", "community",
+    )
+    head_pattern = "|".join(heads)
+    match = re.search(
+        rf"\b(?:a|an|one|single|the selected|the case)\s+([A-Za-z'’.-]+(?:\s+[A-Za-z'’.-]+){{0,5}}\s+({head_pattern}))\b",
+        clean_text(text),
+        flags=re.I,
+    )
+    if not match:
+        return None
+    return clean_text(match.group(1)), normalised(match.group(2))
+
+
+def _plural_head_pattern(head: str) -> str:
+    irregular = {
+        "company": "companies", "university": "universities", "community": "communities",
+        "agency": "agencies", "municipality": "municipalities",
+    }
+    plural = irregular.get(head, head + ("es" if head.endswith(("s", "x", "ch", "sh")) else "s"))
+    return rf"\b[A-Za-z'’.-]+(?:\s+[A-Za-z'’.-]+){{0,5}}\s+{re.escape(plural)}\b|\b{re.escape(plural)}\b"
 
 
 def _cited_sentences(value: str) -> List[str]:
@@ -711,46 +738,29 @@ def hard_chapter_one_supervisory_issues(
             quote=incomplete_quote,
         ))
 
-    # Detect unstable construct terminology in the same Chapter One. The check
-    # is deliberately restricted to distinctive phrases rather than generic
-    # mentions of procurement.
-    control_procurement_row = _row_with_pattern(current, r"\bcontrol procurements?\b")
-    if control_procurement_row and re.search(r"\bplanning and control\b", full_text, flags=re.I):
-        exact_construct = _exact_match_text(control_procurement_row, r"\bcontrol procurements?\b")
-        issues.append(_issue(
-            code="B1-CONSTRUCT-TERMINOLOGY-SHIFT",
-            section=source_section(control_procurement_row) or "Background to the Study",
-            title="The chapter changes the name and meaning of a principal construct",
-            assessment=f"The work moves from ‘planning and control’ to ‘{exact_construct}’ without explaining whether these expressions denote the same construct, a procurement process or a different variable.",
-            consequence="Unstable construct names weaken the title, purpose, objectives, instrument design and later interpretation because the reader cannot tell exactly what is being measured.",
-            action="Select one conceptually accurate term for each construct, define it once, and use the same wording consistently in the title, background, purpose, objectives, questions and methodology. If procurement control and contract control are different, separate and define them explicitly.",
-            anchor=control_procurement_row,
-            category="conceptual_clarity",
-            severity="major",
-            quote=exact_construct,
-        ))
-
-    # Detect singular/plural unit-of-analysis drift, such as 'a manufacturing
-    # firm' in the title and 'manufacturing firms' in the scope or questions.
-    singular_phrase = bool(re.search(r"\ba\s+[a-z -]{0,30}firm\b", title_text + " " + purpose_text, flags=re.I))
-    # Anchor the finding to the study's own scope wording, not to a general
-    # literature sentence mentioning companies or organisations.
+    # Detect singular/plural unit-of-analysis drift using the entity named in the
+    # current title or purpose. No sector, institution or example name is retained
+    # between review jobs.
+    singular_entity = _single_entity_phrase(title_text + " " + purpose_text)
     scope_candidates = list(purpose) + list(objectives) + list(questions) + list(delimitations) + list(limitations)
-    plural_scope_row = _row_with_pattern(scope_candidates, r"\bmanufacturing firms\b") or _row_with_pattern(current, r"\bmanufacturing firms\b")
-    if singular_phrase and plural_scope_row and re.search(r"\bmanufacturing firms\b", full_text, flags=re.I):
-        plural_quote = _exact_match_text(plural_scope_row, r"\bmanufacturing firms\b") or "manufacturing firms"
-        issues.append(_issue(
-            code="B3-UNIT-OF-ANALYSIS-SINGULAR-PLURAL",
-            section=source_section(plural_scope_row) or "Chapter One",
-            title="The unit and scope of the study shift between one firm and several firms",
-            assessment=f"The title or purpose frames the study around a single manufacturing firm, while the marked passage refers to ‘{plural_quote}’ in the plural.",
-            consequence="This inconsistency changes the population, sampling frame, generalisability and level of analysis that the methodology must support.",
-            action="Decide whether the study concerns one identified manufacturing firm or multiple firms. Apply that decision consistently to the title, purpose, objectives, questions, scope, limitations and methodology.",
-            anchor=plural_scope_row,
-            category="cross_section_coherence",
-            severity="major",
-            quote=plural_quote,
-        ))
+    if singular_entity:
+        entity_phrase, entity_head = singular_entity
+        plural_pattern = _plural_head_pattern(entity_head)
+        plural_scope_row = _row_with_pattern(scope_candidates, plural_pattern)
+        if plural_scope_row:
+            plural_quote = _exact_match_text(plural_scope_row, plural_pattern) or clean_text(plural_scope_row.get("text", ""))[:120]
+            issues.append(_issue(
+                code="B3-UNIT-OF-ANALYSIS-SINGULAR-PLURAL",
+                section=source_section(plural_scope_row) or "Chapter One",
+                title="The unit and scope of the study shift between one entity and several entities",
+                assessment=f"The title or purpose frames the study around ‘{entity_phrase}’, while the marked passage broadens the scope to ‘{plural_quote}’.",
+                consequence="This inconsistency changes the population, sampling frame, unit of analysis and limits of interpretation that the methodology must support.",
+                action="Decide whether the study concerns one case or several cases and use that boundary consistently in the title, purpose, objectives, questions, scope and methodology.",
+                anchor=plural_scope_row,
+                category="cross_section_coherence",
+                severity="major",
+                quote=plural_quote,
+            ))
 
     # Detect a change in the analytical claim between the title and purpose.
     # Terms such as contribution, association and impact are not interchangeable
@@ -772,28 +782,13 @@ def hard_chapter_one_supervisory_issues(
             quote=purpose_relation,
         ))
 
-    # Detect setting drift such as Aboabo Market in the title and Tamale Market
-    # in the objectives or scope. Only named settings ending in a clear
-    # institutional or geographical type are compared.
-    place_pattern = re.compile(
-        r"\b([A-Z][A-Za-z'’.-]+\s+(?:Market|Municipality|District|Metropolis|Region))\b",
-        flags=re.I,
-    )
-    institution_pattern = re.compile(
-        r"\b([A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){0,2}\s+(?:Bank|Hospital|University|College))\b",
-        flags=re.I,
-    )
-
-    def named_settings(value: str) -> List[str]:
-        settings = [clean_text(item) for item in place_pattern.findall(value)]
-        settings.extend(clean_text(item) for item in institution_pattern.findall(value))
-        return list(dict.fromkeys(settings))
-
-    title_settings = named_settings(title_text)
+    # Detect study-setting drift from the current submission only. Named settings
+    # are extracted afresh for each job and are never stored as review defaults.
+    title_settings = extract_named_settings(title_text)
     scope_rows = list(purpose) + list(objectives) + list(questions) + list(delimitations)
     scope_settings = []
     for row in scope_rows:
-        for value in named_settings(clean_text(row.get("text", ""))):
+        for value in extract_named_settings(clean_text(row.get("text", ""))):
             scope_settings.append((clean_text(value), row))
     if title_settings:
         title_setting = title_settings[0]
@@ -807,7 +802,7 @@ def hard_chapter_one_supervisory_issues(
                 title="The geographical setting changes across the title, objectives, questions or scope",
                 assessment=f"The title identifies ‘{title_setting}’, while the marked passage refers to ‘{other_setting}’. The chapter does not explain whether these are the same boundary or different study settings.",
                 consequence="A shifting setting changes the population, sampling frame and limits of interpretation.",
-                action="Define the exact study setting once and use the same geographical boundary throughout the title, purpose, objectives, questions, scope and methodology. Explain any wider Tamale context without expanding the sampled site unintentionally.",
+                action="Define the exact study setting once and use the same boundary throughout the title, purpose, objectives, questions, scope and methodology. Treat any wider geographical or institutional context as background unless it is part of the sampled setting.",
                 anchor=anchor,
                 category="scope_and_context",
                 severity="major",
@@ -929,35 +924,32 @@ def hard_chapter_one_supervisory_issues(
                 category="research_gap_and_problem",
             ))
 
-        # Evidence from another sector or country does not establish the
-        # problem in the declared study context. Require at least one cited
-        # sentence tied to the title's distinctive setting or sector.
-        title_low = normalised(title_text)
-        context_markers: List[str] = []
-        for phrase in ("manufacturing", "ghana", "africa", "university", "bank", "hospital", "school", "public sector", "private sector"):
-            if phrase in title_low:
-                context_markers.append(phrase)
+        # Evidence from another setting does not establish the problem in the
+        # study context named by the current submission. Compare distinctive title
+        # terms with cited problem sentences without using topic-specific fixtures.
+        context_markers = _context_tokens_from_title(title_text)
         cited_problem_sentences = _cited_sentences(problem_text)
-        if context_markers and cited_problem_sentences and not any(
-            any(marker in normalised(sentence) for marker in context_markers)
-            for sentence in cited_problem_sentences
-        ):
-            foreign_anchor = next((
-                row for row in problem
-                if re.search(r"\b(?:Kenya|Nigeria|Tanzania|South Africa|India|China|Europe|Asia|financial sector)\b", clean_text(row.get("text", "")), flags=re.I)
-            ), _first_substantive(problem))
-            issues.append(_issue(
-                code="B2-CONTEXT-EVIDENCE-MISMATCH",
-                section="Statement of the Problem",
-                title="The evidence used does not establish the problem in the declared study context",
-                assessment="The section cites evidence from another country or sector, but it does not provide comparable evidence showing the nature or seriousness of the problem in the manufacturing context stated in the title.",
-                consequence="Evidence from a different setting can motivate the topic, but it cannot by itself prove that the same problem exists in the selected firm or sector.",
-                action="Add recent evidence from the selected manufacturing firm, the relevant Ghanaian manufacturing sector or an authoritative local source. Use the external evidence only for comparison, then state the unresolved local problem directly.",
-                anchor=foreign_anchor,
-                category="research_gap_and_problem",
-                severity="major",
-                quote=clean_text(foreign_anchor.get("text", "")) if foreign_anchor else "",
-            ))
+        if context_markers and cited_problem_sentences:
+            locally_linked = any(
+                len(context_markers & content_tokens(sentence)) >= min(2, len(context_markers))
+                for sentence in cited_problem_sentences
+            )
+            if not locally_linked:
+                foreign_anchor = _first_substantive(problem)
+                settings = extract_named_settings(title_text)
+                setting_label = settings[0] if settings else "the declared study setting"
+                issues.append(_issue(
+                    code="B2-CONTEXT-EVIDENCE-MISMATCH",
+                    section="Statement of the Problem",
+                    title="The evidence does not yet establish the problem in the declared study context",
+                    assessment=f"The section cites broader evidence, but the cited passages do not clearly show the nature or seriousness of the problem in {setting_label}.",
+                    consequence="Evidence from another setting can motivate the topic, but it cannot by itself demonstrate that the same problem exists in the selected case, population or location.",
+                    action="Add recent, verified evidence from the declared study setting or the closest relevant local source. Use wider evidence for comparison, then state the unresolved local problem directly.",
+                    anchor=foreign_anchor,
+                    category="research_gap_and_problem",
+                    severity="major",
+                    quote=clean_text(foreign_anchor.get("text", "")) if foreign_anchor else "",
+                ))
 
         unsupported_gap_row = next((
             row for row in problem
@@ -1218,9 +1210,9 @@ def hard_chapter_one_supervisory_issues(
                 code="B4-LIMITATION-DELIMITATION-CONFUSION",
                 section="Limitation of the Study",
                 title="The limitation section mainly states the study boundary rather than an actual limitation",
-                assessment="The section says the study is restricted to manufacturing firms and may not generalise to other industries. This describes the chosen scope or delimitation more than a methodological constraint encountered by the study.",
+                assessment="The section mainly states a deliberate boundary of the study and a limit on wider application. This describes scope or delimitation more than a methodological constraint encountered by the study.",
                 consequence="Combining scope and limitation prevents the reader from distinguishing deliberate boundaries from conditions that may affect the credibility or interpretation of the findings.",
-                action="Move the deliberate sector and organisational boundaries to a Scope or Delimitation section. In the Limitation section, state only genuine design, data, measurement, sampling or access constraints and explain how each will be managed or considered when interpreting the findings.",
+                action="Move deliberate geographical, institutional, population or construct boundaries to a Scope or Delimitation section. In the Limitation section, state genuine design, data, measurement, sampling or access constraints and explain how each affects interpretation.",
                 anchor=_first_substantive(limitations),
                 category="chapter_structure",
                 severity="moderate",
@@ -1359,31 +1351,35 @@ def hard_chapter_one_supervisory_issues(
                 code="B1-HISTORICAL-OVERWEIGHT",
                 section="Background to the Study",
                 title="The historical opening is disproportionate to the present research problem",
-                assessment="Several sentences trace procurement history from before 1900, but the background gives less attention to the current planning-and-control problem in the selected manufacturing setting.",
-                consequence="An extended chronology can obscure the contemporary constructs, context and evidence that should lead directly to the problem statement.",
-                action="Compress the historical account to one brief contextual sentence and use the saved space to define the main constructs, present recent evidence and narrow the discussion to the selected manufacturing context.",
+                assessment="Several sentences trace the topic historically, but the background gives less attention to the current constructs, evidence and study setting.",
+                consequence="An extended chronology can obscure the contemporary argument that should lead directly to the problem statement.",
+                action="Compress the historical account to a brief contextual passage and use the saved space to define the main constructs, present recent evidence and narrow the discussion to the declared study context.",
                 anchor=anchor,
                 category="background_structure",
                 severity="moderate",
                 quote=_exact_match_text(anchor, r"\bPrior to 1900\b") if anchor else "",
             ))
 
-    # When a single unnamed firm is central to the title and purpose, require the
-    # study to identify the setting or state and justify an anonymity decision.
-    if singular_phrase and not re.search(r"\b(?:anonym|confidential|pseudonym|identified as|case company|selected firm)\b", full_text, flags=re.I):
+    # When one unnamed organisation or case defines the study setting, require
+    # identification or a transparent confidentiality explanation.
+    if singular_entity and not re.search(r"\b(?:anonym|confidential|pseudonym|identified as|case organisation|case organization|selected entity)\b", full_text, flags=re.I):
+        entity_phrase, _entity_head = singular_entity
+        has_named_setting = bool(extract_named_settings(title_text + " " + purpose_text))
         unnamed_anchor = _first_substantive(purpose) or _first_substantive(problem)
-        if unnamed_anchor:
+        # Do not flag a generic singular phrase when the current title or purpose
+        # already supplies a named institution or location.
+        if unnamed_anchor and not has_named_setting:
             issues.append(_issue(
                 code="B3-UNNAMED-STUDY-SETTING",
                 section=source_section(unnamed_anchor) or "Purpose of the Study",
-                title="The single manufacturing firm that defines the study setting is not identified or justified as anonymous",
-                assessment="The title and purpose refer to one manufacturing firm, but the chapter does not name the firm or explain why its identity is withheld.",
-                consequence="The reader cannot judge the organisational context, sampling frame or transferability of the proposed evidence without a clear setting statement.",
-                action="Identify the firm and its relevant context, or state that a pseudonym is used and briefly justify the confidentiality decision. Apply the same description throughout the work.",
+                title="The single organisation or case that defines the study setting is not identified or justified as anonymous",
+                assessment=f"The title or purpose refers to ‘{entity_phrase}’, but the chapter does not identify the case or explain why its identity is withheld.",
+                consequence="The reader cannot judge the organisational context, sampling frame or transferability of the evidence without a clear setting statement.",
+                action="Identify the organisation or case and its relevant context, or state that a pseudonym is used and briefly justify the confidentiality decision. Use the same description throughout the work.",
                 anchor=unnamed_anchor,
                 category="scope_and_context",
                 severity="moderate",
-                quote=_exact_match_text(unnamed_anchor, r"\ba\s+[a-z -]{0,30}manufacturing firm\b") or clean_text(unnamed_anchor.get("text", ""))[:180],
+                quote=entity_phrase,
             ))
 
     if references:

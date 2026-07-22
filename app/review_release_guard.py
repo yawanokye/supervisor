@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from .document_parser import clean_text, normalised
 from .finding_order import chapter_number, primary_evidence
 from .supervisory_accuracy_guard import source_section
+from .study_semantics import content_tokens, extract_named_settings, principal_study_terms
 
 
 def _clean(value: Any) -> str:
@@ -152,18 +153,71 @@ def classify_review_context(review: Mapping[str, Any]) -> ReviewRouteContext:
     return ReviewRouteContext(design, stage, has_results, has_methodology, has_primary_data)
 
 
+def _title_text(rows: Sequence[Mapping[str, Any]]) -> str:
+    first_chapter = min(
+        (int(row.get("paragraph") or 0) for row in rows if int(row.get("chapter_number") or 0) == 1 and int(row.get("paragraph") or 0) > 0),
+        default=10**9,
+    )
+    values = []
+    for row in rows:
+        paragraph = int(row.get("paragraph") or 0)
+        if int(row.get("chapter_number") or 0) != 0 or paragraph >= first_chapter:
+            continue
+        text = _clean(row.get("text"))
+        low = _norm(text)
+        if len(text.split()) < 4 or re.match(r"^(?:university|college|school|faculty|department|by|candidate|supervisor)\b", low):
+            continue
+        values.append(text)
+    return _clean(" ".join(values))
+
+
+def _study_profile(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    title = _title_text(rows)
+    purpose = _section_blob(rows, "purpose of the study", "aim of the study", "general objective", chapter=1)
+    objectives = _section_blob(rows, "research objectives", "objectives of the study", chapter=1)
+    questions = _section_blob(rows, "research questions", chapter=1)
+    scope = _section_blob(rows, "scope of the study", "delimitation of the study", "delimitations of the study", chapter=1)
+    combined = " ".join((title, purpose, objectives, questions, scope))
+    return {
+        "title": title,
+        "purpose": purpose,
+        "objectives": objectives,
+        "questions": questions,
+        "scope": scope,
+        "settings": extract_named_settings(combined),
+        "terms": principal_study_terms(title, purpose, objectives, questions, limit=14),
+    }
+
+
 def _background_is_contextualised(rows: Sequence[Mapping[str, Any]]) -> bool:
     text = _section_blob(rows, "background", chapter=1)
     if not text:
         return False
-    global_context = any(term in text for term in ("global", "worldwide", "international", "african", "africa"))
-    national_context = any(term in text for term in ("ghana", "bank of ghana", "ghanaian"))
-    specific_setting = any(term in text for term in ("case study", "plc", "rural bank", "study is situated", "present study"))
-    constructs = _contains_all_groups(text, (
-        ("internal control", "control system", "control mechanisms"),
-        ("fraud detection", "fraud prevention", "fraud incidence", "fraud outcome"),
+    profile = _study_profile(rows)
+    background_tokens = content_tokens(text)
+    principal = set(profile["terms"])
+    if not principal:
+        principal = content_tokens(_section_blob(rows, "purpose of the study", "aim of the study", "research objectives", "objectives of the study", "research questions", chapter=1))
+    term_overlap = len(background_tokens & principal)
+    settings = profile["settings"] or extract_named_settings(_document_blob(rows, {1}))
+    setting_link = any(
+        _norm(setting) in text or len(content_tokens(setting) & background_tokens) >= 1
+        for setting in settings
+    ) or ("specific" in text and "setting" in text)
+    source_support = bool(re.search(r"\([^)]*(?:19|20)\d{2}[a-z]?[^)]*\)", text))
+    narrowing_signal = any(term in text for term in (
+        "present study", "this study", "study setting", "selected setting", "specific context",
+        "local context", "case study", "within the", "at the",
     ))
-    return sum((global_context, national_context, specific_setting, constructs)) >= 3
+    # A background is treated as contextualised when it introduces the study's
+    # own constructs and either names the setting or explicitly narrows to it.
+    explicit_study_link = (
+        any(term in text for term in ("is examined in relation to", "are examined in relation to", "examines the relationship", "study examines", "study investigates"))
+        and len(background_tokens) >= 6
+    )
+    return (explicit_study_link and setting_link) or (
+        source_support and (setting_link or narrowing_signal) and term_overlap >= 2
+    )
 
 
 def _problem_gap_is_demonstrated(rows: Sequence[Mapping[str, Any]]) -> bool:
@@ -193,7 +247,7 @@ def _significance_is_applied(rows: Sequence[Mapping[str, Any]]) -> bool:
         "investor", "service delivery", "decision making", "decision-making",
     ))
     policy = any(term in text for term in (
-        "policy", "policymaker", "ministry", "government", "regulator", "bank of ghana",
+        "policy", "policymaker", "ministry", "government", "regulator", "regulatory authority",
     ))
     scholarly = any(term in text for term in (
         "theoretical", "knowledge", "literature", "research", "researcher", "reference",
@@ -202,15 +256,17 @@ def _significance_is_applied(rows: Sequence[Mapping[str, Any]]) -> bool:
 
 
 def _theories_are_linked(rows: Sequence[Mapping[str, Any]]) -> bool:
-    text = _section_blob(rows, "theoretical review", "agency theory", "fraud theory", "institutional theory", chapter=2)
+    text = _section_blob(rows, "theoretical review", "theoretical framework", "theory", chapter=2)
     return bool(text) and bool(re.search(r"\bobjective\s*[123ivx]*\b", text))
 
 
 def _population_frame_is_stated(rows: Sequence[Mapping[str, Any]]) -> bool:
     text = _section_blob(rows, "population", "sampling", chapter=3)
     return bool(text) and any(term in text for term in (
-        "human resource", "hr department", "staff list", "employee list", "personnel list",
-        "sampling frame", "staff register", "provided by the bank",
+        "sampling frame", "population frame", "staff list", "employee list", "personnel list",
+        "student register", "membership register", "administrative register", "database",
+        "directory", "roster", "human resource", "hr department", "provided by the institution",
+        "provided by the organisation", "provided by the organization", "official list",
     ))
 
 
@@ -231,6 +287,67 @@ def _organisation_is_present(rows: Sequence[Mapping[str, Any]]) -> bool:
     if not text:
         return False
     return all(f"chapter {word}" in text for word in ("two", "three", "four", "five"))
+
+
+_SECTION_ALIASES = {
+    "introduction": ("introduction",),
+    "background": ("background to the study", "background of the study", "background"),
+    "problem": ("statement of the problem", "problem statement"),
+    "purpose": ("purpose of the study", "aim of the study"),
+    "objectives": ("research objectives", "objectives of the study"),
+    "questions": ("research questions", "research question"),
+    "significance": ("significance of the study", "significance"),
+    "scope": ("scope of the study", "delimitation of the study", "delimitations of the study"),
+    "limitations": ("limitations of the study", "limitation of the study"),
+    "organisation": ("organisation of the study", "organization of the study"),
+}
+
+
+def _section_key_from_row(row: Mapping[str, Any]) -> str:
+    missing_label = _norm(row.get("missing_section_label") or row.get("section_contract_label"))
+    if missing_label:
+        for key, aliases in _SECTION_ALIASES.items():
+            if any(_norm(alias) in missing_label for alias in aliases):
+                return key
+    label = _norm(row.get("section_reference") or row.get("section") or row.get("reference_label"))
+    title = _norm(row.get("issue_title") or row.get("item"))
+    combined = f"{label} {title}"
+    for key, aliases in _SECTION_ALIASES.items():
+        if any(_norm(alias) in combined for alias in aliases):
+            return key
+    return ""
+
+
+def _section_has_substantive_content(rows: Sequence[Mapping[str, Any]], key: str, minimum_words: int = 12) -> bool:
+    aliases = _SECTION_ALIASES.get(key) or ()
+    if not aliases:
+        return False
+    text = _section_blob(rows, *aliases, chapter=1)
+    return len(text.split()) >= minimum_words
+
+
+def _organisation_mentions_framework(rows: Sequence[Mapping[str, Any]]) -> bool:
+    text = _section_blob(rows, "organisation of the study", "organization of the study", chapter=1)
+    return any(term in text for term in ("theoretical framework", "conceptual framework", "logical framework", "framework", "theories"))
+
+
+def _finding_claims_absence(blob: str) -> bool:
+    return any(term in blob for term in (
+        "missing content", "contains no text", "no text", "is missing", "missing introduction",
+        "bare chapter", "bare heading", "section is empty", "not provided", "absent from",
+    ))
+
+
+def _hypotheses_are_confirmed_required(review: Mapping[str, Any], context: ReviewRouteContext) -> bool:
+    summary = review.get("summary") or {}
+    explicit = summary.get("hypotheses_required")
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    # In the absence of a programme rule, only retain a hypothesis requirement
+    # when a submitted methodology clearly specifies inferential hypothesis tests.
+    return context.has_methodology and context.design in {"primary_quantitative", "secondary_econometric", "experimental"}
 
 
 def _chapter_one_heading_pair_is_present(rows: Sequence[Mapping[str, Any]]) -> bool:
@@ -345,10 +462,10 @@ def _moderation_alignment_row(row: Mapping[str, Any]) -> Dict[str, Any]:
         "item": "The proposed moderation role is not aligned with the objectives and analysis plan",
         "severity": "major",
         "assessment": (
-            "Employee characteristics are discussed as possible moderators, but the submitted objectives, conceptual framework and methodology do not consistently define a moderation model."
+            "The work refers to one or more variables as moderators, but the objectives, conceptual framework and methodology do not consistently define a moderation model."
         ),
         "comment": (
-            "Employee characteristics are discussed as possible moderators, but the submitted objectives, conceptual framework and methodology do not consistently define a moderation model."
+            "The work refers to one or more variables as moderators, but the objectives, conceptual framework and methodology do not consistently define a moderation model."
         ),
         "academic_consequence": (
             "A moderation claim cannot be evaluated unless the moderator, interaction term and corresponding objective or hypothesis are specified before analysis."
@@ -360,6 +477,38 @@ def _moderation_alignment_row(row: Mapping[str, Any]) -> Dict[str, Any]:
         "manual_confirmation_required": False,
     })
     return output
+
+
+def _specific_action_for_row(row: Mapping[str, Any]) -> str:
+    title = _norm(row.get("issue_title") or row.get("item"))
+    section = _section_key_from_row(row)
+    if "sampling technique" in title:
+        return "State the final sampling approach, explain why it fits the accessible population, and remove any contradictory fallback technique unless a clear non-response protocol justifies it."
+    if "decision threshold" in title or "diagnostic" in title:
+        return "For each applicable diagnostic, state the test or output, decision threshold and response to a material violation."
+    if "research paradigm" in title:
+        return "Link the philosophy, approach, design, data source and analysis directly to the study objectives in a short narrative or alignment table."
+    if "study site" in title or "representativeness" in title:
+        return "Explain why the selected site is suitable for the study and limit wider claims to what the sampling design and evidence can support."
+    if "theory" in title:
+        return "Show how each retained theory explains the study constructs, objectives and expected relationships, and remove any theory that does not inform the analysis."
+    if "software" in title:
+        return "Name the software and version, then explain coding, scoring, missing-data treatment, diagnostics and model estimation."
+    if section == "background":
+        return "Define the main constructs used in the title and objectives, explain how they relate in the study context, and end the background with the precise issue that leads to the problem statement."
+    if section == "problem":
+        return "State the practical problem in the declared setting, support its nature or seriousness with verified evidence, identify what remains unresolved, and connect that gap to the study purpose."
+    if section in {"purpose", "objectives", "questions"}:
+        return "Revise the purpose, objectives and questions together so each study task appears once in the purpose, one objective and one matching question or hypothesis where justified."
+    if section == "significance":
+        return "State the scholarly, practical and policy contribution separately and identify the beneficiaries using the actual study setting and population."
+    if section == "scope":
+        return "State the study setting, participant group or unit of analysis, main constructs, period covered and important exclusions."
+    if section == "limitations":
+        return "Explain how each genuine design, data, sampling, measurement or access constraint may affect the findings and how its effect was managed."
+    if section == "organisation":
+        return "Describe the purpose and main content of each remaining chapter accurately in one concise sentence."
+    return "State the exact weakness in the cited passage and provide a direct correction grounded in the current study's design, evidence and terminology."
 
 
 def _normalise_mechanical_checklist(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -381,23 +530,13 @@ def _normalise_mechanical_checklist(row: Mapping[str, Any]) -> Dict[str, Any]:
         title = re.sub(pattern, replacement, title, flags=re.I)
         assessment = re.sub(pattern, replacement, assessment, flags=re.I)
 
-    generic = "revise the marked passage to address the identified academic weakness"
-    if generic in _norm(action):
-        low = _norm(title)
-        if "sampling technique" in low:
-            action = "State the final sampling approach, explain why it fits the accessible population, and remove any contradictory fallback technique unless it is supported by a clear non-response protocol."
-        elif "decision thresholds" in low or "diagnostic" in low:
-            action = "For each applicable diagnostic, state the test or output, decision threshold and remedy for a material violation."
-        elif "research paradigm" in low:
-            action = "Add a short alignment table or narrative linking the philosophy, approach, design, data source and analysis to the study objectives."
-        elif "study site" in low or "representativeness" in low:
-            action = "Explain why the selected site is suitable for the study without claiming statistical representativeness beyond the single institution."
-        elif "theory" in low:
-            action = "Show in one table how each retained theory explains specific constructs, objectives and expected relationships, and remove any theory that does not inform the analysis."
-        elif "software" in low:
-            action = "Name the software and version, then state the procedures for coding, scoring, missing-data treatment, diagnostics and model estimation."
-        else:
-            action = "State the missing information directly in the relevant section using the actual design, evidence and terminology of the study."
+    generic_patterns = (
+        "revise the marked passage to address the identified academic weakness",
+        "state the missing information directly in the relevant section",
+        "using the actual design evidence and terminology of the study",
+    )
+    if not action or any(pattern in _norm(action) for pattern in generic_patterns):
+        action = _specific_action_for_row({**output, "issue_title": title, "item": title})
 
     output["issue_title"] = output["item"] = title
     output["assessment"] = output["comment"] = assessment or title
@@ -441,6 +580,36 @@ def filter_and_rewrite_release_findings(
         if "missing third objective" in blob and _objective_number_is_present(runtime, 3):
             continue
 
+        section_key = _section_key_from_row(row)
+        if (
+            _finding_claims_absence(blob)
+            and not row.get("section_contract_verified")
+            and section_key
+            and _section_has_substantive_content(runtime, section_key)
+        ):
+            # Present-but-weak content must be assessed for quality rather than
+            # being described as missing.
+            if section_key == "introduction":
+                row["issue_title"] = row["item"] = "The chapter introduction is present but functions mainly as an outline"
+                row["assessment"] = row["comment"] = "The introductory paragraph lists the chapter sections but gives little indication of the study context or central problem."
+                row["required_action"] = "Add a brief statement of the topic, study context and central concern before the chapter roadmap."
+                blob = _row_blob(row)
+            else:
+                continue
+
+        if "missing theoretical framework outline" in blob and _organisation_mentions_framework(runtime):
+            continue
+        if section_key == "organisation" and any(term in blob for term in ("missing content", "contains no text", "section is empty")) and _organisation_is_present(runtime):
+            continue
+
+        if any(term in blob for term in ("hypotheses", "hypothesis")) and any(term in blob for term in ("missing", "without corresponding", "formulate hypotheses")):
+            contract_requires = bool(row.get("section_contract_verified") and row.get("missing_section_label"))
+            if not contract_requires and not _hypotheses_are_confirmed_required(review, context):
+                continue
+            row["severity"] = "moderate"
+            row["required_action"] = "Add hypotheses only for inferential objectives where the programme format and confirmed methodology require them; otherwise frame the objectives and questions consistently as descriptive or associational."
+            blob = _row_blob(row)
+
         if any(term in blob for term in ("british and american", "spelling convention")):
             british, american = _actual_spelling_mix(runtime)
             if not british or not american:
@@ -480,7 +649,7 @@ def filter_and_rewrite_release_findings(
 
         output.append(row)
 
-    return consolidate_release_families(output)
+    return consolidate_release_families(output, review)
 
 
 def _family(row: Mapping[str, Any]) -> str:
@@ -498,6 +667,17 @@ def _family(row: Mapping[str, Any]) -> str:
         return "embedded_instruction"
     if "construct terminology" in finding_id or "principal construct" in title:
         return "construct_consistency"
+    if any(term in title for term in (
+        "undefined central construct", "undefined key construct", "constructs not defined",
+        "constructs are undefined", "missing conceptual framing", "constructs not connected",
+        "conceptual anchor", "theoretical or conceptual anchor",
+    )):
+        return "construct_definition"
+    if "background" in section and any(term in title for term in (
+        "descriptive not critical", "descriptive without critique", "critical synthesis",
+        "merely lists sources", "listing studies",
+    )):
+        return "background_synthesis"
     if any(term in title for term in ("moderation", "moderator", "interaction term")):
         return "moderation_alignment"
     if any(term in finding_id for term in ("b3 causal", "b3 purpose objective", "b3 unit of analysis", "b3 1 purpose objectives")) or (
@@ -519,8 +699,8 @@ def _family(row: Mapping[str, Any]) -> str:
         term in title for term in ("gap", "local", "context", "narrow", "global", "focus", "applied", "professional logic")
     ):
         return "background_local_context"
-    if "problem" in section and not any(term in title for term in ("citation", "spelling", "grammar", "punctuation")) and any(
-        term in title for term in ("gap", "local evidence", "specific evidence", "problem statement", "informal sector", "study title", "repetitive")
+    if "problem" in section and not any(term in title for term in ("citation", "source", "verify", "verification", "reference", "spelling", "grammar", "punctuation")) and any(
+        term in title for term in ("gap", "evidence", "specific", "problem statement", "informal sector", "study title", "repetitive", "unsupported", "vague", "focus")
     ):
         return "problem_local_gap"
     if "significance" in section and not any(term in title for term in ("research gap", "problem statement", "gap is placed")) and any(
@@ -600,13 +780,13 @@ def _consolidation_scope(row: Mapping[str, Any], family: str) -> str:
     )
     section = _norm(row.get("section_reference") or row.get("section")) or "unsectioned"
 
-    if family in {"language_convention", "construct_consistency", "terminology_consistency", "purpose_alignment"}:
+    if family in {"language_convention", "construct_consistency", "construct_definition", "terminology_consistency", "purpose_alignment"}:
         return "chapter-wide"
-    if family in {"regression_protocol", "conceptual_framework", "ethics_permissions", "moderation_alignment", "background_local_context", "problem_local_gap", "significance_contribution", "terminology_consistency"}:
+    if family in {"regression_protocol", "conceptual_framework", "ethics_permissions", "moderation_alignment", "background_local_context", "background_synthesis", "problem_local_gap", "significance_contribution", "terminology_consistency"}:
         return "section:" + section
     return "anchor:" + (exact or section)
 
-def consolidate_release_families(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def consolidate_release_families(rows: Sequence[Mapping[str, Any]], review: Mapping[str, Any] | None = None) -> List[Dict[str, Any]]:
     """Merge repeated root causes before numbering and export.
 
     Consolidation is limited to known issue families and the same chapter. This
@@ -628,32 +808,46 @@ def consolidate_release_families(rows: Sequence[Mapping[str, Any]]) -> List[Dict
         else:
             output[family_index[key]] = _merge(output[family_index[key]], row)
 
+    runtime = _runtime_rows(review or {})
+    profile = _study_profile(runtime) if runtime else {"settings": [], "terms": []}
+    setting = profile.get("settings", [])[0] if profile.get("settings") else "the declared study setting"
+    terms = profile.get("terms") or []
+    construct_phrase = ", ".join(terms[:3]) if terms else "the main study constructs"
+
     standard_titles = {
         "language_convention": "British and American English conventions are mixed",
         "embedded_instruction": "An unresolved supervisor or editor instruction remains in the academic text",
         "purpose_alignment": "The purpose, objectives, research questions, unit and scope are not fully aligned",
+        "construct_definition": "The central constructs are not defined and used consistently",
+        "background_synthesis": "The background relies on description rather than focused critical synthesis",
         "conceptual_framework": "The conceptual framework does not represent all proposed analytical models clearly",
         "regression_protocol": "The regression analysis needs one complete scoring, diagnostic and reporting protocol",
         "ethics_permissions": "Ethical clearance and institutional access procedures are not fully reported",
         "numeric_source": "A numerical empirical claim needs clearer source support",
         "moderation_alignment": "The proposed moderation role is not aligned with the objectives and analysis plan",
-        "background_local_context": "The background does not narrow clearly to the study variables, Aboabo Market context and research gap",
-        "problem_local_gap": "The problem statement needs a concise, locally evidenced problem and a precise Aboabo Market research gap",
+        "background_local_context": "The background does not narrow clearly to the study constructs, setting and research gap",
+        "problem_local_gap": "The problem statement needs a concise, locally evidenced problem and a precise research gap",
         "significance_contribution": "The significance claims need to be specific to the study's scholarly, practical and policy contribution",
-        "terminology_consistency": "The chapter uses IT, ICT and computer applications without defining or applying the terms consistently",
+        "terminology_consistency": "The chapter uses overlapping labels for the main construct without defining or applying them consistently",
     }
     standard_actions = {
         "background_local_context": (
-            "Restructure the background from the wider role of IT in supply chains to informal commodity trading and then to Aboabo Market. Define the central IT and supply-chain constructs, use relevant Ghanaian or local evidence, remove tangential technology examples and end with the exact gap addressed by the study."
+            f"Restructure the background from the wider topic to {setting}. Define {construct_phrase}, use relevant evidence from the closest applicable context, remove tangential material and end with the exact gap addressed by the study."
+        ),
+        "construct_definition": (
+            f"Define {construct_phrase} as they are used in this study, distinguish overlapping labels, and show how the constructs connect to the objectives and proposed analysis."
+        ),
+        "background_synthesis": (
+            "Compare the most relevant studies by context, method and finding, then explain which limitations or disagreements justify the present study. Keep the depth proportionate to Chapter One rather than turning the background into a full Chapter Two review."
         ),
         "problem_local_gap": (
-            "Condense repeated background material and state the practical supply-chain problem at Aboabo Market, evidence of its nature or seriousness, what previous studies have not established, and how that gap leads directly to the purpose and objectives."
+            f"Condense repeated background material and state the practical problem in {setting}, evidence of its nature or seriousness, what previous studies have not established, and how that gap leads directly to the purpose and objectives."
         ),
         "significance_contribution": (
-            "Reorganise the section into scholarly, practical and policy contributions. Explain specifically how the findings may help Aboabo traders and supply-chain actors, relevant technology providers and policymakers, while keeping each claim proportionate to the study design and setting."
+            "Reorganise the section into scholarly, practical and policy contributions. Identify the actual beneficiaries named or implied by the current study and keep each claim proportionate to the design and setting."
         ),
         "terminology_consistency": (
-            "Choose and define the principal technology construct, distinguish IT from ICT or computer applications where necessary, and use the selected terminology consistently in the title, purpose, objectives, questions, instrument and analysis."
+            "Choose and define the principal construct, distinguish overlapping labels where necessary, and use the selected terminology consistently in the title, purpose, objectives, questions, instrument and analysis."
         ),
     }
     for row in output:

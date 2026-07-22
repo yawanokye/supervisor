@@ -19,6 +19,12 @@ _GENERIC_VERIFICATION = (
     "and remains aligned with the relevant objective method and evidence"
 )
 
+_GENERIC_ACTIONS = (
+    "revise the marked passage to address the identified academic weakness",
+    "state the missing information directly in the relevant section",
+    "using the actual design evidence and terminology of the study",
+)
+
 
 def _clean(value: Any) -> str:
     text = clean_text(str(value or ""))
@@ -40,7 +46,7 @@ def _sentence(value: Any) -> str:
 
 def _direct_action(value: Any) -> str:
     text = _clean(value)
-    if not text:
+    if not text or any(phrase in _norm(text) for phrase in _GENERIC_ACTIONS):
         return ""
     text = re.sub(r"^(?:the student should|you should|please)\s+", "", text, flags=re.I)
     text = re.sub(r"^revise(?: the)?(?: marked)? passage by\s+", "", text, flags=re.I)
@@ -89,8 +95,8 @@ def natural_supervisor_comment(
     *,
     compact: bool = False,
     include_reason: bool = True,
-    include_verification: bool = True,
-    include_example: bool = True,
+    include_verification: bool = False,
+    include_example: bool = False,
 ) -> str:
     """Render one finding as natural supervisory prose without field labels.
 
@@ -121,14 +127,19 @@ def natural_supervisor_comment(
 
     if not compact and include_verification and verification and not _is_generic_verification(verification):
         verification = re.sub(r"^(?:verify|confirm|check)\s+", "", verification, flags=re.I)
-        sentences.extend(_unique_sentences(["Check that " + verification], limit=1))
+        verification = re.sub(r"^that\s+", "", verification, flags=re.I)
+        if re.match(r"^(?:add|align|apply|check|clarify|correct|define|explain|identify|insert|link|provide|remove|report|revise|rewrite|state|use|verify)\b", verification, flags=re.I):
+            verification_sentence = "Confirm completion by checking that the revision follows this instruction: " + verification
+        else:
+            verification_sentence = "Confirm that " + verification
+        sentences.extend(_unique_sentences([verification_sentence], limit=1))
 
     if not compact and include_example and example:
         example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
         if example:
             sentences.extend(_unique_sentences(["For example, " + example], limit=1))
 
-    return " ".join(_unique_sentences(sentences, limit=7))
+    return " ".join(_unique_sentences(sentences, limit=4))
 
 
 def natural_group_item(value: Any) -> str:

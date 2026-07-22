@@ -20,6 +20,7 @@ from .ai_prompts import (
 )
 from .ai_providers import AIProviderError, ProviderResult
 from .model_router import CostAwareAIProvider, ReviewStage, stage_for_depth
+from .review_isolation import context_lock_isolation_fields
 from .academic_review_guide import guide_for_heading
 from .context_guard import build_context_lock, public_context, sanitise_generated_text, sanitise_issue
 from .checkpointing import CheckpointManager, stable_hash
@@ -1150,8 +1151,11 @@ def _batch_prompt(
             "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
-            key: value for key, value in context_lock.items()
-            if key != "source_text_normalised"
+            **{
+                key: value for key, value in context_lock.items()
+                if key != "source_text_normalised"
+            },
+            **context_lock_isolation_fields(),
         },
         "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "objective_to_conclusion_traceability_matrix": review.get("objective_alignment_matrix") or {},
@@ -1257,8 +1261,11 @@ def _focused_section_recovery_prompt(
             ),
         },
         "study_context_lock": {
-            key: value for key, value in context_lock.items()
-            if key != "source_text_normalised"
+            **{
+                key: value for key, value in context_lock.items()
+                if key != "source_text_normalised"
+            },
+            **context_lock_isolation_fields(),
         },
         "document_manifest_for_factual_checks": (
             summary.get("supervisory_document_manifest") or {}
@@ -1352,8 +1359,11 @@ def _verification_prompt(
             "professional_scope_contract": professional_scope_contract(summary),
         },
         "study_context_lock": {
-            key: value for key, value in context_lock.items()
-            if key != "source_text_normalised"
+            **{
+                key: value for key, value in context_lock.items()
+                if key != "source_text_normalised"
+            },
+            **context_lock_isolation_fields(),
         },
         "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "source_paragraphs": list(paragraphs.values()),
@@ -1468,8 +1478,11 @@ def _compact_quality_audit_prompt(
             ),
         },
         "study_context_lock": {
-            key: value for key, value in context_lock.items()
-            if key != "source_text_normalised"
+            **{
+                key: value for key, value in context_lock.items()
+                if key != "source_text_normalised"
+            },
+            **context_lock_isolation_fields(),
         },
         "section_assessments": proposals,
         "focused_source_paragraphs": source_rows,
@@ -2174,7 +2187,7 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.4.0-adaptive-natural-evidence-ledger",
+            "pipeline": "academic-review-v2.5.0-isolated-generic-natural-evidence-ledger",
             "retry_generation": int(retry_generation or 0),
             "model": model,
             "effort": effort,
@@ -2812,7 +2825,7 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.4.0-risk-selected-natural-release-guard",
+                "pipeline": "academic-comment-audit-v2.5.0-isolated-risk-selected-natural-release-guard",
                 "retry_generation": int(retry_generation or 0),
                 "batch": batch_label,
                 "retry": retry,

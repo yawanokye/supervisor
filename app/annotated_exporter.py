@@ -29,14 +29,52 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.4.0-natural-reconciled-exact-anchor-review"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.4.0-natural-accurate-provider-selectable-review"
+ANNOTATION_EXPORT_VERSION = "2.5.0-isolated-natural-reconciled-exact-anchor-review"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.5.0-current-submission-isolated-natural-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
 INLINE_BLUE = RGBColor(0x00, 0x70, 0xC0)
 _RICH_RED_RE = re.compile(r"\[\[VPROF_RED:(.*?)\]\]")
 _REFNO_RE = re.compile(r"\[\[VPROF_REFNO:(\d+)\]\]")
+
+
+def _existing_comment_policy() -> str:
+    value = os.getenv("VPROF_EXISTING_COMMENT_POLICY", "label").strip().lower()
+    return value if value in {"label", "preserve"} else "label"
+
+
+def _label_existing_source_comments(document) -> None:
+    """Distinguish comments already present in the submitted DOCX.
+
+    Existing comments are source evidence, not V-Professor findings. Labelling
+    them prevents old numbering or obsolete advice from satisfying the current
+    release reconciliation check.
+    """
+    if _existing_comment_policy() != "label":
+        return
+    prefix = "[Previous comment from source document] "
+    try:
+        comments = list(document.comments)
+    except Exception:
+        comments = []
+    for comment in comments:
+        text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+        if not text or text.startswith(prefix.strip()):
+            continue
+        if comment.paragraphs:
+            comment.paragraphs[0].text = prefix + comment.paragraphs[0].text
+        else:
+            comment.add_paragraph(prefix + text)
+
+
+def _is_current_vprof_comment(comment, author: str = "") -> bool:
+    text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+    if text.startswith("[Previous comment from source document]"):
+        return False
+    if author and clean_text(getattr(comment, "author", "")) != clean_text(author):
+        return False
+    return True
 
 
 # Unresolved drafting placeholders inside the student's own document must always
@@ -2242,13 +2280,15 @@ def _add_specific_corrections_required(
         paragraph.add_run(text)
 
 
-def _represented_finding_numbers(document) -> set[int]:
+def _represented_finding_numbers(document, *, author: str = "") -> set[int]:
     numbers: set[int] = set()
     try:
         comments = list(document.comments)
     except Exception:
         comments = []
     for comment in comments:
+        if not _is_current_vprof_comment(comment, author):
+            continue
         text = " ".join(paragraph.text for paragraph in comment.paragraphs)
         for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
             try:
@@ -2273,7 +2313,7 @@ def _ensure_native_comment_reconciliation(
     native comments.
     """
     expected = {int(number): (row, comment) for number, row, comment in numbered_rows if int(number or 0) > 0}
-    missing = sorted(set(expected) - _represented_finding_numbers(document))
+    missing = sorted(set(expected) - _represented_finding_numbers(document, author=author))
     if not missing:
         return
     fallback = [
@@ -2476,6 +2516,7 @@ def build_annotated_docx(
     comment_author: Optional[str] = None,
 ) -> bytes:
     document = Document(io.BytesIO(source_bytes))
+    _label_existing_source_comments(document)
     author, initials = _comment_identity(review, comment_author)
     source_map, table_map = _source_locator_map(document)
 
