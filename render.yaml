@@ -319,6 +319,8 @@ services:
         value: true
       - key: VPROF_NATIVE_COMMENT_STYLE
         value: exact_anchor_grouped
+      - key: VPROF_EXISTING_COMMENT_POLICY
+        value: label
       - key: VPROF_GROUP_SAME_ANCHOR_COMMENTS
         value: true
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
@@ -352,7 +354,7 @@ services:
       - key: VPROF_HUMAN_SUPERVISORY_EDITOR
         value: true
       - key: VPROF_HUMAN_ROOT_CAUSE_CONSOLIDATION
-        value: false
+        value: true
       - key: VPROF_HUMAN_JUDGEMENT_PASS
         value: true
       - key: VPROF_SEMANTIC_EXAMPLE_GATE

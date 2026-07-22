@@ -1,3 +1,22 @@
+# V-Professor 2.5.0
+
+## Current-submission isolation and generic review rules
+
+- Treats every reviewed work and benchmark as job-local evidence rather than a reusable template.
+- Removes sample, learned-rule, prior-submission and cross-job context fields before AI calls and final release.
+- Adds provider prompt locks against persisting example names, institutions, settings, constructs or weaknesses.
+- Replaces sample-specific production rules with generic document-derived setting, population, construct and alignment checks.
+- Preserves verified section-contract findings while suppressing heuristic false missing-section and hypothesis findings.
+- Consolidates duplicate root causes before numbering and reconciles only current V-Professor comments.
+- Labels older source-document comments separately.
+- Keeps natural student-facing comments concise and free of mechanical field headings.
+
+## Validation
+
+- 358 automated tests passed from a clean environment.
+- Python compilation, JavaScript syntax, Render YAML, duplicate environment-key and secret scans passed.
+- Production code contains no names, institutions or locations from the example documents used for quality evaluation.
+
 # V-Professor 2.4.0
 
 ## Natural comments and final accuracy control

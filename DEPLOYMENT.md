@@ -1,4 +1,4 @@
-# V-Professor v2.4.0 Deployment Guide
+# V-Professor v2.5.0 Deployment Guide
 
 ## Architecture
 
@@ -110,6 +110,11 @@ DEEPSEEK_COVERAGE_REQUEST_MAX_CHARS=9000
 
 These provider-specific packet limits are intentionally lower than the general coverage limits. They prevent repeated cut-off JSON responses and are usually cheaper than retrying large failed packets.
 
+
+## Current-submission isolation
+
+The application rebuilds study context for every job. Example and benchmark documents do not become rules for later submissions. Previous chapters are retained only when they belong to the same submitted work and are intentionally supplied for alignment. Do not add sample documents, sample findings or learned topic terms to environment variables or production prompts.
+
 ## Native and inline comments
 
 Recommended settings:
@@ -120,7 +125,11 @@ VPROF_EXPORT_ONE_COMMENT_PER_FINDING=false
 VPROF_COMMENT_MERGE_BY_SECTION=false
 VPROF_MAX_ITEMS_PER_NATIVE_COMMENT=20
 VPROF_NATIVE_GROUP_LOCATION_MARKERS=false
+VPROF_HUMAN_ROOT_CAUSE_CONSOLIDATION=true
+VPROF_EXISTING_COMMENT_POLICY=label
 ```
+
+`VPROF_EXISTING_COMMENT_POLICY=label` keeps comments already present in the uploaded DOCX but prefixes them as previous source-document comments. They are excluded from current finding reconciliation.
 
 All released findings attached to the same paragraph share one numbered, natural Word comment. Findings attached to different paragraphs remain separate. Visible labels such as Issue, Problem identified, Action required and Verification are not shown. Visible location markers are disabled to protect decimals, citations, equations and DOI strings.
 
@@ -156,7 +165,7 @@ These values do not overwrite an administrator already stored in PostgreSQL.
 7. Confirm the status moves from queued to document preparation within one or two polling cycles.
 8. Confirm the output contains the annotated DOCX, inline-annotated DOCX and supervisory action report.
 
-Old review checkpoints should not be reused because the v2.4.0 release, natural-comment and evidence-ledger identifiers changed.
+Old review checkpoints should not be reused because the v2.5.0 isolation, natural-comment and evidence-ledger identifiers changed.
 
 ## Validation
 
