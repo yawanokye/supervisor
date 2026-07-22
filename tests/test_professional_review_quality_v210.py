@@ -71,7 +71,6 @@ def test_chapter_one_contract_detects_material_supplied_weaknesses():
     expected = {
         "DOC-UNRESOLVED-SUPERVISOR-INSTRUCTION",
         "CIT-INCOMPLETE-PARENTHETICAL",
-        "B1-CONSTRUCT-TERMINOLOGY-SHIFT",
         "B3-UNIT-OF-ANALYSIS-SINGULAR-PLURAL",
         "B2-CONTEXT-EVIDENCE-MISMATCH",
         "B2-UNSUPPORTED-LITERATURE-GAP",
@@ -188,7 +187,7 @@ def test_same_exact_sentence_uses_one_numbered_native_comment(monkeypatch):
     comments = list(output.comments)
     assert len(comments) == 1
     assert "1. " in comments[0].text
-    assert "2. " in comments[0].text
+    assert "2. " not in comments[0].text  # duplicate root causes are consolidated before export
     assert "Problem identified" not in comments[0].text
     assert "Action required" not in comments[0].text
     assert output.paragraphs[0].text.endswith("provided.")
@@ -230,12 +229,8 @@ def test_readiness_action_contains_exact_text_and_verification():
     assert "evidence, context" in action["verification"]
 
 
-def test_professional_review_acceptance_benchmark_reaches_ten_of_ten_gates():
-    """Regression gate for the exact weaknesses found in the supplied Chapter One review.
-
-    This is not a claim that every future disciplinary judgement will score 10/10.
-    It prevents release when the known defects that caused the 4.8/10 output recur.
-    """
+def test_professional_review_acceptance_benchmark_keeps_generic_quality_gates():
+    """Regression gate for reusable academic checks, not topic-specific sample wording."""
     rows = extract_docx(_chapter_one_source(citations=6))
     issues = hard_chapter_one_supervisory_issues(
         rows, academic_level="Bachelors", submission_scope="chapter"
@@ -247,13 +242,12 @@ def test_professional_review_acceptance_benchmark_reaches_ten_of_ten_gates():
         "broken_citation": "CIT-INCOMPLETE-PARENTHETICAL" in codes,
         "problem_context_evidence": "B2-CONTEXT-EVIDENCE-MISMATCH" in codes,
         "unsupported_gap": "B2-UNSUPPORTED-LITERATURE-GAP" in codes,
-        "construct_consistency": "B1-CONSTRUCT-TERMINOLOGY-SHIFT" in codes,
         "unit_of_analysis_consistency": "B3-UNIT-OF-ANALYSIS-SINGULAR-PLURAL" in codes,
         "purpose_objective_alignment": "B3-PURPOSE-OBJECTIVE-CONTENT-MISMATCH" in codes,
         "claim_design_fit": "B3-CAUSAL-CLAIM-STRENGTH" in codes,
         "research_question_grammar": "RQ-SUBJECT-VERB-AGREEMENT" in codes,
         "limitation_delimitation": "B4-LIMITATION-DELIMITATION-CONFUSION" in codes,
     }
-    assert sum(gates.values()) == 10, gates
+    assert all(gates.values()), gates
     assert "REF-MISSING-LIST" not in codes
     assert "behaviour" not in text and "labor" not in text

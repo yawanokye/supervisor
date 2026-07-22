@@ -60,7 +60,7 @@ def test_limited_completed_review_has_rebuild_controls():
     assert "Rebuild review" in portal
     assert "Rebuild review and comments" in detail
     assert "Rebuild requested for the limited review output" in main
-    assert "review-pipeline-v2.4.0-natural-accurate-provider-selectable" in main
+    assert "review-pipeline-v2.5.0-current-submission-isolated-natural-release" in main
 
 
 def test_empty_annotated_output_is_rejected():
