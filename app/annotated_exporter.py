@@ -29,8 +29,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.5.0-isolated-natural-reconciled-exact-anchor-review"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.5.0-current-submission-isolated-natural-review"
+ANNOTATION_EXPORT_VERSION = "2.6.0-final-generic-natural-reconciled-review"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.6.0-final-generic-natural-reconciled-review"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)

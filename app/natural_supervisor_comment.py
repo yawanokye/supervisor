@@ -22,7 +22,9 @@ _GENERIC_VERIFICATION = (
 _GENERIC_ACTIONS = (
     "revise the marked passage to address the identified academic weakness",
     "state the missing information directly in the relevant section",
+    "state the exact weakness in the cited passage",
     "using the actual design evidence and terminology of the study",
+    "grounded in the current study design evidence and terminology",
 )
 
 
@@ -139,7 +141,7 @@ def natural_supervisor_comment(
         if example:
             sentences.extend(_unique_sentences(["For example, " + example], limit=1))
 
-    return " ".join(_unique_sentences(sentences, limit=4))
+    return " ".join(_unique_sentences(sentences, limit=3))
 
 
 def natural_group_item(value: Any) -> str:

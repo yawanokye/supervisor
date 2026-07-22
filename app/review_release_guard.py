@@ -507,8 +507,11 @@ def _specific_action_for_row(row: Mapping[str, Any]) -> str:
     if section == "limitations":
         return "Explain how each genuine design, data, sampling, measurement or access constraint may affect the findings and how its effect was managed."
     if section == "organisation":
-        return "Describe the purpose and main content of each remaining chapter accurately in one concise sentence."
-    return "State the exact weakness in the cited passage and provide a direct correction grounded in the current study's design, evidence and terminology."
+        return "Correct the chapter outline so that each chapter description matches the content actually planned or presented in the work."
+    quote = _clean((primary_evidence(dict(row)) or {}).get("text") or row.get("problematic_quote"))
+    if quote:
+        return "Rewrite the cited passage so that the claim is precise, supported and consistent with the study's stated scope and method."
+    return "Revise the relevant section so that it states the required information clearly and consistently with the study's scope and method."
 
 
 def _normalise_mechanical_checklist(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -544,6 +547,64 @@ def _normalise_mechanical_checklist(row: Mapping[str, Any]) -> Dict[str, Any]:
     return output
 
 
+def _programme_requirement_confirmed(review: Mapping[str, Any], label: str) -> bool:
+    """Return True only where the current job carries explicit programme evidence.
+
+    Example documents and earlier review outputs are never treated as institutional
+    rules. A section may be called mandatory only when the current job contains a
+    verified programme/template requirement or a deterministic contract flag.
+    """
+    wanted = _norm(label)
+    summary = review.get("summary") or {}
+    runtime = review.get("_runtime_context") or {}
+    values = []
+    for source in (summary, runtime, review.get("programme_requirements") or {}):
+        if isinstance(source, Mapping):
+            for key in ("verified_required_sections", "mandatory_sections", "programme_template_sections", "institutional_requirements"):
+                value = source.get(key)
+                if isinstance(value, str):
+                    values.append(value)
+                elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                    values.extend(str(item) for item in value)
+    return any(wanted == _norm(value) or wanted in _norm(value) for value in values)
+
+
+def _strip_reviewer_prompt_leakage(row: Mapping[str, Any]) -> Dict[str, Any]:
+    output = dict(row)
+    leak_patterns = (
+        r"State the exact weakness in the cited passage[^.]*\.?",
+        r"State the missing information directly in the relevant section[^.]*\.?",
+        r"using the actual design,? evidence and terminology of the study\.?",
+        r"grounded in the current study(?:'s)? design,? evidence and terminology\.?",
+        r"Check that that\b",
+        r"Check that Use\b",
+    )
+    for field in ("issue_title", "item", "assessment", "comment", "required_action", "academic_consequence", "illustrative_guidance"):
+        text = _clean(output.get(field))
+        for pattern in leak_patterns:
+            text = re.sub(pattern, "", text, flags=re.I)
+        text = re.sub(r"\s{2,}", " ", text).strip(" .;:")
+        output[field] = text
+    if not _clean(output.get("required_action")):
+        output["required_action"] = _specific_action_for_row(output)
+    return output
+
+
+def _unsupported_missing_section(row: Mapping[str, Any], review: Mapping[str, Any]) -> bool:
+    blob = _row_blob(row)
+    labels = {
+        "definition of terms": ("definition of terms", "definition of key terms", "operational definitions"),
+        "theoretical framework": ("missing theoretical framework", "missing theoretical framework outline"),
+        "conceptual framework": ("missing conceptual framework", "missing conceptual framework outline"),
+        "logical framework": ("missing logical framework", "logical framework not present"),
+    }
+    for label, phrases in labels.items():
+        if any(phrase in blob for phrase in phrases):
+            verified = bool(row.get("section_contract_verified")) or _programme_requirement_confirmed(review, label)
+            return not verified
+    return False
+
+
 def filter_and_rewrite_release_findings(
     rows: Sequence[Mapping[str, Any]],
     review: Mapping[str, Any],
@@ -561,8 +622,11 @@ def filter_and_rewrite_release_findings(
     moderation_alignment_added = False
 
     for original in rows:
-        row = _normalise_mechanical_checklist(original)
+        row = _strip_reviewer_prompt_leakage(_normalise_mechanical_checklist(original))
         blob = _row_blob(row)
+
+        if _unsupported_missing_section(row, review):
+            continue
 
         if any(phrase in blob for phrase in ("review-based research needs transparent search", "review based research needs transparent search", "review research needs transparent search")) and context.design != "systematic_review":
             continue
@@ -599,6 +663,12 @@ def filter_and_rewrite_release_findings(
 
         if "missing theoretical framework outline" in blob and _organisation_mentions_framework(runtime):
             continue
+        if section_key == "organisation" and "logical framework" in blob and _organisation_mentions_framework(runtime):
+            row["issue_title"] = row["item"] = "The framework terminology in the chapter outline needs clarification"
+            row["assessment"] = row["comment"] = "The chapter outline refers to a logical framework, but the work should use the framework label that matches the study and the programme's approved structure."
+            row["required_action"] = "Confirm whether Chapter Two presents a theoretical, conceptual or logical framework and use that term consistently in the chapter outline and the framework section."
+            row["severity"] = "minor"
+            blob = _row_blob(row)
         if section_key == "organisation" and any(term in blob for term in ("missing content", "contains no text", "section is empty")) and _organisation_is_present(runtime):
             continue
 
@@ -670,7 +740,7 @@ def _family(row: Mapping[str, Any]) -> str:
     if any(term in title for term in (
         "undefined central construct", "undefined key construct", "constructs not defined",
         "constructs are undefined", "missing conceptual framing", "constructs not connected",
-        "conceptual anchor", "theoretical or conceptual anchor",
+        "conceptual anchor", "theoretical or conceptual anchor", "brief conceptual link",
     )):
         return "construct_definition"
     if "background" in section and any(term in title for term in (
