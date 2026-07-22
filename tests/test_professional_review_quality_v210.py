@@ -189,10 +189,8 @@ def test_same_exact_sentence_uses_one_numbered_native_comment(monkeypatch):
     assert len(comments) == 1
     assert "1. " in comments[0].text
     assert "2. " in comments[0].text
-    assert "Problem identified" in comments[0].text
-    assert "Action required" in comments[0].text
-    assert "Why this matters" in comments[0].text
-    assert "Verification" in comments[0].text
+    assert "Problem identified" not in comments[0].text
+    assert "Action required" not in comments[0].text
     assert output.paragraphs[0].text.endswith("provided.")
 
 

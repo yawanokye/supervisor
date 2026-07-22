@@ -170,5 +170,7 @@ def test_citation_issue_is_visible_comment_one_and_appendix_is_professional(monk
     with zipfile.ZipFile(io.BytesIO(output)) as archive:
         comments_xml = archive.read("word/comments.xml").decode("utf-8")
     plain = re.sub(r"<[^>]+>", " ", comments_xml)
-    assert re.search(r"\b1\.\s+Issue:\s+The citation presentation", plain)
+    assert re.search(r"\b1\.\s+The citation presentation", plain)
+    assert "Problem identified:" not in plain
+    assert "Action required:" not in plain
     assert "missing spaces" in plain

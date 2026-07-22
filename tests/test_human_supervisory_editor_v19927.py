@@ -50,7 +50,7 @@ def test_significance_root_causes_are_consolidated_and_not_repeated():
     rows = build_canonical_finding_rows(review, force=True)
     assert len(rows) == 2
     titles = " | ".join(row["item"] for row in rows).lower()
-    assert "main contributions" in titles
+    assert "scholarly, practical and policy contribution" in titles
     assert "research gap" in titles
     assert all(row.get("student_comment") for row in rows)
 

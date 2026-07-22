@@ -75,7 +75,7 @@ def test_fast_chapter_defaults(monkeypatch):
 
 def test_old_three_stage_section_recovery_removed():
     source = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "academic-review-v2.3.2-adaptive-compact-deepseek-evidence-ledger" in source
+    assert "academic-review-v2.4.0-adaptive-natural-evidence-ledger" in source
     assert "chapter_packet_coverage_recovery" in source
     assert "single_chapter_packet_retry" in source
     assert "academic-focused-section-recovery-v1.9.2" not in source

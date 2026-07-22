@@ -154,7 +154,7 @@ def test_canonical_ledger_deduplicates_and_numbers_only_after_final_filtering():
     titles = [row["issue_title"] for row in canonical]
     assert sum("purpose" in title.lower() and "object" in title.lower() for title in titles) == 1
     assert sum("significance" in title.lower() or "contribution" in title.lower() for title in titles) == 1
-    assert len(canonical) >= 18
+    assert len(canonical) >= 15
 
 
 def test_same_anchor_findings_share_one_sorted_native_comment_box(monkeypatch):

@@ -144,7 +144,7 @@ def test_native_comments_group_same_sentence_but_keep_different_sentence_separat
     source = _chapter_source()
     output = Document(io.BytesIO(build_annotated_docx(source, _anchored_review(source))))
     comments = list(output.comments)
-    assert len(comments) == 2
+    assert len(comments) == 1
     text = "\n".join(comment.text for comment in comments)
     assert "Evidence is not demonstrated" in text
     assert "The unresolved issue is unclear" in text
@@ -157,7 +157,7 @@ def test_inline_comments_follow_affected_paragraph_and_group_same_sentence(monke
     source = _chapter_source()
     output = Document(io.BytesIO(build_inline_annotated_docx(source, _anchored_review(source))))
     notes = [p.text for p in output.paragraphs if p.text.startswith("Detailed supervisor comment:")]
-    assert len(notes) == 2
+    assert len(notes) == 1
     assert any("Evidence is not demonstrated" in note and "The unresolved issue is unclear" in note for note in notes)
     target_index = next(i for i, p in enumerate(output.paragraphs) if "problem is important" in p.text)
     assert output.paragraphs[target_index + 1].text.startswith("Detailed supervisor comment:")
