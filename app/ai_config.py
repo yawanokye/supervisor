@@ -96,7 +96,7 @@ class HybridAIConfig:
     external examination use the configured Terra and Sol roles. Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    V-Professor v2.3.2 applies research-design, submission-stage and contradiction gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
+    V-Professor v2.4.0 applies research-design, submission-stage and contradiction gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
     """
 
     enabled: bool

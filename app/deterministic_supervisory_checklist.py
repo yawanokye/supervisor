@@ -583,7 +583,7 @@ def _actual_spelling_variants(text: str) -> Dict[str, List[str]]:
     families = {
         "organisation": (r"\borganis(?:ation|ations|e|ed|es|ing)\b", r"\borganiz(?:ation|ations|e|ed|es|ing)\b"),
         "recognise": (r"\brecognis(?:e|ed|es|ing|ation)\b", r"\brecogniz(?:e|ed|es|ing|ation)\b"),
-        "behaviour": (r"\bbehaviou?r(?:s|al)?\b", r"\bbehavior(?:s|al)?\b"),
+        "behaviour": (r"\bbehaviour(?:s|al)?\b", r"\bbehavior(?:s|al)?\b"),
         "labour": (r"\blabour\b", r"\blabor\b"),
         "maximise": (r"\bmaximis(?:e|ed|es|ing|ation)\b", r"\bmaximiz(?:e|ed|es|ing|ation)\b"),
         "generalise": (r"\bgeneralis(?:e|ed|es|ing|ation)\b", r"\bgeneraliz(?:e|ed|es|ing|ation)\b"),
@@ -751,6 +751,68 @@ def hard_chapter_one_supervisory_issues(
             severity="major",
             quote=plural_quote,
         ))
+
+    # Detect a change in the analytical claim between the title and purpose.
+    # Terms such as contribution, association and impact are not interchangeable
+    # because they imply different research designs and conclusions.
+    title_relation = next((term for term in ("contribution", "relationship", "association", "impact", "effect", "influence") if re.search(rf"\b{term}\b", title_text, flags=re.I)), "")
+    purpose_relation = next((term for term in ("contribution", "relationship", "association", "impact", "effect", "influence") if re.search(rf"\b{term}\b", purpose_text, flags=re.I)), "")
+    if title_relation and purpose_relation and title_relation != purpose_relation:
+        anchor = _first_substantive(purpose)
+        issues.append(_issue(
+            code="B3-TITLE-PURPOSE-RELATIONSHIP-TERM",
+            section="Purpose of the Study",
+            title="The title and purpose use different terms for the study's central analytical claim",
+            assessment=f"The title frames the study in terms of ‘{title_relation}’, while the purpose uses ‘{purpose_relation}’. These terms do not make the same analytical claim.",
+            consequence="Inconsistent relationship language can lead to mismatched objectives, methods and conclusions.",
+            action="Choose the relationship term supported by the proposed design and use it consistently in the title, purpose, objectives, questions, methodology and conclusions.",
+            anchor=anchor,
+            category="cross_section_coherence",
+            severity="major",
+            quote=purpose_relation,
+        ))
+
+    # Detect setting drift such as Aboabo Market in the title and Tamale Market
+    # in the objectives or scope. Only named settings ending in a clear
+    # institutional or geographical type are compared.
+    place_pattern = re.compile(
+        r"\b([A-Z][A-Za-z'’.-]+\s+(?:Market|Municipality|District|Metropolis|Region))\b",
+        flags=re.I,
+    )
+    institution_pattern = re.compile(
+        r"\b([A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){0,2}\s+(?:Bank|Hospital|University|College))\b",
+        flags=re.I,
+    )
+
+    def named_settings(value: str) -> List[str]:
+        settings = [clean_text(item) for item in place_pattern.findall(value)]
+        settings.extend(clean_text(item) for item in institution_pattern.findall(value))
+        return list(dict.fromkeys(settings))
+
+    title_settings = named_settings(title_text)
+    scope_rows = list(purpose) + list(objectives) + list(questions) + list(delimitations)
+    scope_settings = []
+    for row in scope_rows:
+        for value in named_settings(clean_text(row.get("text", ""))):
+            scope_settings.append((clean_text(value), row))
+    if title_settings:
+        title_setting = title_settings[0]
+        title_key = normalised(title_setting)
+        alternate = next(((value, row) for value, row in scope_settings if normalised(value) != title_key), None)
+        if alternate:
+            other_setting, anchor = alternate
+            issues.append(_issue(
+                code="B3-STUDY-SETTING-DRIFT",
+                section=source_section(anchor) or "Chapter One",
+                title="The geographical setting changes across the title, objectives, questions or scope",
+                assessment=f"The title identifies ‘{title_setting}’, while the marked passage refers to ‘{other_setting}’. The chapter does not explain whether these are the same boundary or different study settings.",
+                consequence="A shifting setting changes the population, sampling frame and limits of interpretation.",
+                action="Define the exact study setting once and use the same geographical boundary throughout the title, purpose, objectives, questions, scope and methodology. Explain any wider Tamale context without expanding the sampled site unintentionally.",
+                anchor=anchor,
+                category="scope_and_context",
+                severity="major",
+                quote=other_setting,
+            ))
 
     if background:
         low_bg = normalised(bg_text)
@@ -1034,6 +1096,22 @@ def hard_chapter_one_supervisory_issues(
                 category="academic_writing",
                 severity="moderate",
                 quote=grammar_quote,
+            ))
+
+        modal_row = _row_with_pattern(questions, r"\bhow can\b[^?]{0,180}\b(?:creates|improves|enhances|reduces|increases|contributes|supports)\b")
+        if modal_row:
+            modal_quote = _exact_match_text(modal_row, r"\bhow can\b[^?]{0,180}\b(?:creates|improves|enhances|reduces|increases|contributes|supports)\b[^?]*\?") or clean_text(modal_row.get("text", ""))
+            issues.append(_issue(
+                code="RQ-MODAL-BASE-VERB",
+                section="Research Questions",
+                title="A research question uses an incorrect verb form after a modal verb",
+                assessment=f"The wording ‘{modal_quote}’ uses a third-person singular verb after ‘can’, which requires the base form.",
+                consequence="The grammatical error reduces the precision and professional presentation of a core research question.",
+                action="Use the base verb after ‘can’, for example ‘How can the use of IT create…?’, and ensure the corresponding objective expresses the same task clearly.",
+                anchor=modal_row,
+                category="academic_writing",
+                severity="moderate",
+                quote=modal_quote,
             ))
 
     if significance:

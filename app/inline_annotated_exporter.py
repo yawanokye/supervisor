@@ -39,10 +39,11 @@ from .annotated_exporter import (
 from .comment_quality import public_text
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
+from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.3.2-reconciled-exact-anchor-review"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.3.2-adaptive-compact-provider-selectable-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.4.0-natural-paragraph-grouped-review"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.4.0-natural-accurate-provider-selectable-review"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -171,17 +172,16 @@ def _inline_comment_limit() -> int:
 
 
 def _row_comment(row: Dict[str, Any]) -> str:
-    """Build a concise inline note from the same canonical finding record.
-
-    The native Word comment and readiness report retain the full explanation.
-    Inline annotations show only the issue and immediate action so the student's
-    chapter remains readable.
-    """
-    issue = clean_text(row.get("item") or row.get("issue_title"))
-    action = clean_text(row.get("required_action"))
-    if not action:
+    """Build a concise, natural inline note from the canonical finding record."""
+    text = natural_supervisor_comment(
+        row,
+        compact=True,
+        include_reason=False,
+        include_verification=False,
+        include_example=False,
+    )
+    if not text:
         return ""
-    text = f"Issue: {issue.rstrip(' .')}. Action required: {action.rstrip(' .')}." if issue else f"Action required: {action.rstrip(' .')}."
     text = professionalise_reviewer_language(text, row.get("_academic_level") or row.get("academic_level"))
     return _clean_comment(public_text(text, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=True))
 
@@ -216,10 +216,10 @@ def build_inline_annotated_docx(
         for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
     ]
 
-    # Findings tied to the same exact sentence share one numbered inline note.
-    # Findings tied to different sentences in the same paragraph remain
-    # separate and are placed in sentence order immediately after the paragraph.
-    after_anchor: Dict[Tuple[int, int, int], List[str]] = defaultdict(list)
+    # All findings tied to the same paragraph share one numbered inline note.
+    # This mirrors the native Word comment grouping and keeps the annotated
+    # chapter readable while preserving every canonical finding number.
+    after_anchor: Dict[int, Dict[str, Any]] = defaultdict(lambda: {"spans": [], "comments": []})
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
     def reference_number_for(row: Dict[str, Any]) -> int:
@@ -274,24 +274,27 @@ def build_inline_annotated_docx(
         start, end = _expand_to_safe_text_span(text, start, end)
         if start >= end:
             start, end = 0, len(text)
-        after_anchor[(paragraph_number, start, end)].append(comment)
+        after_anchor[paragraph_number]["spans"].append((start, end))
+        after_anchor[paragraph_number]["comments"].append(comment)
 
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
     else:
         _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
-    for (paragraph_number, start, end), comments in sorted(
-        after_anchor.items(),
-        key=lambda item: (item[0][0], item[0][1]),
-        reverse=True,
-    ):
+    for paragraph_number, group in sorted(after_anchor.items(), reverse=True):
         locator = source_map.get(paragraph_number) or {}
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        comments = list(dict.fromkeys(comments))
+        comments = list(dict.fromkeys(group.get("comments") or []))
+        spans = list(group.get("spans") or [])
+        if not comments or not spans:
+            continue
         text = _visible_paragraph_text(paragraph)
+        start = min(item[0] for item in spans)
+        end = max(item[1] for item in spans)
+        start, end = _expand_to_safe_text_span(text, start, end)
         grouped = _format_comment_group(comments, anchor_context=text[start:end])
         _mark_span_red(
             paragraph,
