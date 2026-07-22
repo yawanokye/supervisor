@@ -1,3 +1,6 @@
+## 2.6.0
+- Final generic release hardening, natural-comment cleanup, mandatory-section evidence gate and duplicate-family consolidation.
+
 # V-Professor 2.5.0
 
 ## Current-submission isolation and generic review rules
