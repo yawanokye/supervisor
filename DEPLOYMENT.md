@@ -152,7 +152,15 @@ ADMIN_EMAIL=<email>
 ADMIN_NAME=System Administrator
 ```
 
-These values do not overwrite an administrator already stored in PostgreSQL.
+These values do not overwrite an administrator already stored in PostgreSQL during normal startup.
+
+For a controlled one-time reset of the stored administrator credential, set:
+
+```env
+VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP=true
+```
+
+Redeploy the web service, sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`, then immediately set the flag back to `false` and redeploy. The application logs whether the reset was applied but never prints the configured password. A trusted Render Shell may alternatively run `python scripts/reset_admin_password.py`.
 
 ## Deployment sequence
 

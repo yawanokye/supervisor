@@ -17,6 +17,18 @@ services:
         generateValue: true
       - key: COOKIE_SECURE
         value: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_NAME
+        value: System Administrator
+      - key: VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP
+        value: false
+      - key: VPROF_ADMIN_REQUIRE_PASSWORD_CHANGE_AFTER_RESET
+        value: false
       - key: DATABASE_URL
         fromDatabase:
           name: vprofessor-db

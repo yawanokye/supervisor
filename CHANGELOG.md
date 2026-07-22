@@ -1,3 +1,11 @@
+## 2.6.1
+
+- Added a controlled one-time administrator password reset using `VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP=true`.
+- Added explicit startup diagnostics explaining that `ADMIN_PASSWORD` is bootstrap-only when an administrator already exists.
+- Added `scripts/reset_admin_password.py` for trusted Render Shell recovery without printing the secret.
+- Added administrator environment variables to `render.yaml` and documented the safe reset sequence.
+- Added tests preventing silent password overwrite during ordinary restarts.
+
 ## 2.6.0
 - Final generic release hardening, natural-comment cleanup, mandatory-section evidence gate and duplicate-family consolidation.
 
