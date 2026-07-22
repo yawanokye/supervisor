@@ -1,4 +1,4 @@
-# V-Professor v2.3.2 Deployment Guide
+# V-Professor v2.4.0 Deployment Guide
 
 ## Architecture
 
@@ -117,12 +117,12 @@ Recommended settings:
 ```env
 VPROF_NATIVE_COMMENT_STYLE=exact_anchor_grouped
 VPROF_EXPORT_ONE_COMMENT_PER_FINDING=false
-VPROF_COMMENT_MERGE_BY_SECTION=true
-VPROF_MAX_ITEMS_PER_NATIVE_COMMENT=8
+VPROF_COMMENT_MERGE_BY_SECTION=false
+VPROF_MAX_ITEMS_PER_NATIVE_COMMENT=20
 VPROF_NATIVE_GROUP_LOCATION_MARKERS=false
 ```
 
-Findings attached to the same sentence share one numbered Word comment. Findings attached to different sentences or paragraphs remain separate. Visible location markers are disabled to protect decimals, citations, equations and DOI strings.
+All released findings attached to the same paragraph share one numbered, natural Word comment. Findings attached to different paragraphs remain separate. Visible labels such as Issue, Problem identified, Action required and Verification are not shown. Visible location markers are disabled to protect decimals, citations, equations and DOI strings.
 
 ## Section-scoped review
 
@@ -156,7 +156,7 @@ These values do not overwrite an administrator already stored in PostgreSQL.
 7. Confirm the status moves from queued to document preparation within one or two polling cycles.
 8. Confirm the output contains the annotated DOCX, inline-annotated DOCX and supervisory action report.
 
-Old review checkpoints should not be reused because the v2.3.2 provider, packet and evidence-ledger identifiers changed.
+Old review checkpoints should not be reused because the v2.4.0 release, natural-comment and evidence-ledger identifiers changed.
 
 ## Validation
 

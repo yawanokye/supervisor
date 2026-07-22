@@ -268,7 +268,7 @@ services:
       - key: VPROF_COMMENT_MAX_CHARS
         value: 900
       - key: VPROF_GROUPED_COMMENT_MAX_CHARS
-        value: 3600
+        value: 8000
       - key: VPROF_INLINE_COMMENT_MAX_CHARS
         value: 480
       - key: VPROF_COMMENT_SIMILARITY_THRESHOLD
@@ -326,7 +326,7 @@ services:
       - key: VPROF_COMMENT_MERGE_BY_SECTION
         value: false
       - key: VPROF_MAX_ITEMS_PER_NATIVE_COMMENT
-        value: 8
+        value: 20
       - key: VPROF_INCLUDE_SECTION_REVIEW_COMMENTS
         value: false
       - key: VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS

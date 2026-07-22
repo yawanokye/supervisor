@@ -1,3 +1,22 @@
+# V-Professor 2.4.0
+
+## Natural comments and final accuracy control
+
+- Replaced visible comment subsections with connected, natural supervisory prose.
+- Grouped all released findings tied to the same paragraph into one numbered native comment.
+- Added native-comment reconciliation so every released finding number is represented before export.
+- Added whole-section contradiction checks for chapter headings, introductions, objectives, significance and limitations.
+- Corrected British/American spelling evidence and removed invented spelling support.
+- Added detection of title-purpose claim drift, study-setting drift and modal-verb errors in research questions.
+- Consolidated repeated background, problem-gap, significance, terminology and purpose-alignment findings.
+- Increased grouped-comment capacity so consolidated actions are not silently truncated.
+- Retained provider selection, compact DeepSeek packets and single-target truncation recovery.
+
+## Validation
+
+- 352 automated tests passed.
+- The supplied 32-finding benchmark was reduced to 10 distinct, evidence-supported corrections after contradiction filtering and consolidation.
+
 # V-Professor 2.3.2
 
 ## DeepSeek length-recovery and cost-control hotfix
