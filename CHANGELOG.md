@@ -1,3 +1,18 @@
+# Changelog
+
+## 2.7.0
+
+- Added exact substantive-paragraph anchoring ahead of section-heading anchoring.
+- Limited student-facing native comments to focused natural prose of no more than three complete sentences.
+- Consolidated overlapping construct-definition, background-progression, problem-gap and scope findings before numbering.
+- Added strict canonical-ledger to native-comment reconciliation and blocked inconsistent exports.
+- Removed empty source comments and added cautious addressed-status labelling for visibly restored sections.
+- Added generic limitations-consequence and unsupported-absolute-claim audits.
+- Preserved evidence-locked deterministic findings during AI consolidation.
+- Suppressed weak findings based only on concise organisation-of-study descriptions.
+- Added tests preventing benchmark-specific names, locations and constructs from entering production rules.
+- Updated pipeline and export checkpoint identifiers to 2.7.0.
+
 ## 2.6.1
 
 - Added a controlled one-time administrator password reset using `VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP=true`.

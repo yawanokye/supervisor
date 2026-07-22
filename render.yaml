@@ -333,6 +333,12 @@ services:
         value: exact_anchor_grouped
       - key: VPROF_EXISTING_COMMENT_POLICY
         value: label
+      - key: VPROF_STRICT_NATIVE_RECONCILIATION
+        value: true
+      - key: VPROF_LIMITATIONS_CONSEQUENCE_AUDIT
+        value: true
+      - key: VPROF_ABSOLUTE_CLAIM_AUDIT
+        value: true
       - key: VPROF_GROUP_SAME_ANCHOR_COMMENTS
         value: true
       - key: VPROF_EXPORT_ONE_COMMENT_PER_FINDING
