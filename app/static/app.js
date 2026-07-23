@@ -750,22 +750,24 @@ function renderReview(review) {
   renderExternalAssessment(review);
   const annotatedButton = document.getElementById("annotatedButton");
   const inlineAnnotatedButton = document.getElementById("inlineAnnotatedButton");
-  if (s.annotated_document_available) {
-    annotatedButton.classList.remove("hidden");
-    annotatedButton.disabled = false;
+  const canRegenerateAnnotations = Boolean(s.annotation_regeneration_available);
+  const nativeAvailable = Boolean(s.native_annotated_document_available || s.annotated_document_available || canRegenerateAnnotations);
+  const inlineAvailable = Boolean(s.inline_annotated_document_available || s.annotation_bundle_available || canRegenerateAnnotations);
+  annotatedButton.classList.toggle("hidden", !nativeAvailable);
+  annotatedButton.disabled = !nativeAvailable;
+  if (nativeAvailable) {
     annotatedButton.onclick = () => {
       window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/annotated.docx`;
     };
-    if (inlineAnnotatedButton) {
-      inlineAnnotatedButton.classList.remove("hidden");
-      inlineAnnotatedButton.disabled = false;
+  }
+  if (inlineAnnotatedButton) {
+    inlineAnnotatedButton.classList.toggle("hidden", !inlineAvailable);
+    inlineAnnotatedButton.disabled = !inlineAvailable;
+    if (inlineAvailable) {
       inlineAnnotatedButton.onclick = () => {
         window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/annotated-inline.docx`;
       };
     }
-  } else {
-    annotatedButton.classList.add("hidden");
-    if (inlineAnnotatedButton) inlineAnnotatedButton.classList.add("hidden");
   }
 
   const downloadButton = document.getElementById("downloadButton");
