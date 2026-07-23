@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.1
+- Generates native and inline annotated DOCX files as one atomic delivery bundle.
+- Validates current V-Professor comments separately from comments already present in the uploaded source.
+- Persists inline annotated documents in file or database-backed artifact storage.
+- Blocks completion when any final finding number is absent from either annotated output.
+- Prevents the supervisory report from claiming annotations were attached when artifact validation failed.
+- Keeps annotated download buttons available when the saved source permits safe regeneration.
+- Prevents final presentation filters from silently dropping a canonical finding whose quoted source fragment ends near a citation boundary.
+- Retries document-export failures from saved academic checkpoints instead of describing the retry as a new paid expert pass.
+- Verified recovery against a DOCX containing existing source comments: all final finding numbers were represented in both native and inline outputs.
+
+
 ## 2.7.0
 
 - Added exact substantive-paragraph anchoring ahead of section-heading anchoring.

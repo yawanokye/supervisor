@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.7.0
+# V-Professor Supervisory Review 2.7.1
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -10,8 +10,13 @@ The app rebuilds the study context from the current submission, uses earlier cha
 
 ## Final professional review controls
 
-Version 2.7.0 adds the following release controls:
+Version 2.7.1 adds the following release controls:
 
+- native Word-comment and inline annotated DOCX files are generated, validated and persisted as one atomic delivery bundle before a review is released as complete;
+- current V-Professor comments are counted separately from comments already present in the uploaded source, so old comments can never make an empty new annotation export pass validation;
+- every final finding number must appear in both the native and inline annotated outputs, including findings whose quoted source fragments end near citation boundaries;
+- completed academic-review checkpoints are retained when document export fails, so recovery retries the annotation stage without repeating a paid provider pass;
+- older completed reviews can regenerate current annotated outputs at download time when the saved source DOCX remains available;
 - natural student-facing comments limited to focused supervisory prose rather than visible labels such as `Issue`, `Problem identified`, `Action required` or `Verification`;
 - substantive paragraph anchoring ahead of section-heading anchoring;
 - root-cause consolidation for overlapping construct, background, problem-gap and scope findings;
@@ -84,7 +89,9 @@ Background worker:
 python -m app.worker
 ```
 
-Both services must use the same `DATABASE_URL`, provider selection and provider API key. Deploy the same code to both services. Submit unfinished or failed reviews as new jobs because the 2.7.0 checkpoint and export identifiers differ from earlier releases.
+Both services must use the same `DATABASE_URL`, provider selection and provider API key. Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. Version 2.7.1 intentionally retains completed academic-review checkpoints while changing the annotation-export identifiers, allowing export-stage recovery without another paid AI review.
+
+For a review completed under 2.7.0, deploy 2.7.1 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
 
 ## Administrator recovery
 
@@ -98,4 +105,4 @@ python -m compileall -q app scripts
 node --check app/static/app.js
 ```
 
-See `DEPLOYMENT.md`, `.env.example` and `RELEASE_NOTES_v2.7.0.md`.
+See `DEPLOYMENT.md`, `.env.example` and `RELEASE_NOTES_v2.7.1.md`.

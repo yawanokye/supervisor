@@ -1,4 +1,4 @@
-# V-Professor v2.7.0 Deployment Guide
+# V-Professor v2.7.1 Deployment Guide
 
 ## Architecture
 
@@ -55,7 +55,9 @@ VPROF_ABSOLUTE_CLAIM_AUDIT=true
 VPROF_EXPORT_ANCHOR_RECONCILIATION=true
 ```
 
-Strict native reconciliation stops export rather than releasing a report whose canonical finding numbers are absent from the native Word comments. Findings tied to the same exact paragraph may share one comment box while retaining their individual numbers.
+Native and inline reconciliation stops completion rather than releasing a report-only result. Current V-Professor comments are counted separately from comments inherited from the uploaded source, and every canonical finding number must appear in both annotated outputs. Findings tied to the same exact paragraph may share one comment box while retaining their individual numbers.
+
+Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. This preserves the native DOCX, inline DOCX, report data and source payload across Render restarts.
 
 Previous source-document comments remain separate from current V-Professor findings. Empty comments are removed, and an obvious missing-section comment may be marked as addressed when the section is visibly present in the current file.
 
@@ -111,15 +113,16 @@ python scripts/reset_admin_password.py
 
 ## Deployment sequence
 
-1. Allow active legacy jobs to finish or stop them deliberately.
-2. Deploy the 2.7.0 code to both the web service and worker.
-3. Confirm the shared database and selected provider key are available to both services.
+1. Allow active jobs to finish or pause them deliberately.
+2. Deploy the 2.7.1 code to both the web service and worker.
+3. Confirm the shared database, `VPROF_DB_ARTIFACT_STORAGE=true` and selected provider key are available to both services.
 4. Confirm the web health check and worker startup logs are successful.
-5. Submit a short new review job.
-6. Confirm generation of the native annotated DOCX, inline annotated DOCX and supervisory action report.
-7. Verify that all released finding numbers appear in the canonical report and annotated output.
+5. Open an existing 2.7.0 result and test both annotated downloads. They should regenerate from the saved source without repeating the academic AI pass.
+6. For a paused or failed document-export job, select **Recover** once. The completed academic-review checkpoints are retained and only the annotation bundle is rebuilt.
+7. Submit a short new review job and confirm that completion occurs only after the native annotated DOCX, inline annotated DOCX and supervisory report are available.
+8. Verify that every released finding number appears in both annotated outputs.
 
-Do not recover unfinished jobs created with older checkpoint identifiers. Submit them as new jobs.
+Submit a new review only when the original source payload is no longer available.
 
 ## Local validation
 
