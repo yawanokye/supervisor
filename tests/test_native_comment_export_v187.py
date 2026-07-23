@@ -79,7 +79,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
     annotated_bytes = build_annotated_docx(source, review)
     after = Document(io.BytesIO(annotated_bytes))
 
-    assert ANNOTATION_EXPORT_VERSION == "2.7.0-final-professional-reconciled-review"
+    assert ANNOTATION_EXPORT_VERSION == "2.7.1-atomic-annotated-artifact-recovery"
     after_paragraphs, after_tables = _visible_content(after)
     before_paragraphs, before_tables = _visible_content(before)
     assert after_tables == before_tables
@@ -106,7 +106,7 @@ def test_annotations_are_native_word_comments_and_body_is_unchanged():
         assert "word/_rels/document.xml.rels" in names
 
 
-def test_missing_section_feedback_is_added_as_blue_inline_bottom_note_not_native_comment():
+def test_missing_section_feedback_is_added_to_appendix_without_unrelated_native_anchor():
     document = Document()
     document.add_paragraph("Original title")
     document.add_paragraph("Original body text remains unchanged.")

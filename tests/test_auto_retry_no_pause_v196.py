@@ -27,10 +27,13 @@ def test_last_mile_expert_rescue_prevents_empty_annotation_output():
     assert "no factual, correctly placed" in source
 
 
-def test_native_word_comments_remain_required():
+def test_native_and_inline_annotation_bundle_remains_required():
     source = Path("app/main.py").read_text(encoding="utf-8")
     exporter = Path("app/annotated_exporter.py").read_text(encoding="utf-8")
-    assert "actual_comments = native_comment_count(annotated_data)" in source
-    assert "if actual_comments < 1" in source
+    inline = Path("app/inline_annotated_exporter.py").read_text(encoding="utf-8")
+    assert "native_annotation_audit" in source
+    assert "inline_annotation_audit" in source
+    assert "annotation_bundle_validation_passed" in source
     assert "document.add_comment" in exporter
-    assert "2.7.0-final-professional-reconciled-review" in exporter
+    assert "2.7.1-atomic-annotated-artifact-recovery" in exporter
+    assert "2.7.1-atomic-inline-annotated-recovery" in inline

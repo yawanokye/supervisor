@@ -66,7 +66,8 @@ def test_limited_completed_review_has_rebuild_controls():
 def test_empty_annotated_output_is_rejected():
     main = Path("app/main.py").read_text(encoding="utf-8")
     engine = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
-    assert "actual_comments = native_comment_count(annotated_data)" in main
-    assert "if actual_comments < 1" in main
+    assert "native_audit = native_annotation_audit" in main
+    assert 'if not native_audit.get("passed")' in main
+    assert "inline_audit = inline_annotation_audit" in main
     assert "ReviewOutputValidationError" in engine
     assert "fresh automatic expert" in engine
