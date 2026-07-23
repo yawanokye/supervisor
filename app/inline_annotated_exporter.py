@@ -42,8 +42,8 @@ from .reviewer_language import professionalise_reviewer_language
 from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.7.0-final-isolated-natural-paragraph-grouped-review"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.7.0-final-professional-reconciled-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.7.1-atomic-inline-annotated-recovery"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.7.1-atomic-inline-annotated-recovery"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -140,8 +140,23 @@ def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
     else:
         body = _format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))
     plain_body = _RICH_RED_RE.sub(lambda match: match.group(1), body)
-    plain_body = public_text(plain_body, limit=2200, reject_placeholders=True, reject_incomplete=True)
-    if not body or not plain_body or _PROHIBITED_PUBLIC_RE.search(plain_body):
+    released = public_text(
+        plain_body,
+        limit=2200,
+        reject_placeholders=True,
+        reject_incomplete=True,
+    )
+    # ``body`` is assembled only from the validated canonical ledger. Do not
+    # silently drop a numbered inline note when a quoted source fragment is
+    # judged incomplete at this final presentation boundary.
+    if not released:
+        released = public_text(
+            plain_body,
+            limit=2200,
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+    if not body or not released or _PROHIBITED_PUBLIC_RE.search(released):
         return
     note = _insert_paragraph_after(paragraph)
     lead = note.add_run("Detailed supervisor comment: ")
@@ -180,10 +195,19 @@ def _row_comment(row: Dict[str, Any]) -> str:
         include_verification=False,
         include_example=False,
     )
-    if not text:
-        return ""
-    text = professionalise_reviewer_language(text, row.get("_academic_level") or row.get("academic_level"))
-    return _clean_comment(public_text(text, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=True))
+    if text:
+        text = professionalise_reviewer_language(text, row.get("_academic_level") or row.get("academic_level"))
+        released = _clean_comment(public_text(text, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=True))
+        if released:
+            return released
+    fallback = clean_text(
+        row.get("student_comment")
+        or " ".join(value for value in (
+            clean_text(row.get("item") or row.get("issue_title")),
+            clean_text(row.get("required_action")),
+        ) if value)
+    )
+    return public_text(fallback, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=False)
 
 
 def _rows_for_inline(review: Dict[str, Any], source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -277,10 +301,12 @@ def build_inline_annotated_docx(
         after_anchor[paragraph_number]["spans"].append((start, end))
         after_anchor[paragraph_number]["comments"].append(comment)
 
+    # Missing-section findings must also be visible in the inline annotated
+    # document. They cannot be highlighted inside absent text, so add a numbered
+    # inline note at the end of the submitted chapter before the correction register.
+    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
-    else:
-        _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
     for paragraph_number, group in sorted(after_anchor.items(), reverse=True):
         locator = source_map.get(paragraph_number) or {}
@@ -317,3 +343,43 @@ def inline_annotation_count(source_bytes: bytes, review: Dict[str, Any]) -> int:
         if row.get("status") in ACTIONABLE_STATUSES and row.get("annotation_eligible") is not False and _row_comment(row):
             count += 1
     return count
+
+
+def inline_annotation_audit(docx_bytes: bytes, review: Dict[str, Any]) -> Dict[str, Any]:
+    """Verify that every actionable finding number appears in an inline note."""
+    from .annotated_exporter import expected_annotation_finding_numbers
+
+    expected = expected_annotation_finding_numbers(review)
+    expected_set = set(expected)
+    represented: set[int] = set()
+    note_count = 0
+    try:
+        document = Document(io.BytesIO(docx_bytes))
+    except Exception:
+        return {
+            "note_count": 0,
+            "expected_finding_numbers": expected,
+            "represented_finding_numbers": [],
+            "missing_finding_numbers": expected,
+            "passed": False,
+        }
+    for paragraph in document.paragraphs:
+        text = clean_text(paragraph.text)
+        if not text.startswith("Detailed supervisor comment:"):
+            continue
+        note_count += 1
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                number = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if not expected_set or number in expected_set:
+                represented.add(number)
+    missing = sorted(expected_set - represented)
+    return {
+        "note_count": note_count,
+        "expected_finding_numbers": expected,
+        "represented_finding_numbers": sorted(represented),
+        "missing_finding_numbers": missing,
+        "passed": bool(expected) and note_count > 0 and not missing,
+    }

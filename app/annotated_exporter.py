@@ -29,8 +29,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.7.0-final-professional-reconciled-review"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.0-final-professional-reconciled-review"
+ANNOTATION_EXPORT_VERSION = "2.7.1-atomic-annotated-artifact-recovery"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.1-atomic-annotated-artifact-recovery"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -138,7 +138,7 @@ def _label_existing_source_comments(document) -> None:
 
 def _is_current_vprof_comment(comment, author: str = "") -> bool:
     text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
-    if text.startswith("[Previous comment from source document]"):
+    if text.startswith("[Previous comment from source document"):
         return False
     if author and clean_text(getattr(comment, "author", "")) != clean_text(author):
         return False
@@ -327,7 +327,7 @@ def _last_chapter_body_paragraph(document) -> Optional[Paragraph]:
 def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, Any]]) -> None:
     if not _missing_section_inline_bottom_enabled():
         return
-    comments: List[str] = []
+    comments: List[Tuple[int, str]] = []
     seen = set()
     for row in rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -337,20 +337,26 @@ def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, 
         if not _is_missing_section_finding(row):
             continue
         comment = _missing_section_bottom_comment(row)
-        key = normalised(comment)
+        try:
+            number = int(row.get("finding_number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        key = (number, normalised(comment))
         if not comment or key in seen:
             continue
         seen.add(key)
-        comments.append(comment)
+        comments.append((number, comment))
     if not comments:
         return
     anchor = _last_chapter_body_paragraph(document)
     if anchor is None:
         return
+    comments.sort(key=lambda item: item[0] if item[0] > 0 else 10**9)
     # Insert in reverse so the final visible order is heading, then numbered notes.
-    for idx, comment in reversed(list(enumerate(comments, start=1))):
+    for local_idx, (number, comment) in reversed(list(enumerate(comments, start=1))):
         note = _insert_blue_paragraph_after(anchor)
-        run = note.add_run(f"{idx}. {comment}")
+        visible_number = number if number > 0 else local_idx
+        run = note.add_run(f"Detailed supervisor comment: {visible_number}. {comment}")
         run.font.color.rgb = INLINE_BLUE
         run.font.italic = True
         try:
@@ -443,9 +449,23 @@ def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
     for value in comments:
         ref_no = _comment_reference_number(value)
         raw = _strip_comment_reference(value)
-        text = _strip_visible_labels(
-            public_text(raw, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
-        ).strip("[] ").rstrip(" ;.")
+        released = public_text(
+            raw,
+            limit=comment_max_chars(),
+            reject_placeholders=True,
+            reject_incomplete=True,
+        )
+        # The canonical ledger has already passed the release guard. A strict
+        # final prose check must not silently remove a valid numbered finding
+        # merely because a quoted source fragment ends at a citation boundary.
+        if not released:
+            released = public_text(
+                raw,
+                limit=comment_max_chars(),
+                reject_placeholders=True,
+                reject_incomplete=False,
+            )
+        text = _strip_visible_labels(released).strip("[] ").rstrip(" ;.")
         text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         if not text:
             continue
@@ -769,7 +789,20 @@ def _comment_body(row: Dict[str, Any]) -> str:
     if released:
         return released
     fallback = natural_supervisor_comment(row, compact=True, include_reason=False, include_verification=False, include_example=False)
-    return public_text(fallback, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+    released = public_text(fallback, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+    if released:
+        return released
+    # A final canonical finding must never disappear from an annotated export
+    # merely because one prose-polishing filter rejects a sentence. The
+    # canonical student comment has already passed the release guard.
+    fallback = clean_text(
+        row.get("student_comment")
+        or " ".join(value for value in (
+            clean_text(row.get("item") or row.get("issue_title")),
+            clean_text(row.get("required_action")),
+        ) if value)
+    )
+    return public_text(fallback, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=False)
 
 
 _LEVEL_PHRASE_RE = re.compile(
@@ -805,7 +838,18 @@ def _compact_group_item(value: str) -> Tuple[str, str]:
         limit=max(comment_max_chars(), 1800),
         reject_placeholders=True,
         reject_incomplete=True,
-    ).strip("[] ").rstrip(" ;.")
+    )
+    # Do not lose a canonical finding at the final formatting boundary. This
+    # relaxed pass is limited to already validated student-facing prose and is
+    # still protected against placeholders and internal workflow language.
+    if not text:
+        text = public_text(
+            value,
+            limit=max(comment_max_chars(), 1800),
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+    text = text.strip("[] ").rstrip(" ;.")
     text = _remove_level_repetition(text)
     core, example = _split_example(text)
     core = natural_group_item(core)
@@ -1799,8 +1843,10 @@ def _attach_document_level_comments(
     """
     cleaned: List[str] = []
     for value in comments:
+        reference_number = _comment_reference_number(value)
+        raw_body = _strip_comment_reference(value)
         text = public_text(
-            value,
+            raw_body,
             limit=comment_max_chars(),
             reject_placeholders=True,
             reject_incomplete=True,
@@ -1820,7 +1866,7 @@ def _attach_document_level_comments(
             "recovery detail",
         )):
             continue
-        cleaned.append(text)
+        cleaned.append(_with_comment_reference(reference_number, text) if reference_number else text)
     unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
@@ -1972,12 +2018,91 @@ def synchronise_export_fallback_findings(
 
 
 def native_comment_count(docx_bytes: bytes) -> int:
-    """Return the number of native Word comments in an exported DOCX."""
+    """Return the total number of native Word comments in an exported DOCX.
+
+    This includes comments already present in the uploaded source document. Use
+    ``native_annotation_audit`` when validating a newly generated review.
+    """
     try:
         document = Document(io.BytesIO(docx_bytes))
         return len(list(document.comments))
     except Exception:
         return 0
+
+
+def expected_annotation_finding_numbers(review: Dict[str, Any]) -> List[int]:
+    """Return final actionable finding numbers that every annotated export must represent."""
+    numbers: List[int] = []
+    for row in build_canonical_finding_rows(review):
+        if row.get("status") not in ACTIONABLE_STATUSES:
+            continue
+        if row.get("annotation_eligible") is False:
+            continue
+        try:
+            number = int(row.get("finding_number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        if number > 0 and number not in numbers:
+            numbers.append(number)
+    return sorted(numbers)
+
+
+def native_annotation_audit(
+    docx_bytes: bytes,
+    review: Optional[Dict[str, Any]] = None,
+    *,
+    comment_author: str = "",
+) -> Dict[str, Any]:
+    """Audit current V-Professor comments separately from source-document comments.
+
+    Earlier validation counted every comment in the DOCX. A source file with old
+    supervisor comments could therefore make a new export appear valid even when
+    no current V-Professor comment had been inserted. This audit validates the
+    final finding numbers instead.
+    """
+    expected = expected_annotation_finding_numbers(review or {}) if review is not None else []
+    expected_set = set(expected)
+    represented: set[int] = set()
+    current_comment_count = 0
+    previous_comment_count = 0
+    total_comment_count = 0
+    try:
+        document = Document(io.BytesIO(docx_bytes))
+        comments = list(document.comments)
+    except Exception:
+        comments = []
+    total_comment_count = len(comments)
+    wanted_author = clean_text(comment_author)
+    for comment in comments:
+        text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+        if text.startswith("[Previous comment from source document"):
+            previous_comment_count += 1
+            continue
+        author = clean_text(getattr(comment, "author", ""))
+        numbers = set()
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                numbers.add(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+        matched = numbers & expected_set if expected_set else numbers
+        if wanted_author:
+            is_current = bool(text) and author == wanted_author
+        else:
+            is_current = bool(matched)
+        if is_current:
+            current_comment_count += 1
+            represented.update(matched if expected_set else numbers)
+    missing = sorted(expected_set - represented)
+    return {
+        "total_comment_count": total_comment_count,
+        "previous_comment_count": previous_comment_count,
+        "current_comment_count": current_comment_count,
+        "expected_finding_numbers": expected,
+        "represented_finding_numbers": sorted(represented),
+        "missing_finding_numbers": missing,
+        "passed": bool(expected) and current_comment_count > 0 and not missing,
+    }
 
 
 def _canonical_group_label(row: Dict[str, Any]) -> str:
@@ -2385,7 +2510,6 @@ def _ensure_native_comment_reconciliation(
         for number, row, comment in numbered_rows
         if int(number or 0) > 0
         and row.get("annotation_eligible") is not False
-        and not _is_missing_section_finding(row)
     }
     missing = sorted(set(expected) - _represented_finding_numbers(document, author=author))
     if not missing:

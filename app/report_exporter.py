@@ -1169,16 +1169,32 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     _add_simple_heading(doc, f"{next_number}. Numbered comments and detailed corrections")
     include_details = _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False)
     max_details = _env_int("VPROF_REPORT_MAX_DETAILED_FINDINGS", 30, 1, 200)
+    bundle_ok = bool(summary.get("annotation_bundle_validation_passed"))
     if include_details:
         prioritised = sorted(ledger, key=lambda item: ({"critical": 0, "major": 1, "moderate": 2, "minor": 3}.get(str(item.get("severity") or "minor").lower(), 9), int(item.get("number") or 0)))
         _add_professional_finding_table(doc, prioritised[:max_details], "Selected detailed findings")
         if len(ledger) > max_details:
-            doc.add_paragraph(f"The reviewed thesis contains {len(ledger)} sequentially numbered comments. This report presents the {max_details} highest-priority findings; the complete guidance is attached to the exact passages in the reviewed thesis and correction tracker.")
+            if bundle_ok:
+                doc.add_paragraph(
+                    f"The reviewed thesis contains {len(ledger)} sequentially numbered findings. This report presents the {max_details} highest-priority findings; the complete guidance is represented in the validated native and inline annotated documents."
+                )
+            else:
+                doc.add_paragraph(
+                    f"The reviewed thesis contains {len(ledger)} sequentially numbered findings. This report presents the {max_details} highest-priority findings. The annotated delivery documents were not validated and must not be described as attached."
+                )
     else:
-        doc.add_paragraph(
-            f"The reviewed thesis contains {len(ledger)} sequentially numbered comments attached to the relevant sentences, paragraphs and tables. "
-            "The comments provide the detailed explanation and correction guidance. This report deliberately summarises the decision, validity barriers, statistical audit and chapter correction plan without repeating every comment word for word."
-        )
+        native_count = int(summary.get("native_docx_comment_count") or 0)
+        inline_count = int(summary.get("inline_annotation_count") or 0)
+        if bundle_ok:
+            doc.add_paragraph(
+                f"The review contains {len(ledger)} sequentially numbered findings represented across {native_count} native Word comment box{'es' if native_count != 1 else ''} and {inline_count} inline supervisor note{'s' if inline_count != 1 else ''}. "
+                "The report summarises the decision, validity barriers, statistical audit and chapter correction plan without repeating every annotation word for word."
+            )
+        else:
+            doc.add_paragraph(
+                f"The review contains {len(ledger)} sequentially numbered comments in the canonical finding ledger. This report deliberately summarises the decision, validity barriers, statistical audit and chapter correction plan without repeating every comment word for word. "
+                "The annotated delivery documents were not validated and must not be described as attached. Recover the export stage or submit a fresh review before treating the job as a complete supervisory package."
+            )
     next_number += 1
 
     _add_simple_heading(doc, f"{next_number}. Evidence Required for Verification")

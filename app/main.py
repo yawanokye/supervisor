@@ -21,8 +21,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from .academic_ai_engine import ReviewOutputValidationError, enrich_review_with_academic_ai
 from .ai_config import AIConfigurationError, HybridAIConfig, unsupported_environment_variables
 from .ai_providers import AIProviderError
-from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, expected_native_comment_count, native_comment_count
-from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_inline_annotated_docx
+from .annotated_exporter import ANNOTATION_EXPORT_VERSION, build_annotated_docx, expected_native_comment_count, native_comment_count, native_annotation_audit, expected_annotation_finding_numbers
+from .inline_annotated_exporter import INLINE_ANNOTATION_EXPORT_VERSION, build_inline_annotated_docx, inline_annotation_audit
 from .auth import (
     authenticate,
     create_bootstrap_admin,
@@ -65,7 +65,7 @@ from .review_scope import (
 )
 from .submission_readiness import attach_supervisory_readiness
 from .final_review_quality import attach_canonical_findings
-from .storage import ensure_storage, load_annotated, load_review_json, save_annotated, save_review_json, storage_status
+from .storage import ensure_storage, load_annotated, load_inline_annotated, load_review_json, save_annotated, save_inline_annotated, save_review_json, storage_status
 from .token_budget import (
     DEFAULT_SUPERVISOR_TOKENS,
     TOKEN_ACCOUNTING_ENABLED,
@@ -87,7 +87,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -209,6 +209,7 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 REVIEW_CACHE: Dict[str, dict] = {}
 ANNOTATED_CACHE: Dict[str, bytes] = {}
+INLINE_ANNOTATED_CACHE: Dict[str, bytes] = {}
 AI_USAGE_CACHE: Dict[str, dict] = {}
 JOB_CACHE: Dict[str, Dict[str, Any]] = {}
 BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -1819,50 +1820,75 @@ async def _run_review_job(
         )
 
         if review["summary"].get("annotated_document_available"):
-            annotation_is_current = (
-                review["summary"].get("annotation_export_version")
-                == ANNOTATION_EXPORT_VERSION
-            )
-            annotated_data = (
-                load_annotated(review["review_id"])
-                if annotation_is_current
-                else None
-            )
-            if annotated_data is None:
-                try:
-                    annotated_data = await asyncio.to_thread(
-                        build_annotated_docx,
-                        payload["data"],
-                        review,
-                        reviewer_name or None,
+            # Generate the native and inline documents as one atomic delivery
+            # bundle. A job is not marked complete when the report exists but
+            # either annotated document is absent or does not represent every
+            # final finding number.
+            comment_author = reviewer_name or None
+            expected_numbers = expected_annotation_finding_numbers(review)
+            try:
+                annotated_data = await asyncio.to_thread(
+                    build_annotated_docx,
+                    payload["data"],
+                    review,
+                    comment_author,
+                )
+                native_audit = native_annotation_audit(
+                    annotated_data,
+                    review,
+                    comment_author=comment_author or "",
+                )
+                if not native_audit.get("passed"):
+                    raise ReviewOutputValidationError(
+                        "The native-comment document did not represent final finding numbers: "
+                        + ", ".join(str(value) for value in native_audit.get("missing_finding_numbers") or expected_numbers)
                     )
-                    actual_comments = native_comment_count(annotated_data)
-                    expected_comments = expected_native_comment_count(review)
-                    if actual_comments < 1:
-                        raise RuntimeError(
-                            "The annotated DOCX was generated without native Word comments."
-                        )
-                    ANNOTATED_CACHE[review["review_id"]] = annotated_data
-                    save_annotated(review["review_id"], annotated_data)
-                    review["summary"].update({
-                        "annotation_export_version": ANNOTATION_EXPORT_VERSION,
-                        "annotation_mode": "native_word_comments",
-                        "native_docx_comment_count": actual_comments,
-                        "expected_native_docx_comment_count": expected_comments,
-                        "native_comment_reconciliation_passed": actual_comments >= max(1, min(expected_comments, expected_comments)),
-                    })
-                    review["summary"].pop("annotation_warning", None)
-                except Exception:
-                    logger.exception("Annotated document generation failed")
-                    review["summary"][
-                        "annotated_document_available"
-                    ] = False
-                    review["summary"]["annotation_warning"] = (
-                        "The review completed, but the native-comment "
-                        "annotated document could not be generated."
+
+                inline_data = await asyncio.to_thread(
+                    build_inline_annotated_docx,
+                    payload["data"],
+                    review,
+                    comment_author,
+                )
+                inline_audit = inline_annotation_audit(inline_data, review)
+                if not inline_audit.get("passed"):
+                    raise ReviewOutputValidationError(
+                        "The inline annotated document did not represent final finding numbers: "
+                        + ", ".join(str(value) for value in inline_audit.get("missing_finding_numbers") or expected_numbers)
                     )
-            else:
+
                 ANNOTATED_CACHE[review["review_id"]] = annotated_data
+                INLINE_ANNOTATED_CACHE[review["review_id"]] = inline_data
+                await asyncio.to_thread(save_annotated, review["review_id"], annotated_data)
+                await asyncio.to_thread(save_inline_annotated, review["review_id"], inline_data)
+                review["summary"].update({
+                    "annotated_document_available": True,
+                    "native_annotated_document_available": True,
+                    "inline_annotated_document_available": True,
+                    "annotation_bundle_available": True,
+                    "annotation_export_version": ANNOTATION_EXPORT_VERSION,
+                    "inline_annotation_export_version": INLINE_ANNOTATION_EXPORT_VERSION,
+                    "annotation_mode": "native_and_inline",
+                    "native_docx_comment_count": int(native_audit.get("current_comment_count") or 0),
+                    "source_docx_comment_count": int(native_audit.get("previous_comment_count") or 0),
+                    "inline_annotation_count": int(inline_audit.get("note_count") or 0),
+                    "expected_annotation_finding_count": len(expected_numbers),
+                    "represented_native_finding_numbers": native_audit.get("represented_finding_numbers") or [],
+                    "represented_inline_finding_numbers": inline_audit.get("represented_finding_numbers") or [],
+                    "native_comment_reconciliation_passed": True,
+                    "inline_comment_reconciliation_passed": True,
+                    "annotation_bundle_validation_passed": True,
+                })
+                review["summary"].pop("annotation_warning", None)
+                review["summary"].pop("review_rebuild_recommended", None)
+            except ReviewOutputValidationError:
+                raise
+            except Exception as exc:
+                logger.exception("Annotated delivery bundle generation failed")
+                raise ReviewOutputValidationError(
+                    "The review findings were completed, but the annotated delivery bundle could not be generated. "
+                    "The job has been retained for export-stage recovery and has not been released as complete."
+                ) from exc
 
         _assert_job_lease(job_id)
         REVIEW_CACHE[review["review_id"]] = review
@@ -1968,12 +1994,21 @@ async def _run_review_job(
     except ReviewOutputValidationError as exc:
         detail = clean_text(str(exc))
         checkpoints.mark_failed(current_stage, detail)
+        export_only = current_stage == "document-export"
         _queue_automatic_retry(
             job_id,
-            message="Rebuilding grounded review comments automatically",
+            message=(
+                "Rebuilding the annotated delivery documents automatically"
+                if export_only
+                else "Rebuilding grounded review comments automatically"
+            ),
             error=(
                 detail
-                + " A fresh expert pass will run using the saved document map and exact evidence anchors."
+                + (
+                    " The completed academic review and provider checkpoints are retained; only the native and inline DOCX export stage will be retried."
+                    if export_only
+                    else " A fresh expert pass will run using the saved document map and exact evidence anchors."
+                )
             ),
             current_stage=current_stage,
             checkpoint_count=checkpoints.completed_count(),
@@ -2821,6 +2856,8 @@ async def get_review(review_id: str, request: Request, db: Session = Depends(get
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review result not found or expired.")
+    summary = review.setdefault("summary", {})
+    summary["annotation_regeneration_available"] = bool(record.job_id and record.payload_available and payload_available(record.job_id))
     REVIEW_CACHE[review_id] = review
     return review
 
@@ -2873,17 +2910,23 @@ async def export_annotated_document(review_id: str, request: Request, db: Sessio
                 review,
                 comment_author or None,
             )
-            actual_comments = native_comment_count(data)
-            expected_comments = expected_native_comment_count(review)
+            audit = native_annotation_audit(data, review, comment_author=comment_author or "")
+            if not audit.get("passed"):
+                raise ValueError(
+                    "Native annotation reconciliation failed for finding numbers "
+                    + ", ".join(str(value) for value in audit.get("missing_finding_numbers") or [])
+                )
             ANNOTATED_CACHE[review_id] = data
             await asyncio.to_thread(save_annotated, review_id, data)
             summary.update({
                 "annotated_document_available": True,
+                "native_annotated_document_available": True,
                 "annotation_export_version": ANNOTATION_EXPORT_VERSION,
-                "annotation_mode": "native_word_comments",
-                "native_docx_comment_count": actual_comments,
-                "expected_native_docx_comment_count": expected_comments,
-                "native_comment_reconciliation_passed": actual_comments >= max(1, min(expected_comments, expected_comments)),
+                "annotation_mode": "native_and_inline",
+                "native_docx_comment_count": int(audit.get("current_comment_count") or 0),
+                "source_docx_comment_count": int(audit.get("previous_comment_count") or 0),
+                "represented_native_finding_numbers": audit.get("represented_finding_numbers") or [],
+                "native_comment_reconciliation_passed": True,
             })
             summary.pop("annotation_warning", None)
             REVIEW_CACHE[review_id] = review
@@ -2931,38 +2974,64 @@ async def export_inline_annotated_document(review_id: str, request: Request, db:
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review result is not available.")
-    if not record.job_id or not payload_available(record.job_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The inline annotated document requires the saved source DOCX. "
-                "Submit a fresh review if the original upload is no longer available."
-            ),
-        )
-    try:
-        payload = await asyncio.to_thread(load_job_payload, record.job_id)
-        source_data = bytes((payload or {}).get("data") or b"")
-        source_name = str((payload or {}).get("filename") or record.filename or "")
-        if not source_data or not source_name.lower().endswith(".docx"):
-            raise ValueError("The saved source is not an annotatable DOCX file.")
-        comment_author = clean_text(
-            (record.lecturer.full_name if record.lecturer else "")
-            or (review.get("summary") or {}).get("reviewer_name")
-            or user.full_name
-        )
-        data = await asyncio.to_thread(
-            build_inline_annotated_docx,
-            source_data,
-            review,
-            comment_author or None,
-        )
-    except Exception as exc:
-        logger.exception("Could not generate inline annotated document")
-        raise HTTPException(
-            status_code=409,
-            detail="The inline annotated document could not be generated. Submit a fresh review and try again.",
-        ) from exc
+    summary = review.setdefault("summary", {})
+    inline_is_current = summary.get("inline_annotation_export_version") == INLINE_ANNOTATION_EXPORT_VERSION
+    data = (
+        INLINE_ANNOTATED_CACHE.get(review_id) or load_inline_annotated(review_id)
+        if inline_is_current else None
+    )
+    if data is None:
+        if not record.job_id or not payload_available(record.job_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The inline annotated document requires the saved source DOCX. "
+                    "Recover the review while the upload remains available, or submit a fresh review."
+                ),
+            )
+        try:
+            payload = await asyncio.to_thread(load_job_payload, record.job_id)
+            source_data = bytes((payload or {}).get("data") or b"")
+            source_name = str((payload or {}).get("filename") or record.filename or "")
+            if not source_data or not source_name.lower().endswith(".docx"):
+                raise ValueError("The saved source is not an annotatable DOCX file.")
+            comment_author = clean_text(
+                (record.lecturer.full_name if record.lecturer else "")
+                or summary.get("reviewer_name")
+                or user.full_name
+            )
+            data = await asyncio.to_thread(
+                build_inline_annotated_docx,
+                source_data,
+                review,
+                comment_author or None,
+            )
+            audit = inline_annotation_audit(data, review)
+            if not audit.get("passed"):
+                raise ValueError(
+                    "Inline annotation reconciliation failed for finding numbers "
+                    + ", ".join(str(value) for value in audit.get("missing_finding_numbers") or [])
+                )
+            INLINE_ANNOTATED_CACHE[review_id] = data
+            await asyncio.to_thread(save_inline_annotated, review_id, data)
+            summary.update({
+                "annotated_document_available": True,
+                "inline_annotated_document_available": True,
+                "inline_annotation_export_version": INLINE_ANNOTATION_EXPORT_VERSION,
+                "inline_annotation_count": int(audit.get("note_count") or 0),
+                "represented_inline_finding_numbers": audit.get("represented_finding_numbers") or [],
+                "inline_comment_reconciliation_passed": True,
+            })
+            REVIEW_CACHE[review_id] = review
+            await asyncio.to_thread(save_review_json, review_id, review)
+        except Exception as exc:
+            logger.exception("Could not generate inline annotated document")
+            raise HTTPException(
+                status_code=409,
+                detail="The inline annotated document could not be reconciled with the final finding ledger. Recover the review once or submit a fresh review.",
+            ) from exc
 
+    INLINE_ANNOTATED_CACHE[review_id] = data
     stem = os.path.splitext(os.path.basename(record.filename or "thesis.docx"))[0]
     return Response(
         content=data,
