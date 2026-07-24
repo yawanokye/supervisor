@@ -42,8 +42,8 @@ from .reviewer_language import professionalise_reviewer_language
 from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.7.1-atomic-inline-annotated-recovery"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.7.1-atomic-inline-annotated-recovery"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.7.2-lossless-inline-reconciliation"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.7.2-lossless-inline-reconciliation"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 

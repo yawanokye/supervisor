@@ -29,8 +29,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.7.1-atomic-annotated-artifact-recovery"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.1-atomic-annotated-artifact-recovery"
+ANNOTATION_EXPORT_VERSION = "2.7.2-lossless-native-reconciliation"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.2-lossless-native-reconciliation"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -2491,6 +2491,119 @@ def _represented_finding_numbers(document, *, author: str = "") -> set[int]:
     return numbers
 
 
+def _reconciliation_comment_body(row: Dict[str, Any], comment: str) -> str:
+    """Return a compact, lossless body for a reconciliation-only native comment.
+
+    The normal grouped formatter is intentionally allowed to consolidate exact
+    duplicates for readability. Reconciliation is different: every canonical
+    finding number must remain visible even when two findings have similar prose,
+    a grouped box reaches its item limit, or a presentation filter shortens text.
+    """
+    candidates = [
+        comment,
+        clean_text(row.get("student_comment")),
+        " ".join(
+            value for value in (
+                clean_text(row.get("item") or row.get("issue_title")),
+                clean_text(row.get("required_action")),
+            )
+            if value
+        ),
+    ]
+    for candidate in candidates:
+        body = public_text(
+            _strip_comment_reference(clean_text(candidate)),
+            limit=comment_max_chars(),
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+        body = _strip_visible_labels(body).strip("[] ").rstrip(" ;.")
+        if body:
+            return _shorten_comment(body, comment_max_chars()).rstrip(" .") + "."
+    return "Review this passage against the corresponding correction in the supervisory report."
+
+
+def _reconciliation_anchor(document, row: Dict[str, Any]) -> Optional[Paragraph]:
+    """Find the closest safe anchor for a reconciliation-only comment."""
+    quotes = [
+        clean_text(row.get("problematic_quote")),
+        *[
+            clean_text(item.get("text"))
+            for item in (row.get("evidence") or [])
+            if item.get("document_role", "current") == "current"
+        ],
+    ]
+    for quote in quotes:
+        if not quote:
+            continue
+        normalised_quote = normalised(quote)
+        for paragraph in document.paragraphs:
+            paragraph_text = _visible_paragraph_text(paragraph)
+            if quote in paragraph_text or (normalised_quote and normalised_quote in normalised(paragraph_text)):
+                if _visible_runs(paragraph):
+                    return paragraph
+
+    headings = tuple(
+        value for value in (
+            *(row.get("headings") or []),
+            row.get("section_reference"),
+            row.get("section"),
+        )
+        if clean_text(value)
+    )
+    if headings:
+        chapter_number = row.get("chapter_number")
+        try:
+            chapter_number = int(chapter_number) if chapter_number is not None else None
+        except (TypeError, ValueError):
+            chapter_number = None
+        heading = _find_heading(document, headings, chapter_number=chapter_number)
+        if heading is not None and _visible_runs(heading):
+            return heading
+    return _first_academic_anchor(document) or _first_native_anchor(document)
+
+
+def _attach_lossless_reconciliation_comments(
+    document,
+    missing: Sequence[int],
+    expected: Dict[int, Tuple[Dict[str, Any], str]],
+    *,
+    author: str,
+    initials: str,
+) -> None:
+    """Attach one non-lossy fallback comment for every missing finding number.
+
+    This bypasses grouped-comment deduplication and size limits. It is used only
+    when normal exact anchoring has failed. The exporter first tries the quoted
+    passage or section heading and uses a stable academic-body anchor only as the
+    final fallback.
+    """
+    for number in missing:
+        row, comment = expected[number]
+        anchor = _reconciliation_anchor(document, row)
+        if anchor is None:
+            raise RuntimeError(
+                "The source document has no text that can anchor native Word comments."
+            )
+        runs = _visible_runs(anchor)
+        if not runs:
+            raise RuntimeError(
+                "The source document has no visible run that can anchor native Word comments."
+            )
+        body = _reconciliation_comment_body(row, comment)
+        visible = f"{number}. {body}"
+        if not _add_native_comment(
+            document,
+            runs,
+            visible,
+            author=author,
+            initials=initials,
+        ):
+            raise RuntimeError(
+                f"A reconciliation comment for canonical finding {number} could not be anchored."
+            )
+
+
 def _ensure_native_comment_reconciliation(
     document,
     numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
@@ -2500,10 +2613,10 @@ def _ensure_native_comment_reconciliation(
 ) -> None:
     """Ensure every canonical finding number appears in the native review pane.
 
-    Normal placement remains paragraph- or table-specific. This final guard is a
-    safety net for malformed Word anchors or comment-size edge cases and prevents
-    the appended correction register from containing findings absent from the
-    native comments.
+    Normal placement remains paragraph- or table-specific. When grouping,
+    deduplication, Word anchoring or comment-size limits omit a final number, the
+    guard adds one lossless fallback comment for that finding rather than sending
+    the job into a repeated export-recovery loop.
     """
     expected = {
         int(number): (row, comment)
@@ -2514,24 +2627,21 @@ def _ensure_native_comment_reconciliation(
     missing = sorted(set(expected) - _represented_finding_numbers(document, author=author))
     if not missing:
         return
-    fallback = [
-        _with_comment_reference(number, expected[number][1])
-        for number in missing
-        if expected[number][1]
-    ]
-    if fallback:
-        _attach_document_level_comments(
-            document,
-            fallback,
-            author=author,
-            initials=initials,
-        )
+
+    _attach_lossless_reconciliation_comments(
+        document,
+        missing,
+        expected,
+        author=author,
+        initials=initials,
+    )
+
     remaining = sorted(set(expected) - _represented_finding_numbers(document, author=author))
     if remaining and _env_bool("VPROF_STRICT_NATIVE_RECONCILIATION", True):
         raise RuntimeError(
             "The reviewed DOCX could not be released because canonical finding numbers "
             + ", ".join(str(number) for number in remaining)
-            + " are absent from the native Word comments."
+            + " are absent from the native Word comments after lossless reconciliation."
         )
 
 

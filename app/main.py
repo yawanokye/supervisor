@@ -1441,7 +1441,12 @@ def _queue_automatic_retry(
         error=(
             error
             + " The upload and completed checkpoints remain available. "
-              "Select Recover once after checking the API key, quota and model access."
+            + (
+                "Select Recover once after deploying the corrected export build. "
+                "The academic provider will not be called again because this failure occurred during DOCX export."
+                if current_stage == "document-export"
+                else "Select Recover once after checking the configured provider, API key, quota and model access."
+            )
         ),
         current_stage=current_stage,
         checkpoint_count=checkpoint_count,
