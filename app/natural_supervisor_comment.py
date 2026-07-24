@@ -157,9 +157,25 @@ def natural_supervisor_comment(
     example = _clean(row.get("illustrative_guidance"))
 
     opening_parts: List[str] = []
-    if issue and assessment and SequenceMatcher(None, _norm(issue), _norm(assessment)).ratio() < 0.70:
+    assessment_sentences = _sentences(assessment)
+    issue_norm = _norm(issue)
+    assessment_norm = _norm(assessment)
+    high_level_alignment = any(term in issue_norm for term in (
+        "purpose", "objectives", "research questions", "unit and scope",
+        "ethical clearance", "statistical model", "measurement", "citation", "reference",
+        "supervisor", "editorial instruction",
+    ))
+    if assessment_sentences:
+        # Most comments open directly with the diagnosis. For a high-level
+        # alignment or validity finding, retain the concise issue statement when
+        # it adds scope that the diagnostic sentences do not themselves name.
+        if high_level_alignment and issue and issue_norm not in assessment_norm:
+            opening_parts.append(issue)
+            opening_parts.extend(assessment_sentences[:1])
+        else:
+            opening_parts.extend(assessment_sentences[:2])
+    elif issue:
         opening_parts.append(issue)
-    opening_parts.extend(_sentences(assessment or issue)[:2])
 
     sentences: List[str] = []
     sentences.extend(_unique_sentences(opening_parts, limit=2))

@@ -81,6 +81,156 @@ def _contains_all_groups(text: str, groups: Sequence[Sequence[str]]) -> bool:
     return all(any(_norm(term) in text for term in group) for group in groups)
 
 
+_NON_ACTIONABLE_PHRASES = (
+    "no action needed",
+    "no correction is required",
+    "correctly placed",
+    "correctly presented",
+    "structurally adequate",
+    "is satisfactory",
+    "meets the requirement",
+    "does not require revision",
+)
+
+_SECTION_ALIASES = {
+    "introduction": ("introduction",),
+    "background": ("background",),
+    "problem": ("problem statement", "statement of the problem"),
+    "purpose": ("purpose of the study", "aim of the study"),
+    "objectives": ("research objectives", "objectives of the study", "specific objectives"),
+    "questions": ("research questions", "research question"),
+    "significance": ("significance of the study", "significance"),
+    "scope": ("scope of the study", "scope", "delimitations", "delimitation"),
+    "limitations": ("limitations of the study", "limitations", "study limitations"),
+    "organisation": ("organisation of the study", "organization of the study", "chapter outline"),
+    "methodology": ("research methodology", "research methods", "methodology"),
+    "results": ("results", "findings", "analysis"),
+    "discussion": ("discussion",),
+    "references": ("references", "reference list", "bibliography"),
+}
+
+
+def _is_non_actionable_confirmation(row: Mapping[str, Any]) -> bool:
+    """Return True when a row merely confirms adequacy rather than requests revision.
+
+    Positive audit notes remain available internally, but they must not consume a
+    numbered student-facing correction or appear in the actionable register.
+    """
+    blob = _row_blob(row)
+    action = _norm(row.get("required_action"))
+    status = _norm(row.get("status"))
+    if status in {"meets requirement", "not applicable", "addressed", "pass"}:
+        return True
+    return any(phrase in blob or phrase in action for phrase in _NON_ACTIONABLE_PHRASES)
+
+
+def _claimed_content_section(blob: str) -> str:
+    for key, aliases in _SECTION_ALIASES.items():
+        if any(
+            f"{_norm(alias)} text appears under" in blob
+            or f"{_norm(alias)} content appears under" in blob
+            or f"{_norm(alias)} is under the wrong heading" in blob
+            for alias in aliases
+        ):
+            return key
+    return ""
+
+
+def _unsupported_section_boundary_claim(row: Mapping[str, Any], runtime: Sequence[Mapping[str, Any]]) -> bool:
+    """Reject a boundary claim that is anchored only to a heading and contradicted by the document.
+
+    A valid misplacement finding must point to substantive text located under an
+    incompatible heading. A heading-only anchor is not evidence that the preceding
+    section's text has crossed the boundary.
+    """
+    blob = _row_blob(row)
+    if not any(term in blob for term in (
+        "appears under wrong heading", "appears under the wrong heading",
+        "section boundary misplacement", "content is under the wrong heading",
+    )):
+        return False
+    evidence = primary_evidence(dict(row))
+    evidence_text = _clean(evidence.get("text") or row.get("problematic_quote"))
+    is_heading = bool(evidence.get("is_heading")) or len(evidence_text.split()) <= 7
+    claimed = _claimed_content_section(blob)
+    if not claimed or not is_heading:
+        return False
+    aliases = _SECTION_ALIASES.get(claimed, (claimed,))
+    return any(_section_has_substantive_content(runtime, alias) for alias in aliases)
+
+
+def _section_mentions(value: Any) -> set[str]:
+    text = _norm(value)
+    found: set[str] = set()
+    for key, aliases in _SECTION_ALIASES.items():
+        if any(_norm(alias) in text for alias in aliases):
+            found.add(key)
+    return found
+
+
+def _remove_cross_section_action_leakage(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """Remove unrelated section instructions accidentally spliced into an action.
+
+    Cross-section references are retained for genuine alignment families. Other
+    findings should give one coherent correction within the section being reviewed.
+    """
+    output = dict(row)
+    action = _clean(output.get("required_action"))
+    if not action:
+        return output
+    family = _family(output)
+    if family in {"purpose_alignment", "terminology_consistency", "construct_consistency", "scope_definition"}:
+        return output
+    source_key = _section_key_from_row(output)
+    allowed = {source_key} if source_key else set()
+    if family == "problem_local_gap":
+        allowed.update({"problem", "purpose", "objectives"})
+    elif family in {"background_local_context", "background_synthesis", "construct_definition"}:
+        allowed.update({"background", "problem"})
+    elif family == "significance_contribution":
+        allowed.update({"significance", "purpose", "objectives"})
+    elif source_key in {"purpose", "objectives", "questions"}:
+        allowed.update({"purpose", "objectives", "questions", "methodology", "results"})
+
+    kept: List[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", action):
+        sentence = _clean(sentence)
+        if not sentence:
+            continue
+        mentioned = _section_mentions(sentence)
+        unrelated = mentioned - allowed if allowed else set()
+        if unrelated:
+            continue
+        kept.append(sentence.rstrip(" .") + ".")
+    if kept:
+        output["required_action"] = " ".join(kept[:4])
+    return output
+
+
+def _calibrate_release_severity(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """Reserve Critical for defects that invalidate the study or prevent analysis."""
+    output = dict(row)
+    if _norm(output.get("severity")) != "critical":
+        return output
+    family = _family(output)
+    blob = _row_blob(output)
+    critical_signals = (
+        "cannot be answered", "cannot answer", "invalid statistical", "fabricat",
+        "ethical approval", "ethics clearance", "unusable data", "wrong model",
+        "contradictory central model", "cannot proceed", "fundamentally invalid",
+        "objectives and analysis are incompatible",
+    )
+    if any(signal in blob for signal in critical_signals):
+        return output
+    if family in {
+        "background_local_context", "background_synthesis", "problem_local_gap",
+        "significance_contribution", "scope_definition", "language_convention",
+        "construct_definition",
+    }:
+        output["severity"] = "major"
+    return output
+
+
 @dataclass(frozen=True)
 class ReviewRouteContext:
     design: str
@@ -287,20 +437,6 @@ def _organisation_is_present(rows: Sequence[Mapping[str, Any]]) -> bool:
     if not text:
         return False
     return all(f"chapter {word}" in text for word in ("two", "three", "four", "five"))
-
-
-_SECTION_ALIASES = {
-    "introduction": ("introduction",),
-    "background": ("background to the study", "background of the study", "background"),
-    "problem": ("statement of the problem", "problem statement"),
-    "purpose": ("purpose of the study", "aim of the study"),
-    "objectives": ("research objectives", "objectives of the study"),
-    "questions": ("research questions", "research question"),
-    "significance": ("significance of the study", "significance"),
-    "scope": ("scope of the study", "delimitation of the study", "delimitations of the study"),
-    "limitations": ("limitations of the study", "limitation of the study"),
-    "organisation": ("organisation of the study", "organization of the study"),
-}
 
 
 def _section_key_from_row(row: Mapping[str, Any]) -> str:
@@ -625,6 +761,10 @@ def filter_and_rewrite_release_findings(
         row = _strip_reviewer_prompt_leakage(_normalise_mechanical_checklist(original))
         blob = _row_blob(row)
 
+        if _is_non_actionable_confirmation(row):
+            continue
+        if _unsupported_section_boundary_claim(row, runtime):
+            continue
         if _unsupported_missing_section(row, review):
             continue
 
@@ -684,6 +824,19 @@ def filter_and_rewrite_release_findings(
             )):
                 continue
 
+        if section_key == "significance" and any(term in blob for term in (
+            "overlap with limitations", "move challenges to the limitations",
+            "reserve challenge discussions for the limitations",
+        )):
+            evidence_text = _norm(primary_evidence(dict(row)).get("text") or row.get("problematic_quote"))
+            # Organisational or participant challenges are substantive study
+            # phenomena, not limitations of the research process.
+            if any(term in evidence_text for term in (
+                "business challenges", "operational challenges", "challenges organisations",
+                "challenges organizations", "challenges faced by", "overcoming operational issues",
+            )):
+                continue
+
         if any(term in blob for term in ("hypotheses", "hypothesis")) and any(term in blob for term in ("missing", "without corresponding", "formulate hypotheses")):
             contract_requires = bool(row.get("section_contract_verified") and row.get("missing_section_label"))
             if not contract_requires and not _hypotheses_are_confirmed_required(review, context):
@@ -729,6 +882,10 @@ def filter_and_rewrite_release_findings(
         if "chapter organisation does not outline" in blob and _organisation_is_present(runtime):
             continue
 
+        row = _remove_cross_section_action_leakage(row)
+        row = _calibrate_release_severity(row)
+        if _is_non_actionable_confirmation(row):
+            continue
         output.append(row)
 
     return consolidate_release_families(output, review)
@@ -780,18 +937,44 @@ def _family(row: Mapping[str, Any]) -> str:
     if any(term in title for term in ("numerical empirical claim", "specific empirical count", "numeric claim")):
         return "numeric_source"
     if "background" in section and not any(term in title for term in ("citation", "source", "spelling", "tense", "grammar", "punctuation")) and any(
-        term in title for term in ("gap", "local", "context", "narrow", "global", "focus", "applied", "professional logic")
+        term in title for term in (
+            "gap", "local", "context", "narrow", "global", "focus", "applied",
+            "professional logic", "evidence led progression", "evidence-led progression",
+            "disconnected background flow", "background flow", "coherent storyline",
+            "overly broad conclusion", "tangential material", "closest applicable context",
+        )
     ):
         return "background_local_context"
     if "problem" in section and not any(term in title for term in ("citation", "source", "verify", "verification", "reference", "spelling", "grammar", "punctuation")) and any(
         term in title for term in ("gap", "evidence", "specific", "problem statement", "problem not specified", "informal sector", "study title", "repetitive", "unsupported", "vague", "focus")
     ):
         return "problem_local_gap"
-    if "significance" in section and not any(term in title for term in ("research gap", "problem statement", "gap is placed")) and any(
-        term in title for term in ("contribution", "significance", "benefit", "vague", "disconnected")
-    ):
+    if not any(term in title for term in ("research gap", "problem statement", "gap is placed")) and (
+        "significance" in section
+        or any(term in title for term in (
+            "significance claims", "policy claims", "policy relevance", "beneficiaries",
+            "scholarly practical and policy", "applied contribution",
+        ))
+    ) and any(term in title for term in (
+        "contribution", "significance", "benefit", "vague", "disconnected",
+        "policy claims", "scope", "beneficiaries",
+    )):
         return "significance_contribution"
-    if any(term in title for term in ("inconsistent construct labels", "inconsistent terminology across objectives", "it or ict", "uniform term")):
+    if (
+        "scope" in section
+        or any(term in title for term in (
+            "scope section is incomplete", "study population and institutional scope",
+            "population and institutional scope", "geographical boundary",
+            "unit of analysis and scope", "study boundary",
+        ))
+    ) and any(term in title for term in (
+        "scope", "population", "boundary", "unit of analysis", "setting", "exclusions",
+    )):
+        return "scope_definition"
+    if any(term in title for term in (
+        "inconsistent construct labels", "inconsistent terminology across objectives",
+        "it or ict", "uniform term", "overlapping labels", "terminology is inconsistent",
+    )):
         return "terminology_consistency"
     return ""
 
@@ -863,10 +1046,24 @@ def _consolidation_scope(row: Mapping[str, Any], family: str) -> str:
         else ""
     )
     section = _norm(row.get("section_reference") or row.get("section")) or "unsectioned"
+    canonical_sections = {
+        "background_local_context": "background",
+        "background_synthesis": "background",
+        "problem_local_gap": "problem",
+        "significance_contribution": "significance",
+        "scope_definition": "scope",
+    }
+    if family in canonical_sections:
+        section = canonical_sections[family]
 
     if family in {"language_convention", "construct_consistency", "construct_definition", "terminology_consistency", "purpose_alignment"}:
         return "chapter-wide"
-    if family in {"regression_protocol", "conceptual_framework", "ethics_permissions", "moderation_alignment", "background_local_context", "background_synthesis", "problem_local_gap", "significance_contribution", "terminology_consistency"}:
+    if family in {
+        "regression_protocol", "conceptual_framework", "ethics_permissions",
+        "moderation_alignment", "background_local_context", "background_synthesis",
+        "problem_local_gap", "significance_contribution", "terminology_consistency",
+        "scope_definition",
+    }:
         return "section:" + section
     return "anchor:" + (exact or section)
 
@@ -923,6 +1120,7 @@ def consolidate_release_families(rows: Sequence[Mapping[str, Any]], review: Mapp
         "problem_local_gap": "The problem statement needs a concise, locally evidenced problem and a precise research gap",
         "significance_contribution": "The significance claims need to be specific to the study's scholarly, practical and policy contribution",
         "terminology_consistency": "The chapter uses overlapping labels for the main construct without defining or applying them consistently",
+        "scope_definition": "The population and institutional scope, including the unit of analysis, need one consistent definition",
     }
     standard_actions = {
         "background_local_context": (
@@ -943,11 +1141,66 @@ def consolidate_release_families(rows: Sequence[Mapping[str, Any]], review: Mapp
         "terminology_consistency": (
             "Choose and define the principal construct, distinguish overlapping labels where necessary, and use the selected terminology consistently in the title, purpose, objectives, questions, instrument and analysis."
         ),
+        "scope_definition": (
+            "State one geographical or institutional setting, participant group or unit of analysis, study period, main constructs and important exclusions, then use that boundary consistently across the study."
+        ),
     }
+    standard_assessments = {
+        "background_local_context": (
+            f"The discussion remains broad and does not show clearly why the wider evidence leads to a study in {setting}. Chapter One does not require the full study-by-study critical synthesis expected in the literature review, but it should present a focused evidence-led progression to the study problem."
+        ),
+        "background_synthesis": (
+            "The section reports earlier studies mainly one after another, without comparing their contexts, methods, findings or limitations."
+        ),
+        "construct_definition": (
+            f"The chapter introduces {construct_phrase} without defining their study-specific meaning or showing how the labels relate to one another."
+        ),
+        "problem_local_gap": (
+            f"The section discusses the issue generally but does not establish a verified practical problem and precise unresolved gap in {setting}."
+        ),
+        "significance_contribution": (
+            f"The section lists broad beneficiaries but does not explain a realistic scholarly, practical and policy contribution for the study's actual setting and participants."
+        ),
+        "terminology_consistency": (
+            "The chapter uses overlapping labels for the principal construct without explaining whether they are equivalent or represent different dimensions."
+        ),
+        "scope_definition": (
+            "The geographical or institutional boundary, participant group and unit of analysis are not stated consistently across the chapter."
+        ),
+    }
+    generic_assessment_markers = (
+        "not fully explained", "does not yet perform", "state the missing information",
+        "needs further development", "is unclear", "requires attention",
+    )
+    generic_action_markers = (
+        "state the exact weakness", "grounded in the current study",
+        "classify each objective as descriptive associational predictive or causal",
+    )
     for row in output:
         family = _family(row)
+        original_assessment = _clean(row.get("assessment") or row.get("comment"))
+        original_action = _clean(row.get("required_action"))
+        title_text = _clean(row.get("issue_title") or row.get("item"))
+        assessment_norm = _norm(original_assessment)
+        title_norm = _norm(title_text)
+        assessment_is_generic = (
+            not original_assessment
+            or len(original_assessment) > 460
+            or any(marker in assessment_norm for marker in generic_assessment_markers)
+        )
+        action_is_generic = (
+            not original_action
+            or len(original_action) > 520
+            or any(marker in _norm(original_action) for marker in generic_action_markers)
+        )
         if family in standard_titles:
             row["issue_title"] = row["item"] = standard_titles[family]
-        if family in standard_actions:
+        if family in standard_assessments and assessment_is_generic:
+            row["assessment"] = row["comment"] = standard_assessments[family]
+        if family in standard_actions and (family != "purpose_alignment" or action_is_generic):
             row["required_action"] = standard_actions[family]
+        if family == "purpose_alignment" and action_is_generic:
+            row["required_action"] = (
+                f"Revise the purpose, objectives and research questions together so that each objective has one matching question, all use the same principal constructs ({construct_phrase}) and the same study setting ({setting}), and the wording does not imply a stronger design than the methodology can support."
+            )
     return output

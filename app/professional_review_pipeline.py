@@ -4,7 +4,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-from .finding_order import chapter_number as ordered_chapter_number, document_order_key
+from .finding_order import chapter_number as ordered_chapter_number, document_order_key, priority_order_key
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .final_review_quality import build_canonical_finding_rows
 from .supervisory_review_algorithm import build_supervisory_report_spec
@@ -442,10 +442,11 @@ def _cross_chapter_rows(review: Dict[str, Any], ledger: Sequence[Dict[str, Any]]
 
 
 def _priority_plan(ledger: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    ordered = sorted((dict(row) for row in ledger), key=priority_order_key)
     return {
-        "priority_1_validity_and_submission_blockers": [row for row in ledger if row.get("severity") == "critical"],
-        "priority_2_major_scholarly_revision": [row for row in ledger if row.get("severity") == "major"],
-        "priority_3_targeted_and_editorial_revision": [row for row in ledger if row.get("severity") in {"moderate", "minor"}],
+        "priority_1_validity_and_submission_blockers": [row for row in ordered if row.get("severity") == "critical"],
+        "priority_2_major_scholarly_revision": [row for row in ordered if row.get("severity") == "major"],
+        "priority_3_targeted_and_editorial_revision": [row for row in ordered if row.get("severity") in {"moderate", "minor"}],
     }
 
 

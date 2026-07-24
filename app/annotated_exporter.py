@@ -28,9 +28,10 @@ from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
+from .finding_order import priority_order_key
 
-ANNOTATION_EXPORT_VERSION = "2.7.4-final-annotation-reconciliation"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.4-final-annotation-reconciliation"
+ANNOTATION_EXPORT_VERSION = "2.8.0-quality-gated-native"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.8.0-quality-gated-native"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -2436,7 +2437,7 @@ def _add_specific_corrections_required(
     priority_run.font.size = Pt(11.5)
     priority_run.font.color.rgb = INLINE_BLUE
 
-    priority_source = major_rows or entries[:5]
+    priority_source = sorted(major_rows or entries[:5], key=lambda item: priority_order_key(item[1]))
     for number, row, text in priority_source[:6]:
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.left_indent = Pt(14)

@@ -288,7 +288,7 @@ def _special_root_cause_rewrite(row: Dict[str, Any], key: Tuple[Any, ...], terms
     elif family == "background_context_and_progression":
         output["item"] = output["issue_title"] = "The background needs a clearer evidence-led progression"
         output["comment"] = output["assessment"] = (
-            "The discussion remains broad and does not build a clear evidence-led progression from the wider topic to the declared setting, practical problem and unresolved research issue."
+            "The discussion remains broad and does not build a clear evidence-led progression from the wider topic to the declared setting, practical problem and unresolved research issue. Chapter One does not require the full study-by-study critical synthesis expected in Chapter Two."
         )
         output["academic_consequence"] = (
             "The reader cannot see why the general literature leads to this particular study."

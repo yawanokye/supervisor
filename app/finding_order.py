@@ -38,6 +38,14 @@ def chapter_number(row: Dict[str, Any]) -> int | None:
 def primary_evidence(row: Dict[str, Any]) -> Dict[str, Any]:
     current = [item for item in (row.get("evidence") or []) if item.get("document_role", "current") == "current"]
     evidence = current or list(row.get("evidence") or [])
+    # Prefer the exact substantive passage over a nearby section heading. A
+    # heading remains the fallback for genuinely missing-section findings.
+    substantive = [
+        item for item in evidence
+        if not item.get("is_heading") and len(_clean(item.get("text")).split()) >= 4
+    ]
+    if substantive:
+        evidence = substantive
     def key(item: Dict[str, Any]) -> Tuple[int, int, int]:
         try:
             paragraph = int(item.get("paragraph"))
@@ -86,6 +94,37 @@ def document_order_key(row: Dict[str, Any]) -> Tuple[int, int, int, int, str]:
     elif is_missing_section(row) and not row.get("section_contract_verified"):
         paragraph = 10**9
     return chapter, paragraph, table_index, table_row, _norm(row.get("item") or row.get("issue_title"))
+
+
+def priority_order_key(row: Dict[str, Any]) -> Tuple[int, int, float, Tuple[int, int, int, int, str]]:
+    """Rank findings for the priority summary without changing document numbering.
+
+    Validity, alignment, ethics, methodology and analytical defects should appear
+    before contextual development and editorial matters of the same severity.
+    """
+    severity_rank = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
+    severity = severity_rank.get(_norm(row.get("severity")), 4)
+    blob = _norm(" ".join(_clean(row.get(field)) for field in (
+        "category", "item", "issue_title", "section", "section_reference", "required_action"
+    )))
+    domains = (
+        (("ethic", "fabricat", "invalid statistical", "wrong model", "measurement", "scoring"), 0),
+        (("purpose", "objective", "research question", "alignment", "unit of analysis", "causal"), 1),
+        (("method", "sampling", "instrument", "validity", "reliability", "analysis"), 2),
+        (("problem statement", "research gap", "scope", "population", "study boundary"), 3),
+        (("background", "significance", "conceptual", "theoretical"), 4),
+        (("citation", "reference", "language", "grammar", "punctuation", "format"), 5),
+    )
+    domain = 6
+    for terms, rank in domains:
+        if any(term in blob for term in terms):
+            domain = rank
+            break
+    try:
+        confidence = -float(row.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return severity, domain, confidence, document_order_key(row)
 
 
 def order_and_number_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
