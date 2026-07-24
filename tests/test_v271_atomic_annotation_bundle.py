@@ -7,6 +7,8 @@ from docx import Document
 from app.annotated_exporter import (
     build_annotated_docx,
     native_annotation_audit,
+    _ensure_native_comment_reconciliation,
+    _represented_finding_numbers,
 )
 from app.document_parser import parse_document
 from app.inline_annotated_exporter import (
@@ -138,3 +140,89 @@ def test_absolute_claim_fallback_is_not_silently_dropped_from_either_annotation(
     inline_audit = inline_annotation_audit(inline, review)
     assert inline_audit["missing_finding_numbers"] == []
     assert inline_audit["passed"] is True
+
+
+
+def test_reconciliation_bypasses_group_deduplication_and_item_limits(monkeypatch):
+    """Every final number must survive even when grouped presentation is lossy."""
+    monkeypatch.setenv("VPROF_NATIVE_COMMENT_STYLE", "exact_anchor_grouped")
+    monkeypatch.setenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT", "1")
+
+    doc = Document()
+    doc.add_heading("CHAPTER ONE", level=1)
+    doc.add_paragraph("The study setting and scope are described inconsistently.")
+    stream = io.BytesIO()
+    doc.save(stream)
+    source = stream.getvalue()
+    rows = parse_document(source, "chapter.docx")
+    evidence = next(row for row in rows if "described inconsistently" in row.get("text", ""))
+
+    findings = [
+        {
+            "finding_id": "R1",
+            "status": "does_not_meet_requirement",
+            "severity": "major",
+            "section": "Scope of the Study",
+            "section_reference": "Scope of the Study",
+            "item": "The geographical boundary is inconsistent",
+            "issue_title": "The geographical boundary is inconsistent",
+            "assessment": "The scope does not provide a consistent boundary.",
+            "required_action": "State one study setting consistently across the work.",
+            "evidence": [{**evidence, "document_role": "current"}],
+            "problematic_quote": evidence["text"],
+            "annotation_eligible": True,
+        },
+        {
+            "finding_id": "R2",
+            "status": "does_not_meet_requirement",
+            "severity": "major",
+            "section": "Scope of the Study",
+            "section_reference": "Scope of the Study",
+            "item": "The factual claim is unsupported by a citation",
+            "issue_title": "The factual claim is unsupported by a citation",
+            "assessment": "The statement is presented as factual without supporting evidence.",
+            "required_action": "Add a relevant citation or qualify the claim.",
+            "evidence": [{**evidence, "document_role": "current"}],
+            "problematic_quote": evidence["text"],
+            "annotation_eligible": True,
+        },
+    ]
+
+    review = {
+        "summary": {"academic_level": "Bachelors", "reviewer_name": "V-Professor"},
+        "academic_findings": findings,
+        "_runtime_context": {"current_paragraphs": rows},
+    }
+    native = build_annotated_docx(source, review, comment_author="V-Professor")
+    audit = native_annotation_audit(native, review, comment_author="V-Professor")
+    assert audit["missing_finding_numbers"] == []
+    assert audit["represented_finding_numbers"] == [1, 2]
+    assert audit["passed"] is True
+
+    output = Document(io.BytesIO(native))
+    current_text = "\n".join(
+        comment.text for comment in output.comments
+        if comment.author == "V-Professor"
+    )
+    assert "1. " in current_text
+    assert "2. " in current_text
+
+
+def test_exact_missing_numbers_12_13_16_receive_lossless_native_fallbacks():
+    doc = Document()
+    doc.add_heading("CHAPTER ONE", level=1)
+    doc.add_paragraph("A stable academic paragraph for fallback anchoring.")
+    row = {
+        "annotation_eligible": True,
+        "item": "The correction must remain visible",
+        "required_action": "Revise the relevant passage as directed in the report.",
+    }
+    numbered_rows = [
+        (12, dict(row), "The same grouped wording must not suppress finding twelve."),
+        (13, dict(row), "The same grouped wording must not suppress finding thirteen."),
+        (16, dict(row), "The same grouped wording must not suppress finding sixteen."),
+    ]
+    _ensure_native_comment_reconciliation(
+        doc, numbered_rows, author="V-Professor", initials="VP"
+    )
+    assert _represented_finding_numbers(doc, author="V-Professor") == {12, 13, 16}

@@ -35,5 +35,5 @@ def test_native_and_inline_annotation_bundle_remains_required():
     assert "inline_annotation_audit" in source
     assert "annotation_bundle_validation_passed" in source
     assert "document.add_comment" in exporter
-    assert "2.7.1-atomic-annotated-artifact-recovery" in exporter
-    assert "2.7.1-atomic-inline-annotated-recovery" in inline
+    assert "2.7.2-lossless-native-reconciliation" in exporter
+    assert "2.7.2-lossless-inline-reconciliation" in inline
