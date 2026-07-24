@@ -162,3 +162,9 @@
 
 - Introduced the canonical evidence ledger, scope-aware review rules and exact source anchoring.
 - Added positive grounding validation and ArticleReady-style action reporting.
+
+## 2.7.2
+
+- Fixed loss of canonical finding numbers during grouped native-comment export.
+- Added non-lossy final reconciliation comments for unrepresented findings.
+- Added export-stage-specific recovery guidance that does not request API-key checks.
