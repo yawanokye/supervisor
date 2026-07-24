@@ -87,7 +87,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.7.3"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -129,6 +129,47 @@ def _env_bool(name: str, default: bool) -> bool:
 
 RUN_REVIEW_JOBS_IN_WEB = _env_bool("VPROF_RUN_JOBS_IN_WEB", True)
 WORKER_POLL_SECONDS = max(2, int(os.getenv("VPROF_WORKER_POLL_SECONDS", "8")))
+
+
+def _review_time_estimate(record: ReviewRecord) -> Dict[str, Any]:
+    """Return a conservative, user-facing elapsed and remaining-time estimate.
+
+    The estimate is intentionally approximate. It uses the current stage, review
+    depth, page estimate and observed elapsed time without storing any document
+    content or provider response. Export-only recovery is estimated separately so
+    a completed academic pass is never presented as another full review.
+    """
+    now = datetime.now(timezone.utc)
+    started = _normalise_db_datetime(record.started_at) or _normalise_db_datetime(record.created_at)
+    elapsed = max(0, int((now - started).total_seconds())) if started else 0
+    pages = max(1, int(record.estimated_pages or 1))
+    depth = clean_text(record.review_depth or "standard").lower()
+    stage = clean_text(record.current_stage or "queued").lower()
+    progress = max(0, min(100, int(record.progress or 0)))
+
+    if record.status == "completed":
+        remaining = 0
+    elif stage == "document-export" or progress >= 97:
+        # Native and inline DOCX construction is local CPU/storage work.
+        # Larger files and many findings take longer, but no provider call remains.
+        total = max(25, min(240, 20 + pages * 4))
+        remaining = max(10, total - min(elapsed, total - 10))
+    elif record.status == "queued":
+        remaining = None
+    else:
+        seconds_per_page = {"light": 38, "standard": 62, "advanced": 90}.get(depth, 62)
+        total = max(120, min(AI_JOB_MAX_SECONDS, 80 + pages * seconds_per_page))
+        proportional = int(total * max(0.02, (100 - progress) / 100))
+        # Do not let an unexpectedly slow provider produce a misleadingly tiny ETA.
+        remaining = max(30, proportional)
+
+    completion_at = (now + timedelta(seconds=remaining)).isoformat() if remaining is not None else None
+    return {
+        "elapsed_seconds": elapsed,
+        "estimated_seconds_remaining": remaining,
+        "estimated_completion_at": completion_at,
+        "time_estimate_is_approximate": True,
+    }
 
 async def _run_startup_tasks() -> None:
     init_db()
@@ -1832,40 +1873,54 @@ async def _run_review_job(
             comment_author = reviewer_name or None
             expected_numbers = expected_annotation_finding_numbers(review)
             try:
-                annotated_data = await asyncio.to_thread(
-                    build_annotated_docx,
-                    payload["data"],
-                    review,
-                    comment_author,
-                )
-                native_audit = native_annotation_audit(
-                    annotated_data,
-                    review,
-                    comment_author=comment_author or "",
+                export_started = time.monotonic()
+                review_id = review["review_id"]
+
+                annotated_data = ANNOTATED_CACHE.get(review_id) or await asyncio.to_thread(load_annotated, review_id)
+                native_audit = (
+                    native_annotation_audit(annotated_data, review, comment_author=comment_author or "")
+                    if annotated_data else {}
                 )
                 if not native_audit.get("passed"):
-                    raise ReviewOutputValidationError(
-                        "The native-comment document did not represent final finding numbers: "
-                        + ", ".join(str(value) for value in native_audit.get("missing_finding_numbers") or expected_numbers)
+                    annotated_data = await asyncio.to_thread(
+                        build_annotated_docx, payload["data"], review, comment_author
                     )
+                    native_audit = native_annotation_audit(
+                        annotated_data, review, comment_author=comment_author or ""
+                    )
+                    if not native_audit.get("passed"):
+                        raise ReviewOutputValidationError(
+                            "The native-comment document did not represent final finding numbers: "
+                            + ", ".join(str(value) for value in native_audit.get("missing_finding_numbers") or expected_numbers)
+                        )
+                    ANNOTATED_CACHE[review_id] = annotated_data
+                    await asyncio.to_thread(save_annotated, review_id, annotated_data)
 
-                inline_data = await asyncio.to_thread(
-                    build_inline_annotated_docx,
-                    payload["data"],
-                    review,
-                    comment_author,
+                _job_update(
+                    job_id, progress=99, message="Native Word comments completed; preparing the inline document",
+                    current_stage=current_stage, checkpoint_count=checkpoints.completed_count(),
                 )
-                inline_audit = inline_annotation_audit(inline_data, review)
-                if not inline_audit.get("passed"):
-                    raise ReviewOutputValidationError(
-                        "The inline annotated document did not represent final finding numbers: "
-                        + ", ".join(str(value) for value in inline_audit.get("missing_finding_numbers") or expected_numbers)
-                    )
 
-                ANNOTATED_CACHE[review["review_id"]] = annotated_data
-                INLINE_ANNOTATED_CACHE[review["review_id"]] = inline_data
-                await asyncio.to_thread(save_annotated, review["review_id"], annotated_data)
-                await asyncio.to_thread(save_inline_annotated, review["review_id"], inline_data)
+                inline_data = INLINE_ANNOTATED_CACHE.get(review_id) or await asyncio.to_thread(load_inline_annotated, review_id)
+                inline_audit = inline_annotation_audit(inline_data, review) if inline_data else {}
+                if not inline_audit.get("passed"):
+                    inline_data = await asyncio.to_thread(
+                        build_inline_annotated_docx, payload["data"], review, comment_author
+                    )
+                    inline_audit = inline_annotation_audit(inline_data, review)
+                    if not inline_audit.get("passed"):
+                        raise ReviewOutputValidationError(
+                            "The inline annotated document did not represent final finding numbers: "
+                            + ", ".join(str(value) for value in inline_audit.get("missing_finding_numbers") or expected_numbers)
+                        )
+                    INLINE_ANNOTATED_CACHE[review_id] = inline_data
+                    await asyncio.to_thread(save_inline_annotated, review_id, inline_data)
+
+                logger.info(
+                    "Annotated delivery bundle completed review_id=%s seconds=%.2f native_comments=%s inline_notes=%s",
+                    review_id, time.monotonic() - export_started,
+                    native_audit.get("current_comment_count"), inline_audit.get("note_count"),
+                )
                 review["summary"].update({
                     "annotated_document_available": True,
                     "native_annotated_document_available": True,
@@ -2771,6 +2826,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     if not record or (user.role != "admin" and record.lecturer_id != user.id):
         raise HTTPException(status_code=404, detail="Review job not found or expired.")
     record = _normalise_stalled_recovery_record(db, record)
+    timing = _review_time_estimate(record)
     if job and record.status in {"failed", "completed", "stopped"}:
         JOB_CACHE.pop(job_id, None)
         job = None
@@ -2810,6 +2866,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
         if record.status in {"queued", "processing"}:
             response["stop_url"] = f"/api/review/jobs/{job_id}/stop"
+        response.update(timing)
         return response
     response = {
         "job_id": record.job_id,
@@ -2838,6 +2895,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             record.completed_at.isoformat() if record.completed_at else None
         ),
     }
+    response.update(timing)
     if record.status == "completed" and record.review_id:
         response["result_url"] = f"/api/review/{record.review_id}"
     elif (
