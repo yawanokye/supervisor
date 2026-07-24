@@ -809,21 +809,11 @@ async function readJsonSafely(response) {
   return payload;
 }
 
-function formatRemainingTime(seconds) {
-  if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return "";
-  const value = Math.max(0, Number(seconds));
-  if (value < 60) return "less than a minute remaining";
-  const minutes = Math.max(1, Math.round(value / 60));
-  if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? "" : "s"} remaining`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return `about ${hours}h${remainder ? ` ${remainder}m` : ""} remaining`;
-}
-
 function updateProgress(job) {
-  const eta = formatRemainingTime(job.estimated_seconds_remaining);
-  const message = job.message || "Reviewing the document";
-  return setProgress(job.progress || 2, eta ? `${message} · ${eta}` : message);
+  return setProgress(
+    job.progress || 2,
+    job.message || "Reviewing the document"
+  );
 }
 
 async function fetchCompletedReview(job) {
