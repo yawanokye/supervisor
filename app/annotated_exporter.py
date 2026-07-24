@@ -29,8 +29,8 @@ from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 
-ANNOTATION_EXPORT_VERSION = "2.7.3-atomic-export-and-timing"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.3-atomic-export-and-timing"
+ANNOTATION_EXPORT_VERSION = "2.7.4-final-annotation-reconciliation"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.7.4-final-annotation-reconciliation"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
