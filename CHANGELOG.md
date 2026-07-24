@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.8.0
+
+- Suppresses non-actionable confirmations such as “no action needed” from the numbered correction register.
+- Rejects heading-only section-boundary claims when the document structure contradicts them.
+- Consolidates repeated background, problem-gap, significance, construct and scope findings before numbering.
+- Removes unrelated cross-section instructions accidentally spliced into student-facing actions.
+- Calibrates severity so contextual and presentation weaknesses are not labelled Critical without a validity-blocking reason.
+- Preserves exact study-specific diagnoses while replacing only generic or excessively long assessments and actions.
+- Uses concise natural supervisory comments, retaining issue labels only where they add essential alignment, validity, citation or editorial scope.
+- Prefers substantive paragraph evidence over section headings for annotation anchoring.
+- Ranks alignment, validity, ethics, methodology and analytical defects ahead of contextual and editorial matters in priority summaries.
+- Changes native and inline export checkpoint identifiers so retained jobs can regenerate quality-gated annotations without another provider call.
+
+
 ## 2.7.4
 - Added lossless inline-annotation reconciliation for canonical findings omitted during grouped export.
 - Preserves completed academic checkpoints and retries only the DOCX export stage.
