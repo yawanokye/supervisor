@@ -1,4 +1,4 @@
-# V-Professor v2.7.1 Deployment Guide
+# V-Professor v2.7.4 Deployment Guide
 
 ## Architecture
 
@@ -114,10 +114,10 @@ python scripts/reset_admin_password.py
 ## Deployment sequence
 
 1. Allow active jobs to finish or pause them deliberately.
-2. Deploy the 2.7.1 code to both the web service and worker.
+2. Deploy the 2.7.4 code to both the web service and worker.
 3. Confirm the shared database, `VPROF_DB_ARTIFACT_STORAGE=true` and selected provider key are available to both services.
 4. Confirm the web health check and worker startup logs are successful.
-5. Open an existing 2.7.0 result and test both annotated downloads. They should regenerate from the saved source without repeating the academic AI pass.
+5. Open an existing retained result and test both annotated downloads. They should regenerate from the saved source without repeating the academic AI pass.
 6. For a paused or failed document-export job, select **Recover** once. The completed academic-review checkpoints are retained and only the annotation bundle is rebuilt.
 7. Submit a short new review job and confirm that completion occurs only after the native annotated DOCX, inline annotated DOCX and supervisory report are available.
 8. Verify that every released finding number appears in both annotated outputs.

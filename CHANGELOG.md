@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.4
+- Added lossless inline-annotation reconciliation for canonical findings omitted during grouped export.
+- Preserves completed academic checkpoints and retries only the DOCX export stage.
+- Clean deployment package removes historical reports, duplicate legacy modules, test files and obsolete environment examples.
+
 ## 2.7.1
 - Generates native and inline annotated DOCX files as one atomic delivery bundle.
 - Validates current V-Professor comments separately from comments already present in the uploaded source.

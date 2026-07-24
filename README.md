@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.7.1
+# V-Professor Supervisory Review 2.7.4
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -10,7 +10,7 @@ The app rebuilds the study context from the current submission, uses earlier cha
 
 ## Final professional review controls
 
-Version 2.7.1 adds the following release controls:
+Version 2.7.4 includes the following release controls:
 
 - native Word-comment and inline annotated DOCX files are generated, validated and persisted as one atomic delivery bundle before a review is released as complete;
 - current V-Professor comments are counted separately from comments already present in the uploaded source, so old comments can never make an empty new annotation export pass validation;
@@ -89,9 +89,9 @@ Background worker:
 python -m app.worker
 ```
 
-Both services must use the same `DATABASE_URL`, provider selection and provider API key. Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. Version 2.7.1 intentionally retains completed academic-review checkpoints while changing the annotation-export identifiers, allowing export-stage recovery without another paid AI review.
+Both services must use the same `DATABASE_URL`, provider selection and provider API key. Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. Version 2.7.4 retains completed academic-review checkpoints while changing the annotation-export identifiers, allowing export-stage recovery without another paid AI review.
 
-For a review completed under 2.7.0, deploy 2.7.1 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
+For an export-stage failure from an earlier build, deploy 2.7.4 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
 
 ## Administrator recovery
 
@@ -105,4 +105,4 @@ python -m compileall -q app scripts
 node --check app/static/app.js
 ```
 
-See `DEPLOYMENT.md`, `.env.example` and `RELEASE_NOTES_v2.7.1.md`.
+See `DEPLOYMENT.md`, `.env.example` and `CHANGELOG.md`.
