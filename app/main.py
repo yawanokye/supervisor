@@ -92,7 +92,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
 MAX_TOTAL_CONTEXT_BYTES = 75 * 1024 * 1024
-AI_JOB_MAX_SECONDS = max(900, int(os.getenv("AI_JOB_MAX_SECONDS", "5400")))
+AI_JOB_MAX_SECONDS = max(900, int(os.getenv("AI_JOB_MAX_SECONDS", "21600")))
 JOB_HEARTBEAT_SECONDS = max(15, int(os.getenv("JOB_HEARTBEAT_SECONDS", "45")))
 JOB_LEASE_SECONDS = max(
     JOB_HEARTBEAT_SECONDS * 3,
@@ -884,11 +884,19 @@ def _validate_filename(filename: str, label: str) -> None:
 async def _read_upload(upload: UploadFile, label: str, max_bytes: int = MAX_FILE_BYTES) -> bytes:
     filename = upload.filename or label
     _validate_filename(filename, label)
-    data = await upload.read()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail=f"{label} exceeds the file limit.")
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(status_code=400, detail=f"{label} is empty.")
-    if len(data) > max_bytes:
-        raise HTTPException(status_code=413, detail=f"{label} exceeds the file limit.")
     return data
 
 
@@ -1017,6 +1025,53 @@ def _normalise_db_datetime(value: Optional[datetime]) -> Optional[datetime]:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _review_time_estimate(record: ReviewRecord) -> Dict[str, Any]:
+    """Return a conservative, stage-aware ETA without controlling job expiry."""
+    status = str(getattr(record, "status", "") or "").strip().lower()
+    if status in {"completed", "failed", "stopped"}:
+        return {
+            "estimated_seconds_remaining": 0,
+            "estimated_completion_at": None,
+        }
+
+    pages = max(1, int(getattr(record, "estimated_pages", 0) or 1))
+    progress = max(0, min(99, int(getattr(record, "progress", 0) or 0)))
+    stage = str(getattr(record, "current_stage", "") or "").strip().lower()
+    if stage == "document-export" or progress >= 98:
+        remaining = max(10, min(240, 20 + pages * 2))
+    else:
+        depth = str(getattr(record, "review_depth", "standard") or "standard").lower()
+        workflow = str(getattr(record, "workflow_type", "supervisory_review") or "").lower()
+        seconds_per_page = {
+            "light": 10,
+            "standard": 16,
+            "advanced": 24,
+        }.get(depth, 16)
+        if workflow == "external_assessment":
+            seconds_per_page = max(seconds_per_page, 28)
+        planned_total = max(300, pages * seconds_per_page)
+        planned_remaining = planned_total * max(1, 100 - progress) / 100
+
+        started = _normalise_db_datetime(
+            getattr(record, "started_at", None)
+            or getattr(record, "created_at", None)
+        )
+        observed_remaining = 0.0
+        if started and progress >= 8:
+            elapsed = max(1.0, (datetime.now(timezone.utc) - started).total_seconds())
+            observed_remaining = elapsed * max(1, 100 - progress) / progress
+        remaining = int(min(
+            AI_JOB_MAX_SECONDS,
+            max(30, planned_remaining, observed_remaining),
+        ))
+
+    completion = datetime.now(timezone.utc) + timedelta(seconds=remaining)
+    return {
+        "estimated_seconds_remaining": int(remaining),
+        "estimated_completion_at": completion.isoformat(),
+    }
 
 
 def _claim_job(job_id: str, *, resumed: bool) -> bool:
@@ -2798,6 +2853,8 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
                 else None
             ),
         })
+        timing = _review_time_estimate(record)
+        response.update(timing)
         if response.get("status") == "completed" and response.get("review_id"):
             response.setdefault(
                 "result_url",
@@ -2838,6 +2895,8 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             record.completed_at.isoformat() if record.completed_at else None
         ),
     }
+    timing = _review_time_estimate(record)
+    response.update(timing)
     if record.status == "completed" and record.review_id:
         response["result_url"] = f"/api/review/{record.review_id}"
     elif (

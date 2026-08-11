@@ -166,11 +166,10 @@ class CostAwareAIProvider:
     ) -> RoutePlan:
         """Three-role OpenAI thesis pipeline.
 
-        Phase 1 routes cleaning/formatting and JSON repair to the cheapest nano
-        model. Phase 2 routes section and domain checks to the configured mini
-        or chapter model. Phase 3 routes final synthesis and committee-style
-        audits to the bounded expert model. No unavailable preview model is used
-        by default.
+        Phase 1 routes cleaning, formatting and JSON repair to Luna at low
+        effort. Phase 2 routes ordinary coverage to Luna while respecting an
+        explicit Terra request for academically high-risk sections. Phase 3
+        routes final synthesis and committee-style audits to Terra.
 
         The Batch API is not used directly here because live reviews need a
         synchronous response. The role separation is compatible with a future
@@ -184,17 +183,17 @@ class CostAwareAIProvider:
         cleaning = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_cleaning_model,
-            self.config.openai_chapter_reasoning_effort or "xhigh",
+            self.config.openai_cleaning_reasoning_effort or "low",
         )
         section = RouteTarget(
             ProviderName.OPENAI,
-            self.config.openai_section_analysis_model,
-            self.config.openai_chapter_reasoning_effort or "xhigh",
+            requested_model or self.config.openai_section_analysis_model,
+            requested_effort or self.config.openai_section_analysis_reasoning_effort or "medium",
         )
         section_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_fallback_model,
-            self.config.openai_chapter_reasoning_effort or "xhigh",
+            self.config.openai_section_analysis_reasoning_effort or "medium",
         )
         final = RouteTarget(
             ProviderName.OPENAI,
@@ -239,16 +238,17 @@ class CostAwareAIProvider:
             )
             return RoutePlan(stage, profile, primary, fallback, escalation, False)
 
-        primary, fallback, escalation = self._normalise_targets(
-            section, section_fallback, final
-        )
-        # Routine chapter and section passes stay on the primary Terra route.
-        # Expert escalation is reserved for an explicitly Advanced review;
-        # otherwise a low-confidence result is handled by evidence gates and
-        # focused recovery rather than a second full-price call.
+        # Routine packets stay on Luna. When the academic engine explicitly
+        # selects Terra for methods, results, statistics or synthesis, that
+        # request is honoured as the primary route instead of being downgraded.
         allow_escalation = (
             self.config.selective_escalation_enabled
             and str(review_depth or "standard").strip().lower() == "advanced"
+        )
+        primary, fallback, escalation = self._normalise_targets(
+            section,
+            section_fallback,
+            final if allow_escalation else None,
         )
         return RoutePlan(
             stage,
@@ -428,7 +428,7 @@ class CostAwareAIProvider:
         oa_fast = RouteTarget(
             ProviderName.OPENAI,
             config.openai_fast_model,
-            config.openai_chapter_reasoning_effort or "xhigh",
+            config.openai_cleaning_reasoning_effort or "low",
         )
         oa_expert = RouteTarget(
             ProviderName.OPENAI,

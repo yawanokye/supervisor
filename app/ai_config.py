@@ -136,6 +136,8 @@ class HybridAIConfig:
     openai_expert_reasoning_effort: str
     openai_final_audit_model: str
     openai_final_audit_reasoning_effort: str
+    openai_cleaning_reasoning_effort: str
+    openai_section_analysis_reasoning_effort: str
     # Compatibility aliases for older deployments.
     openai_external_model: str
     openai_external_reasoning_effort: str
@@ -158,6 +160,10 @@ class HybridAIConfig:
     max_retries: int
     fast_request_timeout_seconds: int
     fast_request_max_retries: int
+    openai_background_mode_enabled: bool
+    openai_background_poll_seconds: int
+    openai_background_timeout_seconds: int
+    openai_prompt_cache_enabled: bool
     max_parallel_calls: int
     chapter_review_concurrency: int
     chapter_packet_max_chars: int
@@ -323,7 +329,7 @@ class HybridAIConfig:
             "OPENAI_CHAPTER_MODEL", "gpt-5.6-luna"
         ).strip()
         expert_model = os.getenv(
-            "OPENAI_EXPERT_MODEL", "gpt-5.6-luna"
+            "OPENAI_EXPERT_MODEL", "gpt-5.6-terra"
         ).strip()
         audit_model = os.getenv(
             "OPENAI_FINAL_AUDIT_MODEL", expert_model
@@ -339,13 +345,23 @@ class HybridAIConfig:
         ).strip()
 
         chapter_effort = _normalise_effort(
-            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "xhigh")
+            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "medium"),
+            default="medium",
         )
         expert_effort = _normalise_effort(
-            os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "xhigh")
+            os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "high"),
+            default="high",
         )
         audit_effort = _normalise_effort(
             os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", "xhigh")
+        )
+        cleaning_effort = _normalise_effort(
+            os.getenv("OPENAI_CLEANING_REASONING_EFFORT", "low"),
+            default="low",
+        )
+        section_effort = _normalise_effort(
+            os.getenv("OPENAI_SECTION_ANALYSIS_REASONING_EFFORT", chapter_effort),
+            default="medium",
         )
         legacy_external_effort = _normalise_effort(
             os.getenv("OPENAI_EXTERNAL_REASONING_EFFORT", expert_effort)
@@ -499,6 +515,8 @@ class HybridAIConfig:
             openai_expert_reasoning_effort=expert_effort,
             openai_final_audit_model=audit_model,
             openai_final_audit_reasoning_effort=audit_effort,
+            openai_cleaning_reasoning_effort=cleaning_effort,
+            openai_section_analysis_reasoning_effort=section_effort,
             openai_external_model=external_domain_model,
             openai_external_reasoning_effort=external_domain_effort,
             openai_external_decision_reasoning_effort=external_adjudicator_effort,
@@ -527,6 +545,18 @@ class HybridAIConfig:
             ),
             fast_request_max_retries=_env_int(
                 "AI_FAST_REQUEST_MAX_RETRIES", 0, 0
+            ),
+            openai_background_mode_enabled=_env_bool(
+                "OPENAI_BACKGROUND_MODE", False
+            ),
+            openai_background_poll_seconds=_env_int(
+                "OPENAI_BACKGROUND_POLL_SECONDS", 5
+            ),
+            openai_background_timeout_seconds=_env_int(
+                "OPENAI_BACKGROUND_TIMEOUT_SECONDS", 1800, 60
+            ),
+            openai_prompt_cache_enabled=_env_bool(
+                "OPENAI_PROMPT_CACHE_ENABLED", True
             ),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 2),
             chapter_review_concurrency=_env_int(
@@ -876,9 +906,9 @@ class HybridAIConfig:
             )
         if value.startswith("gpt-5.6-terra"):
             return (
-                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.50),
-                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.25),
-                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 15.00),
+                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.00),
+                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.20),
+                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 12.00),
             )
         if value == self.openai_fast_model.lower():
             return (
