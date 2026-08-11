@@ -126,61 +126,55 @@ services:
       - key: VPROF_EXTERNAL_CALL_BUDGET_USD
         value: 1.50
       - key: OPENAI_FAST_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_CLEANING_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_CHAPTER_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_SECTION_ANALYSIS_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_EXPERT_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_FINAL_AUDIT_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_PHD_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-sol
+        value: gpt-5.6-luna
       - key: OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_EXTERNAL_DOMAIN_MODEL
-        value: gpt-5.6-terra
+        value: gpt-5.6-luna
       - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
-        value: gpt-5.6-sol
-      - key: PRICE_OPENAI_TERRA_INPUT
-        value: "2.50"
-      - key: PRICE_OPENAI_TERRA_CACHED_INPUT
-        value: "0.25"
-      - key: PRICE_OPENAI_TERRA_OUTPUT
-        value: "15.00"
-      - key: PRICE_OPENAI_SOL_INPUT
-        value: "5.00"
-      - key: PRICE_OPENAI_SOL_CACHED_INPUT
-        value: "0.50"
-      - key: PRICE_OPENAI_SOL_OUTPUT
-        value: "30.00"
+        value: gpt-5.6-luna
+      - key: PRICE_OPENAI_LUNA_INPUT
+        value: "0.20"
+      - key: PRICE_OPENAI_LUNA_CACHED_INPUT
+        value: "0.02"
+      - key: PRICE_OPENAI_LUNA_OUTPUT
+        value: "1.20"
       - key: OPENAI_CHAPTER_REASONING_EFFORT
-        value: medium
+        value: xhigh
       - key: OPENAI_EXPERT_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
-        value: medium
+        value: xhigh
       - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: medium
+        value: xhigh
       - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_PHD_AUDIT_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT
-        value: high
+        value: xhigh
       - key: AI_MAX_PARALLEL_CALLS
         value: 2
       - key: AI_CHAPTER_REVIEW_CONCURRENCY
