@@ -890,14 +890,13 @@ if (stopReviewButton) {
 
 async function waitForReview(pollUrl, options = {}) {
   const started = Number(options.startedAt || Date.now());
-  const maximumWait = 2 * 60 * 60 * 1000;
   let temporaryFailures = 0;
   let pollDelay = 2500;
   let resumeRequested = false;
   let recoveryFirstSeenAt = 0;
   let autoResumeFailures = 0;
 
-  while (Date.now() - started < maximumWait) {
+  while (true) {
     await new Promise(resolve => setTimeout(resolve, pollDelay));
     try {
       const response = await fetch(pollUrl, {
@@ -920,7 +919,14 @@ async function waitForReview(pollUrl, options = {}) {
 
       const job = await readJsonSafely(response);
       temporaryFailures = 0;
-      pollDelay = Date.now() - started > 30 * 60 * 1000 ? 10000 : 2500;
+      const elapsed = Date.now() - started;
+      pollDelay = document.hidden
+        ? 30000
+        : elapsed > 2 * 60 * 60 * 1000
+          ? 15000
+          : elapsed > 30 * 60 * 1000
+            ? 10000
+            : 2500;
       const highestProgress = updateProgress(job);
       setStopReviewUrl(job.stop_url || (job.job_id ? `/api/review/jobs/${encodeURIComponent(job.job_id)}/stop` : ""));
 
@@ -1053,9 +1059,6 @@ async function waitForReview(pollUrl, options = {}) {
     }
   }
 
-  throw new Error(
-    "The review has not completed within two hours. The job has been saved in your review history. Check the portal later or contact the administrator."
-  );
 }
 
 form.addEventListener("submit", async event => {
