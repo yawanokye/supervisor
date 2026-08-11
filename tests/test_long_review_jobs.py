@@ -5,9 +5,11 @@ def test_browser_polling_is_resumable():
     js = Path("app/static/app.js").read_text(encoding="utf-8")
     assert "ACTIVE_REVIEW_JOB_KEY" in js
     assert "resumeActiveReviewJob" in js
-    assert "2 * 60 * 60 * 1000" in js
+    assert "while (true)" in js
+    assert "document.hidden" in js
     assert "fetchCompletedReview" in js
     assert "still taking longer than expected" not in js
+    assert "has not completed within two hours" not in js
 
 
 def test_server_returns_result_url():

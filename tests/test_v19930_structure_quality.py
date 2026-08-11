@@ -190,7 +190,7 @@ def test_visible_body_markers_are_disabled_by_default(monkeypatch):
     assert _native_group_location_markers_enabled() is False
 
 
-def test_combined_pipeline_allows_selective_section_escalation(monkeypatch):
+def test_combined_pipeline_reserves_section_escalation_for_advanced(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("VPROF_ENABLE_OPENAI", "true")
     monkeypatch.setenv("VPROF_COMBINED_APP_PIPELINE", "true")
@@ -201,10 +201,11 @@ def test_combined_pipeline_allows_selective_section_escalation(monkeypatch):
     provider = CostAwareAIProvider(config)
     plan = provider.plan(stage=ReviewStage.STANDARD_REVIEW, review_depth="standard")
     assert plan.allow_escalation is False
-    assert plan.escalation is not None
-    assert plan.escalation.model == "gpt-5.6-sol"
+    assert plan.escalation is None
     advanced = provider.plan(stage=ReviewStage.ADVANCED_REVIEW, review_depth="advanced")
     assert advanced.allow_escalation is True
+    assert advanced.escalation is not None
+    assert advanced.escalation.model == "gpt-5.6-sol"
 
 
 def test_no_previous_study_terms_remain_in_generic_generators():

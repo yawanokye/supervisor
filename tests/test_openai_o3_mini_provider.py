@@ -78,6 +78,7 @@ def test_openai_provider_uses_luna_xhigh_responses_and_strict_schema(monkeypatch
     assert captured["payload"]["text"]["format"]["type"] == "json_schema"
     assert captured["payload"]["text"]["format"]["strict"] is True
     assert captured["payload"]["store"] is False
+    assert len(captured["payload"]["prompt_cache_key"]) == 64
     assert captured["timeout_seconds"] == 360
     assert captured["max_retries"] == 0
     assert result.data == {"judgement": "supported", "evidence_ids": ["P1"]}
@@ -113,6 +114,43 @@ def test_openai_provider_accepts_xhigh_reasoning(monkeypatch):
         reasoning_effort="xhigh",
     ))
     assert captured["payload"]["reasoning"] == {"effort": "xhigh"}
+
+
+def test_high_effort_request_uses_background_mode_and_polling(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+    monkeypatch.setenv("OPENAI_BACKGROUND_MODE", "true")
+    config = HybridAIConfig.from_env()
+    captured: dict = {}
+
+    async def fake_post_json_with_retry(**kwargs):
+        captured.update(kwargs)
+        return ({"id": "resp-background", "status": "queued"}, "request-start")
+
+    async def fake_poll(**kwargs):
+        captured["poll"] = kwargs
+        return ({
+            "id": "resp-background",
+            "status": "completed",
+            "output": [{"type": "message", "content": [{
+                "type": "output_text",
+                "text": '{"judgement":"supported","evidence_ids":["P1"]}',
+            }]}],
+            "usage": {"input_tokens": 4, "output_tokens": 3},
+        }, "request-poll")
+
+    monkeypatch.setattr("app.ai_providers._post_json_with_retry", fake_post_json_with_retry)
+    monkeypatch.setattr("app.ai_providers._poll_openai_background_response", fake_poll)
+    result = asyncio.run(OpenAIProvider(config).complete_json(
+        model="gpt-5.6-terra",
+        system_prompt="Audit the evidence.",
+        user_prompt="Assess P1.",
+        schema_model=SamplePayload,
+        purpose="background_test",
+        reasoning_effort="high",
+    ))
+    assert captured["payload"]["background"] is True
+    assert captured["poll"]["response_payload"]["id"] == "resp-background"
+    assert result.data["judgement"] == "supported"
 
 
 def test_openai_incomplete_output_is_rejected_as_truncated():

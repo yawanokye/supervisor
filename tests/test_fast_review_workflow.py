@@ -30,10 +30,12 @@ def test_fast_defaults(monkeypatch):
     assert config.verification_batch_size == 12
     assert config.structured_output_retries == 0
     assert config.openai_chapter_model == "gpt-5.6-luna"
-    assert config.openai_expert_model == "gpt-5.6-luna"
-    assert config.openai_final_audit_model == "gpt-5.6-luna"
-    assert config.openai_chapter_reasoning_effort == "xhigh"
-    assert config.openai_expert_reasoning_effort == "xhigh"
+    assert config.openai_expert_model == "gpt-5.6-terra"
+    assert config.openai_final_audit_model == "gpt-5.6-terra"
+    assert config.openai_cleaning_reasoning_effort == "low"
+    assert config.openai_section_analysis_reasoning_effort == "medium"
+    assert config.openai_chapter_reasoning_effort == "medium"
+    assert config.openai_expert_reasoning_effort == "high"
     assert config.openai_final_audit_reasoning_effort == "xhigh"
 
 

@@ -29,6 +29,7 @@ def test_status_endpoint_exposes_eta_fields():
 
 def test_export_reuses_individually_saved_artifacts():
     source = Path("app/main.py").read_text(encoding="utf-8")
-    assert "load_annotated, review_id" in source
-    assert "load_inline_annotated, review_id" in source
-    assert "Native Word comments completed; preparing the inline document" in source
+    assert "ANNOTATED_CACHE.get(review_id) or load_annotated(review_id)" in source
+    assert "INLINE_ANNOTATED_CACHE.get(review_id) or load_inline_annotated(review_id)" in source
+    assert "save_annotated, review_id" in source
+    assert "save_inline_annotated, review_id" in source

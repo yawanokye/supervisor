@@ -105,7 +105,8 @@ def test_research_masters_route_is_openai_only_in_combined_pipeline(monkeypatch)
 
     assert first.primary.provider is ProviderName.OPENAI
     assert audit.primary.provider is ProviderName.OPENAI
-    assert first.primary.model == config.openai_section_analysis_model
+    assert first.primary.model == config.openai_expert_model
+    assert first.primary.reasoning_effort == "high"
     assert audit.primary.model in {config.openai_expert_model, config.openai_final_audit_model}
 
 
