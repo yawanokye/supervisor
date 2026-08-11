@@ -57,7 +57,20 @@ VPROF_EXPORT_ANCHOR_RECONCILIATION=true
 
 Native and inline reconciliation stops completion rather than releasing a report-only result. Current V-Professor comments are counted separately from comments inherited from the uploaded source, and every canonical finding number must appear in both annotated outputs. Findings tied to the same exact paragraph may share one comment box while retaining their individual numbers.
 
-Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. This preserves the native DOCX, inline DOCX, report data and source payload across Render restarts.
+Keep `VPROF_DB_ARTIFACT_STORAGE=true` during migration. If `S3_BUCKET` is set, the app stores large uploads, checkpoints and generated files in the configured S3-compatible bucket and uses PostgreSQL only as the compatibility fallback.
+
+Recommended durable object-storage settings:
+
+```env
+VPROF_ARTIFACT_STORAGE_BACKEND=auto
+S3_BUCKET=<bucket-name>
+S3_ENDPOINT_URL=<provider-endpoint>
+S3_REGION=<region>
+S3_ACCESS_KEY_ID=<secret>
+S3_SECRET_ACCESS_KEY=<secret>
+S3_PREFIX=vprofessor
+S3_SERVER_SIDE_ENCRYPTION=AES256
+```
 
 Previous source-document comments remain separate from current V-Professor findings. Empty comments are removed, and an obvious missing-section comment may be marked as addressed when the section is visibly present in the current file.
 
@@ -95,22 +108,28 @@ OPENAI_FAST_MODEL=gpt-5.6-luna
 OPENAI_CLEANING_MODEL=gpt-5.6-luna
 OPENAI_CHAPTER_MODEL=gpt-5.6-luna
 OPENAI_SECTION_ANALYSIS_MODEL=gpt-5.6-luna
-OPENAI_EXPERT_MODEL=gpt-5.6-luna
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-luna
-OPENAI_FINAL_SYNTHESIS_MODEL=gpt-5.6-luna
-OPENAI_PHD_FINAL_SYNTHESIS_MODEL=gpt-5.6-luna
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-luna
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-luna
-OPENAI_CHAPTER_REASONING_EFFORT=xhigh
-OPENAI_EXPERT_REASONING_EFFORT=xhigh
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
+OPENAI_FINAL_SYNTHESIS_MODEL=gpt-5.6-terra
+OPENAI_PHD_FINAL_SYNTHESIS_MODEL=gpt-5.6-terra
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
+OPENAI_CLEANING_REASONING_EFFORT=low
+OPENAI_SECTION_ANALYSIS_REASONING_EFFORT=medium
+OPENAI_CHAPTER_REASONING_EFFORT=medium
+OPENAI_EXPERT_REASONING_EFFORT=high
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=xhigh
+OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=medium
+OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=high
+OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=high
 OPENAI_PHD_AUDIT_REASONING_EFFORT=xhigh
 OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT=xhigh
-OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=xhigh
+OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
+OPENAI_BACKGROUND_MODE=true
+OPENAI_BACKGROUND_POLL_SECONDS=5
+OPENAI_BACKGROUND_TIMEOUT_SECONDS=3600
+OPENAI_PROMPT_CACHE_ENABLED=true
 VPROF_PROVIDER_FAILOVER=false
 VPROF_FALLBACK_PROVIDER=none
 ```
@@ -141,6 +160,7 @@ python scripts/reset_admin_password.py
 6. For a paused or failed document-export job, select **Recover** once. The completed academic-review checkpoints are retained and only the annotation bundle is rebuilt.
 7. Submit a short new review job and confirm that completion occurs only after the native annotated DOCX, inline annotated DOCX and supervisory report are available.
 8. Verify that every released finding number appears in both annotated outputs.
+9. Submit a 120-page test thesis, close the browser, reopen the portal and confirm that the same job reconnects and resumes from saved packet checkpoints.
 
 Submit a new review only when the original source payload is no longer available.
 

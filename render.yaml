@@ -39,6 +39,22 @@ services:
         value: /tmp/vprofessor/reviews
       - key: VPROF_DB_ARTIFACT_STORAGE
         value: true
+      - key: VPROF_ARTIFACT_STORAGE_BACKEND
+        value: auto
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PREFIX
+        value: vprofessor
+      - key: S3_SERVER_SIDE_ENCRYPTION
+        value: AES256
       - key: VPROF_RUN_JOBS_IN_WEB
         value: false
       - key: OPENAI_API_KEY
@@ -136,53 +152,63 @@ services:
       - key: OPENAI_SECTION_ANALYSIS_FALLBACK_MODEL
         value: gpt-5.6-luna
       - key: OPENAI_EXPERT_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_AUDIT_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL
         value: gpt-5.6-luna
       - key: OPENAI_PHD_FINAL_SYNTHESIS_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT
         value: xhigh
       - key: OPENAI_EXTERNAL_DOMAIN_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
-        value: gpt-5.6-luna
+        value: gpt-5.6-terra
       - key: PRICE_OPENAI_LUNA_INPUT
         value: "0.20"
       - key: PRICE_OPENAI_LUNA_CACHED_INPUT
         value: "0.02"
       - key: PRICE_OPENAI_LUNA_OUTPUT
         value: "1.20"
+      - key: PRICE_OPENAI_TERRA_INPUT
+        value: "2.00"
+      - key: PRICE_OPENAI_TERRA_CACHED_INPUT
+        value: "0.20"
+      - key: PRICE_OPENAI_TERRA_OUTPUT
+        value: "12.00"
+      - key: OPENAI_CLEANING_REASONING_EFFORT
+        value: low
+      - key: OPENAI_SECTION_ANALYSIS_REASONING_EFFORT
+        value: medium
       - key: OPENAI_CHAPTER_REASONING_EFFORT
-        value: xhigh
+        value: medium
       - key: OPENAI_EXPERT_REASONING_EFFORT
-        value: xhigh
+        value: high
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
         value: xhigh
       - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: xhigh
+        value: medium
       - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
-        value: xhigh
+        value: high
       - key: OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT
-        value: xhigh
+        value: high
       - key: OPENAI_PHD_AUDIT_REASONING_EFFORT
         value: xhigh
       - key: OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT
-        value: xhigh
+        value: high
       - key: OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT
         value: xhigh
       - key: AI_MAX_PARALLEL_CALLS
-        value: 2
+        value: 3
       - key: AI_CHAPTER_REVIEW_CONCURRENCY
-        value: 2
+        value: 3
       - key: AI_CHAPTER_RECOVERY_CONCURRENCY
         value: 1
       - key: AI_CHAPTER_PACKET_MAX_CHARS
-        value: 60000
+        value: 24000
       - key: AI_CHAPTER_RECOVERY_MAX_OUTPUT_TOKENS
         value: 4500
       - key: AI_LIGHT_MAX_OUTPUT_TOKENS
@@ -220,9 +246,9 @@ services:
       - key: AI_EXTERNAL_ASSESSMENT_ADJUDICATION_MAX_OUTPUT_TOKENS
         value: 7500
       - key: AI_TIMEOUT_SECONDS
-        value: 300
+        value: 600
       - key: AI_FAST_REQUEST_TIMEOUT_SECONDS
-        value: 180
+        value: 300
       - key: AI_FAST_REQUEST_MAX_RETRIES
         value: 1
       - key: AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES
@@ -240,7 +266,15 @@ services:
       - key: AI_MAX_MAP_INPUT_CHARS
         value: 60000
       - key: AI_JOB_MAX_SECONDS
-        value: 5400
+        value: 21600
+      - key: OPENAI_BACKGROUND_MODE
+        value: true
+      - key: OPENAI_BACKGROUND_POLL_SECONDS
+        value: 5
+      - key: OPENAI_BACKGROUND_TIMEOUT_SECONDS
+        value: 3600
+      - key: OPENAI_PROMPT_CACHE_ENABLED
+        value: true
       - key: AI_ADVANCED_SECOND_PASS
         value: true
       - key: AUTO_RESUME_JOBS
@@ -258,9 +292,9 @@ services:
       - key: CLIENT_AUTO_RECOVERY_SECONDS
         value: 600
       - key: VPROF_WORKER_CONCURRENCY
-        value: 1
+        value: 2
       - key: VPROF_WORKER_CLAIM_LIMIT
-        value: 1
+        value: 2
       - key: VPROF_WORKER_POLL_SECONDS
         value: 8
       - key: VPROF_ALL_LEVELS_DEGREE_CALIBRATED
@@ -302,15 +336,15 @@ services:
       - key: VPROF_COVERAGE_CONTEXT_PARAGRAPHS
         value: 1
       - key: VPROF_COVERAGE_UNIT_MAX_CHARS
-        value: 12000
+        value: 8000
       - key: VPROF_COVERAGE_TABLE_ROWS_PER_UNIT
         value: 10
       - key: VPROF_COVERAGE_UNITS_PER_REQUEST
-        value: 6
+        value: 4
       - key: VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST
-        value: 3
+        value: 2
       - key: VPROF_COVERAGE_REQUEST_MAX_CHARS
-        value: 36000
+        value: 24000
       - key: VPROF_COVERAGE_RELEASE_GATE
         value: true
       - key: VPROF_STANDARD_NON_RESEARCH_MIN_FINDINGS

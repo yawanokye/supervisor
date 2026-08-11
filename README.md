@@ -43,22 +43,28 @@ OPENAI_FAST_MODEL=gpt-5.6-luna
 OPENAI_CLEANING_MODEL=gpt-5.6-luna
 OPENAI_CHAPTER_MODEL=gpt-5.6-luna
 OPENAI_SECTION_ANALYSIS_MODEL=gpt-5.6-luna
-OPENAI_EXPERT_MODEL=gpt-5.6-luna
-OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-luna
-OPENAI_FINAL_SYNTHESIS_MODEL=gpt-5.6-luna
-OPENAI_PHD_FINAL_SYNTHESIS_MODEL=gpt-5.6-luna
-OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-luna
-OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-luna
-OPENAI_CHAPTER_REASONING_EFFORT=xhigh
-OPENAI_EXPERT_REASONING_EFFORT=xhigh
+OPENAI_EXPERT_MODEL=gpt-5.6-terra
+OPENAI_FINAL_AUDIT_MODEL=gpt-5.6-terra
+OPENAI_FINAL_SYNTHESIS_MODEL=gpt-5.6-terra
+OPENAI_PHD_FINAL_SYNTHESIS_MODEL=gpt-5.6-terra
+OPENAI_EXTERNAL_DOMAIN_MODEL=gpt-5.6-terra
+OPENAI_EXTERNAL_ADJUDICATOR_MODEL=gpt-5.6-terra
+OPENAI_CLEANING_REASONING_EFFORT=low
+OPENAI_SECTION_ANALYSIS_REASONING_EFFORT=medium
+OPENAI_CHAPTER_REASONING_EFFORT=medium
+OPENAI_EXPERT_REASONING_EFFORT=high
 OPENAI_FINAL_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=xhigh
-OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=xhigh
+OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=medium
+OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=high
+OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=high
 OPENAI_PHD_AUDIT_REASONING_EFFORT=xhigh
 OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT=xhigh
-OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=xhigh
+OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT=high
 OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT=xhigh
+OPENAI_BACKGROUND_MODE=true
+OPENAI_BACKGROUND_POLL_SECONDS=5
+OPENAI_BACKGROUND_TIMEOUT_SECONDS=3600
+OPENAI_PROMPT_CACHE_ENABLED=true
 VPROF_FALLBACK_PROVIDER=none
 VPROF_PROVIDER_FAILOVER=false
 ```
@@ -109,7 +115,23 @@ Background worker:
 python -m app.worker
 ```
 
-Both services must use the same `DATABASE_URL`, provider selection and provider API key. Keep `VPROF_DB_ARTIFACT_STORAGE=true` on both services unless durable object storage is configured. Version 2.8.0 retains completed academic-review checkpoints while changing the annotation-export identifiers, allowing export-stage recovery without another paid AI review.
+Both services must use the same `DATABASE_URL`, provider selection and provider API key. The supplied configuration keeps database artifact storage as a compatibility fallback. When `S3_BUCKET` is configured, large payloads and result files move automatically to S3-compatible object storage while PostgreSQL retains job and checkpoint state.
+
+## Long-thesis architecture
+
+The production defaults are tuned for 120 to 200-page work:
+
+- two thesis jobs per worker;
+- three concurrent AI calls per thesis;
+- 24,000-character coverage requests with packet-level checkpoints;
+- Luna at low or medium effort for cleaning and high-volume coverage;
+- Terra at high effort for decisive methods, results and synthesis work;
+- Terra at `xhigh` for final PhD and external adjudication;
+- OpenAI background mode for `high`, `xhigh` and `max` requests;
+- indefinite browser reconnection through the stored review job ID;
+- a six-hour server-side academic-stage window with automatic checkpoint recovery.
+
+For S3-compatible storage, set `VPROF_ARTIFACT_STORAGE_BACKEND=auto` and supply `S3_BUCKET`, endpoint, region and credentials. Leave the bucket empty to continue using PostgreSQL BLOB storage during migration.
 
 For an export-stage failure from an earlier build, deploy 2.8.0 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
 

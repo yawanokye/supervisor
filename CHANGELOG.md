@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.0 long-thesis architecture update
+
+- Routes cleaning and routine coverage to GPT-5.6 Luna at low or medium effort.
+- Routes high-risk research sections, final synthesis and external adjudication selectively to GPT-5.6 Terra.
+- Runs high-effort Responses API requests in background mode with bounded polling.
+- Adds stable prompt-cache keys for repeated system instructions and schemas.
+- Removes the browser's false two-hour terminal failure and keeps reconnecting to durable jobs.
+- Increases bounded packet concurrency and reduces large coverage packets to 24,000 characters.
+- Supports two independent thesis jobs per worker without selecting the same queued job twice.
+- Adds optional S3-compatible storage for uploads, checkpoints and generated documents, with PostgreSQL fallback.
+- Streams upload reads in bounded chunks and expands the recoverable AI stage to six hours.
+
 ## 2.8.0
 
 - Suppresses non-actionable confirmations such as “no action needed” from the numbered correction register.
