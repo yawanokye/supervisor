@@ -845,7 +845,7 @@ async def enrich_review_with_hybrid_ai(
                     ),
                     schema_model=DecisionBatch,
                     purpose="premium_adjudication",
-                    reasoning_effort="high",
+                    reasoning_effort="xhigh",
                 )
                 usage_records.append(_usage_cost(result.usage, config))
                 parsed_rows = result.data.get("decisions", [])

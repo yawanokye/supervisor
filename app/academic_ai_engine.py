@@ -669,16 +669,16 @@ _EXPERT_SECTION_TERMS = (
 def _section_requires_expert_model(
     section: Dict[str, Any], academic_level: Any
 ) -> bool:
-    """Use GPT-5.6 Terra for high-risk academic reasoning at research levels.
+    """Use GPT-5.6 Luna with xhigh reasoning for research-level review.
 
     Bachelor's and non-research master's chapter drafting remains on the faster
-    GPT-5.6 Terra model. Research master's and doctoral reviews escalate methods,
-    results, discussion, contribution and cross-chapter synthesis to GPT-5.6 Terra.
+    configured GPT-5.6 Luna model. Research master's and doctoral reviews apply
+    xhigh reasoning to methods, results, discussion, contribution and synthesis.
     """
     if not _is_research_intensive_level(academic_level):
         return False
     # Doctoral work is high-stakes throughout, so every substantive section is
-    # reviewed by GPT-5.6 Terra. Research master's work escalates the academically
+    # reviewed by GPT-5.6 Luna. Research master's work escalates the academically
     # decisive sections while routine descriptive material remains on the mini
     # model for speed.
     if _is_doctoral_level(academic_level):

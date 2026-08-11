@@ -555,10 +555,10 @@ class OpenAIProvider:
         effort = (
             reasoning_effort
             or self.config.openai_reasoning_effort
-            or "high"
+            or "xhigh"
         ).strip().lower()
-        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
-            effort = "high"
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            effort = "xhigh"
 
         base_input = [
             {"role": "system", "content": system_prompt},
@@ -671,4 +671,3 @@ class OpenAIProvider:
             f"OpenAI request for model '{model}' and purpose '{purpose}' failed: "
             f"{str(last_error or 'unknown provider error')}"
         )
-

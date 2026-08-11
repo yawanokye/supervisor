@@ -184,32 +184,32 @@ class CostAwareAIProvider:
         cleaning = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_cleaning_model,
-            "minimal",
+            self.config.openai_chapter_reasoning_effort or "xhigh",
         )
         section = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_model,
-            self.config.openai_chapter_reasoning_effort or "medium",
+            self.config.openai_chapter_reasoning_effort or "xhigh",
         )
         section_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_fallback_model,
-            self.config.openai_chapter_reasoning_effort or "medium",
+            self.config.openai_chapter_reasoning_effort or "xhigh",
         )
         final = RouteTarget(
             ProviderName.OPENAI,
             requested_model or self.config.openai_final_synthesis_model,
-            requested_effort or self.config.openai_final_audit_reasoning_effort or "high",
+            requested_effort or self.config.openai_final_audit_reasoning_effort or "xhigh",
         )
         final_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_fallback_model,
-            self.config.openai_final_audit_reasoning_effort or "high",
+            self.config.openai_final_audit_reasoning_effort or "xhigh",
         )
         external = RouteTarget(
             ProviderName.OPENAI,
             requested_model or self.config.openai_external_adjudicator_model,
-            requested_effort or self.config.openai_external_adjudicator_reasoning_effort or "high",
+            requested_effort or self.config.openai_external_adjudicator_reasoning_effort or "xhigh",
         )
 
         phase1 = {
@@ -428,7 +428,7 @@ class CostAwareAIProvider:
         oa_fast = RouteTarget(
             ProviderName.OPENAI,
             config.openai_fast_model,
-            "low",
+            config.openai_chapter_reasoning_effort or "xhigh",
         )
         oa_expert = RouteTarget(
             ProviderName.OPENAI,
@@ -508,8 +508,8 @@ class CostAwareAIProvider:
             else:
                 # Keep the ordinary review within DeepSeek when Flash has a
                 # transient/schema failure. If the provider is unavailable,
-                # use GPT-5.6 Terra rather than silently moving the whole
-                # chapter to GPT-5.6 Terra.
+                # use the configured GPT-5.6 Luna route rather than silently
+                # moving the whole chapter to another model tier.
                 primary, fallback, escalation = self._normalise_targets(
                     ds_fast, oa_fast, oa_chapter
                 )
@@ -575,8 +575,8 @@ class CostAwareAIProvider:
 
         if stage_value is ReviewStage.RESEARCH_INTENSIVE_AUDIT:
             # One bounded expert audit gives Research Master's/MPhil work the
-            # conceptual and methodological depth that GPT-5.6 Terra alone did
-            # not consistently provide. Economy mode may remain DeepSeek-led.
+            # conceptual and methodological depth required for research-level
+            # work. Economy mode may remain DeepSeek-led.
             if profile is RoutingProfile.ECONOMY:
                 primary, fallback, escalation = self._normalise_targets(
                     ds_quality,
