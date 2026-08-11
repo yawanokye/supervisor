@@ -195,15 +195,20 @@ class CostAwareAIProvider:
             self.config.openai_section_analysis_fallback_model,
             self.config.openai_section_analysis_reasoning_effort or "medium",
         )
+        # Phase 3 is deliberately Terra-led. ``requested_model`` describes the
+        # degree-calibrated section route and may be Luna for an ordinary
+        # Standard review. Letting it override the final role caused every
+        # large review to repeat its strict comment audit on Luna before
+        # falling back to Terra.
         final = RouteTarget(
             ProviderName.OPENAI,
-            requested_model or self.config.openai_final_synthesis_model,
-            requested_effort or self.config.openai_final_audit_reasoning_effort or "xhigh",
+            self.config.openai_final_synthesis_model,
+            requested_effort or self.config.openai_final_audit_reasoning_effort or "high",
         )
         final_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_fallback_model,
-            self.config.openai_final_audit_reasoning_effort or "xhigh",
+            requested_effort or self.config.openai_section_analysis_reasoning_effort or "medium",
         )
         external = RouteTarget(
             ProviderName.OPENAI,
@@ -858,6 +863,19 @@ class CostAwareAIProvider:
                 request_max_retries=request_max_retries,
             )
         except Exception as primary_error:
+            # A strict comment-audit response that reaches its output cap must
+            # be split by the academic engine. Repeating the same oversized
+            # batch on another model multiplied calls and left large reviews
+            # apparently fixed at 68 percent.
+            if (
+                plan.stage in {
+                    ReviewStage.FINAL_AUDIT,
+                    ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+                }
+                and "comment_accuracy" in str(purpose or "").lower()
+                and "truncated because the output-token limit" in str(primary_error).lower()
+            ):
+                raise
             if plan.fallback is None:
                 raise
             logger.warning(

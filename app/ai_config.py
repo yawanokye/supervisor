@@ -215,6 +215,7 @@ class HybridAIConfig:
     standard_phd_min_findings: int
     fast_audit_batch_issue_limit: int
     fast_audit_max_batches: int
+    long_audit_max_batches: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
@@ -632,16 +633,16 @@ class HybridAIConfig:
                 "AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 8000
             ),
             light_audit_max_output_tokens=_env_int(
-                "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 2600
+                "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 3200
             ),
             standard_audit_max_output_tokens=_env_int(
-                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 2600
+                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 4000
             ),
             non_research_masters_max_output_tokens=_env_int(
                 "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 5800
             ),
             non_research_masters_audit_max_output_tokens=_env_int(
-                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 3200
+                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4800
             ),
             non_research_masters_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "xhigh")
@@ -650,7 +651,7 @@ class HybridAIConfig:
                 "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 6800
             ),
             research_masters_audit_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4200
+                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 5600
             ),
             research_masters_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "xhigh")
@@ -662,7 +663,7 @@ class HybridAIConfig:
                 "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 7600
             ),
             professional_doctorate_audit_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 4800
+                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 6400
             ),
             professional_doctorate_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "xhigh")
@@ -671,7 +672,7 @@ class HybridAIConfig:
                 "AI_PHD_MAX_OUTPUT_TOKENS", 8200
             ),
             phd_audit_max_output_tokens=_env_int(
-                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 5500
+                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 7200
             ),
             phd_audit_reasoning_effort=_normalise_effort(
                 os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "xhigh")
@@ -698,10 +699,13 @@ class HybridAIConfig:
                 "VPROF_STANDARD_PHD_MIN_FINDINGS", 58, 0
             ),
             fast_audit_batch_issue_limit=_env_int(
-                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 6
+                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 4
             ),
             fast_audit_max_batches=_env_int(
                 "AI_FAST_AUDIT_MAX_BATCHES", 1
+            ),
+            long_audit_max_batches=_env_int(
+                "AI_LONG_AUDIT_MAX_BATCHES", 8
             ),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int(

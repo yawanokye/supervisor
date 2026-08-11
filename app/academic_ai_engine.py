@@ -579,6 +579,51 @@ def _audit_issue_batch_limit(
     return max(3, min(int(configured), int(config.verification_batch_size), token_capacity))
 
 
+def _audit_batch_cap(
+    *, depth: str, audit_scope: str, batch_limit: int, config: HybridAIConfig
+) -> int:
+    """Bound paid final-audit calls for every submission scope.
+
+    The earlier cap applied only when the scope string was exactly ``chapter``.
+    Chapter ranges and complete theses therefore scheduled one paid request for
+    every risk-selected batch, which could create hundreds of checkpoints at
+    the 68 percent stage.
+    """
+    scope = str(audit_scope or "chapter").strip().lower()
+    if depth == "advanced":
+        findings = max(1, int(config.advanced_audit_max_findings))
+        return max(1, (findings + max(1, batch_limit) - 1) // max(1, batch_limit))
+    if scope == "chapter":
+        return max(1, int(config.fast_audit_max_batches))
+    if depth == "light":
+        return max(1, int(config.long_audit_max_batches) // 2)
+    return max(1, int(config.long_audit_max_batches))
+
+
+def _audit_issue_priority(issue: Dict[str, Any]) -> Tuple[int, int, float]:
+    """Put validity-critical findings first when the audit is capped."""
+    severity = str(issue.get("severity") or "minor").strip().lower()
+    severity_rank = {
+        "critical": 4,
+        "major": 3,
+        "moderate": 2,
+        "minor": 1,
+    }.get(severity, 0)
+    text = normalised(" ".join(str(issue.get(field) or "") for field in (
+        "category", "issue_title", "assessment", "required_action"
+    )))
+    validity_rank = int(any(term in text for term in (
+        "statistical", "regression", "coefficient", "p value", "anova",
+        "measurement", "validity", "reliability", "sampling", "causal",
+        "model specification", "diagnostic", "ethics", "plagiarism",
+    )))
+    try:
+        confidence = float(issue.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return severity_rank, validity_rank, 1.0 - max(0.0, min(1.0, confidence))
+
+
 def _requires_paid_comment_audit(issue: Dict[str, Any], *, depth: str, academic_level: Any) -> bool:
     """Select only findings whose risk justifies a second paid model call.
 
@@ -2769,9 +2814,21 @@ async def enrich_review_with_academic_ai(
                 deferred_audit_sections.append(deferred_copy)
             for offset in range(0, len(paid), batch_limit):
                 copy = dict(section_review)
-                copy["issues"] = paid[offset : offset + batch_limit]
+                copy["issues"] = sorted(
+                    paid,
+                    key=_audit_issue_priority,
+                    reverse=True,
+                )[offset : offset + batch_limit]
                 if copy["issues"]:
                     audit_sections.append(copy)
+
+        audit_sections.sort(
+            key=lambda row: max(
+                (_audit_issue_priority(issue) for issue in row.get("issues") or []),
+                default=(0, 0, 0.0),
+            ),
+            reverse=True,
+        )
 
         for section_review in audit_sections:
             count = len(section_review.get("issues") or [])
@@ -2784,13 +2841,22 @@ async def enrich_review_with_academic_ai(
         if pending:
             verification_batches.append(pending)
 
-        # Bound paid verification calls. Remaining findings still pass through
-        # the deterministic evidence and placement gate rather than being lost.
+        # Bound paid verification calls for chapters, chapter ranges and full
+        # theses. Remaining findings still pass through the deterministic
+        # evidence and placement gate rather than being lost.
         audit_scope = str((review.get("summary") or {}).get("review_scope") or "chapter")
-        if depth in {"light", "standard"} and audit_scope == "chapter" and len(verification_batches) > config.fast_audit_max_batches:
-            deferred = verification_batches[config.fast_audit_max_batches:]
-            verification_batches = verification_batches[:config.fast_audit_max_batches]
-            deferred_audit_sections = [row for batch in deferred for row in batch]
+        audit_batch_cap = _audit_batch_cap(
+            depth=depth,
+            audit_scope=audit_scope,
+            batch_limit=batch_limit,
+            config=config,
+        )
+        if len(verification_batches) > audit_batch_cap:
+            deferred = verification_batches[audit_batch_cap:]
+            verification_batches = verification_batches[:audit_batch_cap]
+            deferred_audit_sections.extend(
+                row for batch in deferred for row in batch
+            )
 
         def split_failed_batch(
             batch: Sequence[Dict[str, Any]], max_issues: int = 4
@@ -2811,6 +2877,8 @@ async def enrich_review_with_academic_ai(
             batch: Sequence[Dict[str, Any]],
             *,
             retry: bool = False,
+            running_progress: int = 68,
+            completed_progress: int = 74,
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
@@ -2844,7 +2912,7 @@ async def enrich_review_with_academic_ai(
                     checkpoint_manager.mark_running(
                         stage_key,
                         input_hash=audit_hash,
-                        progress=68,
+                        progress=running_progress,
                         message=(
                             "Retrying a focused comment audit"
                             if retry else "Verifying review comments"
@@ -2880,14 +2948,25 @@ async def enrich_review_with_academic_ai(
                         stage_key,
                         result,
                         input_hash=audit_hash,
-                        progress=76,
+                        progress=completed_progress,
                         message="Comment accuracy audit batch completed",
                     )
+                await _notify(
+                    progress_callback,
+                    completed_progress,
+                    "Verifying review comments in bounded batches",
+                )
             return result
 
+        initial_count = max(1, len(verification_batches))
         initial_results = await _run_limited(
             [
-                verify_batch(str(index), batch)
+                verify_batch(
+                    str(index),
+                    batch,
+                    running_progress=68 + int(index * 6 / initial_count),
+                    completed_progress=69 + int((index + 1) * 5 / initial_count),
+                )
                 for index, batch in enumerate(verification_batches)
             ],
             min(config.max_parallel_calls, max(1, len(verification_batches))),
@@ -2899,22 +2978,31 @@ async def enrich_review_with_academic_ai(
             zip(verification_batches, initial_results)
         ):
             if isinstance(result, Exception):
-                if depth == "advanced":
-                    for retry_index, retry_batch in enumerate(split_failed_batch(batch)):
+                if "truncated because the output-token limit" in str(result).lower():
+                    for retry_index, retry_batch in enumerate(
+                        split_failed_batch(batch, max_issues=2)
+                    ):
                         retry_specs.append((f"{batch_index}-retry-{retry_index}", retry_batch))
                 else:
-                    # No second paid request for Light/Standard. The normal
-                    # fallback path below keeps only evidence-grounded,
-                    # sufficiently confident findings.
+                    # Transport fallback has already been attempted by the
+                    # router. Preserve only evidence-grounded, sufficiently
+                    # confident findings rather than looping indefinitely.
                     audit_units.append((list(batch), result, False))
             else:
                 audit_units.append((list(batch), result, False))
 
-        if retry_specs and depth == "advanced":
+        if retry_specs:
+            retry_count = max(1, len(retry_specs))
             retry_results = await _run_limited(
                 [
-                    verify_batch(label, retry_batch, retry=True)
-                    for label, retry_batch in retry_specs
+                    verify_batch(
+                        label,
+                        retry_batch,
+                        retry=True,
+                        running_progress=74 + int(index * 2 / retry_count),
+                        completed_progress=75 + int((index + 1) / retry_count),
+                    )
+                    for index, (label, retry_batch) in enumerate(retry_specs)
                 ],
                 min(2, config.max_parallel_calls, max(1, len(retry_specs))),
             )

@@ -449,6 +449,11 @@ class CheckpointManager:
             if job:
                 job.current_stage = stage_key
                 job.last_heartbeat_at = now
+                job.progress = max(
+                    int(job.progress or 0),
+                    min(100, int(progress or 0)),
+                )
+                job.message = message or job.message
             db.commit()
 
     def save(
@@ -514,6 +519,11 @@ class CheckpointManager:
             if job:
                 job.current_stage = stage_key
                 job.last_heartbeat_at = now
+                job.progress = max(
+                    int(job.progress or 0),
+                    min(100, int(progress or 0)),
+                )
+                job.message = message or job.message
                 job.checkpoint_count = int(
                     db.query(ReviewCheckpoint)
                     .filter(

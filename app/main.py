@@ -87,7 +87,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.8.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
