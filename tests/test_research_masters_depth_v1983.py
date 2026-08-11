@@ -78,7 +78,7 @@ def test_research_masters_defaults_enable_deep_review(monkeypatch) -> None:
     config = HybridAIConfig.from_env()
     assert config.research_masters_deep_review is True
     assert config.research_masters_max_output_tokens == 6800
-    assert config.research_masters_audit_max_output_tokens == 4200
+    assert config.research_masters_audit_max_output_tokens == 5600
     assert config.research_masters_audit_reasoning_effort == "xhigh"
 
 

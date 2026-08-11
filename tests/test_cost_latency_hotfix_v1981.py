@@ -101,6 +101,7 @@ def test_fast_review_audit_defaults_are_bounded(monkeypatch):
     config = HybridAIConfig.from_env()
 
     assert config.fast_audit_max_batches == 1
-    assert config.fast_audit_batch_issue_limit == 6
-    assert config.standard_audit_max_output_tokens <= 4000
-    assert config.light_audit_max_output_tokens <= 3000
+    assert config.long_audit_max_batches == 8
+    assert config.fast_audit_batch_issue_limit == 4
+    assert config.standard_audit_max_output_tokens == 4000
+    assert config.light_audit_max_output_tokens == 3200

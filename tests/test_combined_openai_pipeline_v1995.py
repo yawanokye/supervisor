@@ -56,6 +56,20 @@ def test_phase_3_routes_to_final_synthesis_model(monkeypatch):
     assert plan.fallback is None
 
 
+def test_phase_3_does_not_allow_luna_section_request_to_override_terra(monkeypatch):
+    router = CostAwareAIProvider(_hybrid_config(monkeypatch))
+    plan = router.plan(
+        stage=ReviewStage.FINAL_AUDIT,
+        review_depth='standard',
+        requested_model='gpt-5.6-luna',
+        requested_effort='medium',
+    )
+    assert plan.primary.model == 'gpt-5.6-terra'
+    assert plan.primary.reasoning_effort == 'medium'
+    assert plan.fallback.model == 'gpt-5.6-luna'
+    assert plan.fallback.reasoning_effort == 'medium'
+
+
 def test_hybrid_pipeline_honours_explicit_expert_section_route(monkeypatch):
     router = CostAwareAIProvider(_hybrid_config(monkeypatch))
     plan = router.plan(
