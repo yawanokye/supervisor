@@ -79,7 +79,7 @@ def test_research_masters_defaults_enable_deep_review(monkeypatch) -> None:
     assert config.research_masters_deep_review is True
     assert config.research_masters_max_output_tokens == 6800
     assert config.research_masters_audit_max_output_tokens == 4200
-    assert config.research_masters_audit_reasoning_effort == "high"
+    assert config.research_masters_audit_reasoning_effort == "xhigh"
 
 
 def test_research_masters_route_is_openai_only_in_combined_pipeline(monkeypatch) -> None:

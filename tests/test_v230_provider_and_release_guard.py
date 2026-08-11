@@ -51,7 +51,7 @@ def test_explicit_openai_selection_overrides_deepseek_and_keeps_openai_pipeline(
     router = CostAwareAIProvider(HybridAIConfig.from_env())
     plan = router.plan(stage=ReviewStage.STANDARD_REVIEW)
     assert plan.primary.provider is ProviderName.OPENAI
-    assert plan.primary.model == "gpt-5.6-terra"
+    assert plan.primary.model == "gpt-5.6-luna"
     assert plan.fallback is None
 
 

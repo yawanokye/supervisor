@@ -20,7 +20,7 @@ class SamplePayload(BaseModel):
     evidence_ids: list[str]
 
 
-def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch):
+def test_openai_provider_uses_luna_xhigh_responses_and_strict_schema(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
     monkeypatch.delenv("OPENAI_CHAPTER_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_REVIEW_MODEL", raising=False)
@@ -65,7 +65,7 @@ def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch
             user_prompt="Assess paragraph P1.",
             schema_model=SamplePayload,
             purpose="provider_test",
-            reasoning_effort="high",
+            reasoning_effort="xhigh",
             max_output_tokens=5000,
             request_timeout_seconds=360,
             request_max_retries=0,
@@ -73,8 +73,8 @@ def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch
     )
 
     assert captured["url"].endswith("/responses")
-    assert captured["payload"]["model"] == "gpt-5.6-terra"
-    assert captured["payload"]["reasoning"] == {"effort": "high"}
+    assert captured["payload"]["model"] == "gpt-5.6-luna"
+    assert captured["payload"]["reasoning"] == {"effort": "xhigh"}
     assert captured["payload"]["text"]["format"]["type"] == "json_schema"
     assert captured["payload"]["text"]["format"]["strict"] is True
     assert captured["payload"]["store"] is False
@@ -82,7 +82,7 @@ def test_openai_provider_uses_gpt54_mini_responses_and_strict_schema(monkeypatch
     assert captured["max_retries"] == 0
     assert result.data == {"judgement": "supported", "evidence_ids": ["P1"]}
     assert result.usage.provider == "openai"
-    assert result.usage.model == "gpt-5.6-terra"
+    assert result.usage.model == "gpt-5.6-luna"
     assert result.usage.cached_input_tokens == 20
 
 

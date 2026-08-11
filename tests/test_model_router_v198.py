@@ -97,9 +97,9 @@ def test_low_confidence_standard_review_escalates_once(monkeypatch):
         stage=ReviewStage.STANDARD_REVIEW,
         review_depth="standard",
     ))
-    assert calls == ["deepseek-v4-flash", "gpt-5.6-terra"]
+    assert calls == ["deepseek-v4-flash", "gpt-5.6-luna"]
     assert result.usage.provider == "routed"
-    assert result.usage.model == "deepseek-v4-flash->gpt-5.6-terra"
+    assert result.usage.model == "deepseek-v4-flash->gpt-5.6-luna"
     assert result.usage.input_tokens == 2000
 
 
@@ -133,5 +133,5 @@ def test_provider_failure_uses_low_cost_openai_fallback(monkeypatch):
         stage=ReviewStage.STANDARD_REVIEW,
         review_depth="standard",
     ))
-    assert calls == ["deepseek-v4-flash", "gpt-5.6-terra"]
+    assert calls == ["deepseek-v4-flash", "gpt-5.6-luna"]
     assert result.usage.provider == "openai"

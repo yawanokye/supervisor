@@ -23,6 +23,11 @@ def _clear_router_env(monkeypatch):
         "OPENAI_EXTERNAL_MODEL",
         "OPENAI_EXTERNAL_DOMAIN_MODEL",
         "OPENAI_EXTERNAL_ADJUDICATOR_MODEL",
+        "OPENAI_CHAPTER_REASONING_EFFORT",
+        "OPENAI_EXPERT_REASONING_EFFORT",
+        "OPENAI_FINAL_AUDIT_REASONING_EFFORT",
+        "OPENAI_EXTERNAL_DOMAIN_REASONING_EFFORT",
+        "OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -40,10 +45,16 @@ def test_balanced_defaults_enable_cost_aware_routing(monkeypatch):
     assert config.enable_deepseek_routing is False
     assert config.deepseek_fast_model == "deepseek-v4-flash"
     assert config.deepseek_quality_model == "deepseek-v4-pro"
-    assert config.openai_chapter_model == "gpt-5.6-terra"
-    assert config.openai_expert_model == "gpt-5.6-terra"
-    assert config.openai_external_domain_model == "gpt-5.6-terra"
-    assert config.openai_external_adjudicator_model == "gpt-5.6-terra"
+    assert config.openai_chapter_model == "gpt-5.6-luna"
+    assert config.openai_expert_model == "gpt-5.6-luna"
+    assert config.openai_external_domain_model == "gpt-5.6-luna"
+    assert config.openai_external_adjudicator_model == "gpt-5.6-luna"
+    assert config.openai_chapter_reasoning_effort == "xhigh"
+    assert config.openai_expert_reasoning_effort == "xhigh"
+    assert config.openai_final_audit_reasoning_effort == "xhigh"
+    assert config.openai_external_domain_reasoning_effort == "xhigh"
+    assert config.openai_external_adjudicator_reasoning_effort == "xhigh"
+    assert config.openai_prices_for_model("gpt-5.6-luna") == (0.20, 0.02, 1.20)
     status = config.public_status()
     assert status["review_depths"] == ["light", "standard", "advanced"]
     assert "provider" not in status
@@ -81,12 +92,12 @@ def test_research_intensive_sections_keep_expert_route_hint(monkeypatch):
     literature = [{"heading": "Definition of Terms", "section_path": [], "paragraphs": []}]
 
     assert _batch_model_route(methods, "Research Masters (MPhil)", config) == (
-        "gpt-5.6-terra",
-        "high",
+        "gpt-5.6-luna",
+        "xhigh",
     )
     assert _batch_model_route(literature, "Research Masters (MPhil)", config) == (
-        "gpt-5.6-terra",
-        "medium",
+        "gpt-5.6-luna",
+        "xhigh",
     )
 
 
@@ -99,9 +110,9 @@ def test_balanced_route_plans(monkeypatch):
 
     standard = router.plan(stage=ReviewStage.STANDARD_REVIEW)
     assert standard.primary.provider is ProviderName.OPENAI
-    assert standard.primary.model == "gpt-5.6-terra"
+    assert standard.primary.model == "gpt-5.6-luna"
     assert standard.escalation is not None
-    assert standard.escalation.model == "gpt-5.6-terra"
+    assert standard.escalation.model == "gpt-5.6-luna"
 
     advanced = router.plan(
         stage=ReviewStage.ADVANCED_REVIEW,
@@ -109,7 +120,7 @@ def test_balanced_route_plans(monkeypatch):
         requested_effort=config.openai_expert_reasoning_effort,
     )
     assert advanced.primary.provider is ProviderName.OPENAI
-    assert advanced.primary.model == "gpt-5.6-terra"
+    assert advanced.primary.model == "gpt-5.6-luna"
     assert advanced.escalation is None
 
     external = router.plan(
@@ -118,7 +129,7 @@ def test_balanced_route_plans(monkeypatch):
         requested_effort=config.openai_external_adjudicator_reasoning_effort,
     )
     assert external.primary.provider is ProviderName.OPENAI
-    assert external.primary.model == "gpt-5.6-terra"
+    assert external.primary.model == "gpt-5.6-luna"
     assert external.allow_escalation is False
 
 

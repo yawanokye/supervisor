@@ -18,6 +18,9 @@ def test_fast_defaults(monkeypatch):
         "OPENAI_EXTERNAL_DOMAIN_MODEL",
         "OPENAI_EXTERNAL_ADJUDICATOR_MODEL",
         "OPENAI_REVIEW_MODEL",
+        "OPENAI_CHAPTER_REASONING_EFFORT",
+        "OPENAI_EXPERT_REASONING_EFFORT",
+        "OPENAI_FINAL_AUDIT_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -26,10 +29,12 @@ def test_fast_defaults(monkeypatch):
     assert config.chapter_packet_max_chars == 60000
     assert config.verification_batch_size == 12
     assert config.structured_output_retries == 0
-    assert config.openai_chapter_model == "gpt-5.6-terra"
-    assert config.openai_expert_model == "gpt-5.6-terra"
-    assert config.openai_final_audit_model == "gpt-5.6-terra"
-    assert config.openai_chapter_reasoning_effort == "medium"
+    assert config.openai_chapter_model == "gpt-5.6-luna"
+    assert config.openai_expert_model == "gpt-5.6-luna"
+    assert config.openai_final_audit_model == "gpt-5.6-luna"
+    assert config.openai_chapter_reasoning_effort == "xhigh"
+    assert config.openai_expert_reasoning_effort == "xhigh"
+    assert config.openai_final_audit_reasoning_effort == "xhigh"
 
 
 def test_legacy_batch_helper_remains_available():
