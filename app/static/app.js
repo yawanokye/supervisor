@@ -38,6 +38,7 @@ const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
 const stopReviewButton = document.getElementById("stopReviewButton");
+const continueChapterButton = document.getElementById("continueChapterButton");
 const scopeStructureHelp = document.getElementById("scopeStructureHelp");
 const workflowHelp = document.getElementById("workflowHelp");
 const assessmentMetadataFields = document.getElementById("assessmentMetadataFields");
@@ -838,6 +839,35 @@ async function requestJobResume(resumeUrl) {
   return true;
 }
 
+async function requestChapterContinue(continueUrl) {
+  if (!continueUrl) throw new Error("The next chapter is not ready to start.");
+  const csrf = form.querySelector('input[name="csrf_token"]')?.value || "";
+  const body = new FormData();
+  body.set("csrf_token", csrf);
+  const response = await fetch(continueUrl, {
+    method: "POST",
+    body,
+    headers: { "Accept": "application/json" },
+  });
+  return await readJsonSafely(response);
+}
+
+function configureGuidedContinue(job) {
+  if (!continueChapterButton) return;
+  if (job?.status === "awaiting_continue" && job.continue_url) {
+    const nextPosition = Number(job.guided_current_index || 0) + 2;
+    const nextChapter = job.guided_units?.[nextPosition - 1] || job.guided_next_chapter || nextPosition;
+    continueChapterButton.textContent = `Continue to Chapter ${nextChapter}`;
+    continueChapterButton.dataset.continueUrl = job.continue_url;
+    continueChapterButton.dataset.pollUrl = `/api/review/jobs/${encodeURIComponent(job.job_id)}`;
+    continueChapterButton.dataset.jobId = job.job_id || "";
+    continueChapterButton.classList.remove("hidden");
+  } else {
+    continueChapterButton.classList.add("hidden");
+    continueChapterButton.dataset.continueUrl = "";
+  }
+}
+
 function setStopReviewUrl(stopUrl) {
   if (!stopReviewButton) return;
   if (stopUrl) {
@@ -950,8 +980,17 @@ async function waitForReview(pollUrl, options = {}) {
       }
       if (job.status === "completed") {
         setStopReviewUrl("");
+        configureGuidedContinue(null);
         const review = await fetchCompletedReview(job);
         localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        return review;
+      }
+      if (job.status === "awaiting_continue") {
+        setStopReviewUrl("");
+        const review = await fetchCompletedReview(job);
+        review._guided_job = job;
+        localStorage.removeItem(ACTIVE_REVIEW_JOB_KEY);
+        configureGuidedContinue(job);
         return review;
       }
       if (job.status === "queued" && job.recoverable) {
@@ -1061,6 +1100,41 @@ async function waitForReview(pollUrl, options = {}) {
 
 }
 
+if (continueChapterButton) {
+  continueChapterButton.addEventListener("click", async () => {
+    const continueUrl = continueChapterButton.dataset.continueUrl || "";
+    const pollUrl = continueChapterButton.dataset.pollUrl || "";
+    const jobId = continueChapterButton.dataset.jobId || "";
+    if (!continueUrl || !pollUrl) return;
+    continueChapterButton.disabled = true;
+    continueChapterButton.textContent = "Starting next chapter…";
+    resultsState.classList.add("hidden");
+    loadingState.classList.remove("hidden");
+    setProgress(2, "Preparing the next chapter review", { reset: true });
+    try {
+      const queued = await requestChapterContinue(continueUrl);
+      const activeJob = {
+        pollUrl: queued.poll_url || pollUrl,
+        jobId,
+        startedAt: Date.now(),
+        filename: fileInput.files[0]?.name || "",
+        highestProgress: 2,
+      };
+      localStorage.setItem(ACTIVE_REVIEW_JOB_KEY, JSON.stringify(activeJob));
+      const review = await waitForReview(activeJob.pollUrl, activeJob);
+      renderReview(review);
+      loadingState.classList.add("hidden");
+      resultsState.classList.remove("hidden");
+    } catch (error) {
+      loadingState.classList.add("hidden");
+      resultsState.classList.remove("hidden");
+      showFormError(error.message || "The next chapter could not be started.");
+    } finally {
+      continueChapterButton.disabled = false;
+    }
+  });
+}
+
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const oldError = document.querySelector(".error-banner");
@@ -1111,6 +1185,7 @@ form.addEventListener("submit", async event => {
   }
 
   emptyState.classList.add("hidden"); resultsState.classList.add("hidden"); loadingState.classList.remove("hidden");
+  configureGuidedContinue(null);
   setProgress(
     2,
     external
