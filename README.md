@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.8.0
+# V-Professor Supervisory Review 2.9.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -10,7 +10,15 @@ The app rebuilds the study context from the current submission, uses earlier cha
 
 ## Final professional review controls
 
-Version 2.8.0 includes the following release controls:
+Version 2.9.0 includes the following release controls:
+
+- complete theses are reviewed one chapter at a time, with an explicit supervisor-controlled Continue action between chapters;
+- each completed chapter report and annotated chapter remains available before the next chapter starts;
+- earlier completed chapters and the shared reference list are reused for cross-chapter alignment without reviewing future chapters prematurely;
+- a cumulative final thesis result is assembled after the last chapter, with cross-chapter findings, statistical warnings and numbering reconciled;
+- preliminary pages, the Table of Contents, navigation lists, acronyms, main chapters, references and appendices are separated before chapter detection;
+- visible comments use a human supervisory budget, while repeated and lower-priority instances are grouped in an internal issue ledger;
+- “effect” is accepted for appropriate regression-class, SEM, PLS-SEM, mediation and moderation estimates, while explicit causal claims remain design-sensitive;
 
 - native Word-comment and inline annotated DOCX files are generated, validated and persisted as one atomic delivery bundle before a review is released as complete;
 - current V-Professor comments are counted separately from comments already present in the uploaded source, so old comments can never make an empty new annotation export pass validation;
@@ -133,7 +141,7 @@ The production defaults are tuned for 120 to 200-page work:
 
 For S3-compatible storage, set `VPROF_ARTIFACT_STORAGE_BACKEND=auto` and supply `S3_BUCKET`, endpoint, region and credentials. Leave the bucket empty to continue using PostgreSQL BLOB storage during migration.
 
-For an export-stage failure from an earlier build, deploy 2.8.0 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
+For an export-stage failure from an earlier build, deploy 2.8.1 and open the existing result. The native and inline download buttons will regenerate the documents when the saved source DOCX remains available. Use **Recover** once when the job is paused or failed at document export. Submit a new job only when the original upload is no longer available.
 
 ## Administrator recovery
 

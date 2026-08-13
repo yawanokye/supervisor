@@ -1,4 +1,4 @@
-# V-Professor v2.8.0 Deployment Guide
+# V-Professor v2.8.1 Deployment Guide
 
 ## Architecture
 
@@ -153,7 +153,7 @@ python scripts/reset_admin_password.py
 ## Deployment sequence
 
 1. Allow active jobs to finish or pause them deliberately.
-2. Deploy the 2.8.0 code to both the web service and worker.
+2. Deploy the 2.8.1 code to both the web service and worker.
 3. Confirm the shared database, `VPROF_DB_ARTIFACT_STORAGE=true` and selected provider key are available to both services.
 4. Confirm the web health check and worker startup logs are successful.
 5. Open an existing retained result and test both annotated downloads. They should regenerate from the saved source without repeating the academic AI pass.

@@ -226,17 +226,17 @@ services:
       - key: AI_ADVANCED_MAX_OUTPUT_TOKENS
         value: 9000
       - key: AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS
-        value: 2600
-      - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 2600
-      - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
         value: 3200
-      - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
-        value: 4200
-      - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
+      - key: AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS
+        value: 4000
+      - key: AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
         value: 4800
+      - key: AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS
+        value: 5600
+      - key: AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS
+        value: 6400
       - key: AI_PHD_AUDIT_MAX_OUTPUT_TOKENS
-        value: 5500
+        value: 7200
       - key: AI_EXTERNAL_ASSESSMENT_FOUNDATION_MAX_OUTPUT_TOKENS
         value: 5500
       - key: AI_EXTERNAL_ASSESSMENT_EVIDENCE_MAX_OUTPUT_TOKENS
@@ -260,9 +260,11 @@ services:
       - key: AI_STRICT_FAILURE
         value: true
       - key: AI_FAST_AUDIT_BATCH_ISSUE_LIMIT
-        value: 6
+        value: 4
       - key: AI_FAST_AUDIT_MAX_BATCHES
         value: 1
+      - key: AI_LONG_AUDIT_MAX_BATCHES
+        value: 8
       - key: AI_MAX_MAP_INPUT_CHARS
         value: 60000
       - key: AI_JOB_MAX_SECONDS

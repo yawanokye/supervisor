@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.9.0 guided human supervisory review
+
+- Reviews a complete thesis one chapter at a time and pauses after each chapter for an explicit user Continue action.
+- Saves each chapter report and annotation bundle independently, allowing the supervisor to leave and return later.
+- Reuses earlier chapters and the common reference list for alignment in later chapter reviews.
+- Assembles a final whole-thesis result after the last chapter and consolidates repeated cross-chapter findings.
+- Adds semantic document zones for preliminary pages, TOC, lists, acronyms, main work, references and appendices.
+- Applies human-sized comment budgets by review depth and retains grouped lower-priority issues outside margin comments.
+- Accepts model-estimated effects for regression-class analyses, SEM, PLS-SEM, mediation and moderation while checking explicit causal claims separately.
+- Adds guided workflow state, continuation API, portal actions and durable migration columns.
+
+## 2.8.1 bounded final-audit recovery
+
+- Caps paid final-audit batches for chapters, chapter ranges and complete theses.
+- Routes final comment verification directly to GPT-5.6 Terra with degree-calibrated reasoning.
+- Splits only a truncated audit batch into smaller focused retries and prevents full-batch fallback loops.
+- Prioritises statistical, validity, methods and other high-risk findings when the bounded audit is selected.
+- Advances visible progress during checkpointed audit batches instead of leaving active work at 68 percent.
+- Preserves lower-risk findings through deterministic evidence gates when they are outside the paid audit cap.
+
 ## 2.8.0 long-thesis architecture update
 
 - Routes cleaning and routine coverage to GPT-5.6 Luna at low or medium effort.
