@@ -9,17 +9,23 @@
   <main class="portal-shell detail-shell">
     <section class="portal-card review-summary-card">
       <p class="eyebrow">{{ "Completed external assessment" if record.workflow_type == "external_assessment" else "Completed academic review" }}</p><h1>{{ record.filename }}</h1>
-      <div class="review-summary-grid"><div><span>Workflow</span><strong>{{ "External Assessment" if record.workflow_type == "external_assessment" else "Supervisory Review" }}</strong></div><div><span>Academic level</span><strong>{{ record.academic_level }}</strong></div><div><span>{{ "Evidence score" if record.workflow_type == "external_assessment" else "Score" }}</span><strong>{{ ('%.1f'|format(record.overall_score)) + '%' if record.overall_score is not none else '—' }}</strong></div><div><span>Judgement</span><strong>{{ record.readiness_label or 'Completed' }}</strong></div></div>
+      <div class="review-summary-grid"><div><span>Workflow</span><strong>{{ "External Assessment" if record.workflow_type == "external_assessment" else "Supervisory Review" }}</strong></div><div><span>Academic level</span><strong>{{ record.academic_level }}</strong></div><div><span>{{ "Evidence score" if record.workflow_type == "external_assessment" else "Score" }}</span><strong>{{ ('%.1f'|format(review.summary.overall_score)) + '%' if review and review.summary and review.summary.overall_score is not none else '—' }}</strong></div><div><span>Judgement</span><strong>{{ review.summary.readiness_label if review and review.summary and review.summary.readiness_label else record.readiness_label or 'Completed' }}</strong></div></div>
       {% if review and review.summary %}<p class="review-meaning">{{ review.summary.readiness_meaning or '' }}</p>{% endif %}
       <div class="result-actions">
         {% if record.workflow_type == "external_assessment" %}
-          <a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/external-report.docx">Full examination report</a>
-          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/corrections-schedule.docx">Corrections schedule</a>
-          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/confidential-recommendation.docx">Confidential recommendation</a>
-          <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/oral-questions.docx">Oral questions</a>
+          <a class="secondary-button link-button" href="/api/review/{{ review.review_id }}/external-report.docx">Full examination report</a>
+          <a class="ghost-button link-button" href="/api/review/{{ review.review_id }}/corrections-schedule.docx">Corrections schedule</a>
+          <a class="ghost-button link-button" href="/api/review/{{ review.review_id }}/confidential-recommendation.docx">Confidential recommendation</a>
+          <a class="ghost-button link-button" href="/api/review/{{ review.review_id }}/oral-questions.docx">Oral questions</a>
         {% else %}
-          <a class="secondary-button link-button" href="/api/review/{{ record.review_id }}/export.docx">Download supervisor report</a>
-          {% if record.annotated_available %}<a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated.docx">Download annotated document</a> <a class="ghost-button link-button" href="/api/review/{{ record.review_id }}/annotated-inline.docx">Download inline annotated document</a>{% endif %}
+          <a class="secondary-button link-button" href="/api/review/{{ review.review_id }}/export.docx">Download supervisor report</a>
+          {% if review.summary.annotated_document_available %}<a class="ghost-button link-button" href="/api/review/{{ review.review_id }}/annotated.docx">Download annotated document</a> <a class="ghost-button link-button" href="/api/review/{{ review.review_id }}/annotated-inline.docx">Download inline annotated document</a>{% endif %}
+          {% if record.status == 'awaiting_continue' %}
+          <form method="post" action="/api/review/jobs/{{ record.job_id }}/continue" class="inline-action-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="secondary-button">Continue to next chapter</button>
+          </form>
+          {% endif %}
           {% if record.payload_available and record.readiness_label == 'Review completed with a limitation' %}
           <form method="post" action="/api/review/jobs/{{ record.job_id }}/resume" class="inline-action-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
