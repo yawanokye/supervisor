@@ -20,6 +20,8 @@ from .document_parser import (
     parse_document,
 )
 from .statistical_review import build_statistical_review
+from .thesis_structure import build_chapter_role_map, chapters_for_roles, uses_flexible_phd_structure
+from .thesis_alignment_matrix import build_objective_alignment_matrix
 from .supervisory_accuracy_guard import build_factual_index
 from .review_rules import (
     CHAPTERS,
@@ -34,6 +36,7 @@ from .review_rules import (
     is_applicable,
     readiness_band,
 )
+from .review_scope import apply_selected_section_scope
 
 JUSTIFICATION_MARKERS = {
     "because", "therefore", "appropriate", "suitable", "justified", "rationale",
@@ -124,7 +127,7 @@ def _candidate_paragraphs(
     candidates = paragraphs
 
     if chapter_number and full_thesis and flexible_structure:
-        # Doctoral structures may locate a research function in any chapter.
+        # A PhD structure may locate a prescribed research function in any chapter.
         candidates = paragraphs
     elif (
         chapter_number
@@ -397,13 +400,13 @@ def _tag_paragraphs(
 
 
 def _is_doctoral_level(academic_level: str) -> bool:
-    value = normalised(academic_level)
-    return (
-        value == "phd"
-        or "professional doctorate" in value
-        or value.startswith("doctor of ")
-        or value.startswith("doctoral")
-    )
+    """Compatibility helper for structural flexibility.
+
+    Only PhD submissions are structurally flexible by default. Professional
+    doctorates retain doctoral scholarly expectations but use the standard
+    five-chapter supervisory structure.
+    """
+    return uses_flexible_phd_structure(academic_level)
 
 
 def _chapter_name(number: int) -> str:
@@ -422,13 +425,14 @@ def _partition_submission_for_review(
     filename: str,
     academic_level: str = "",
     combined_chapter_end: Optional[int] = None,
+    guided_sequence: bool = False,
 ) -> Dict[str, Any]:
     profile = detect_document_chapter_profile(paragraphs)
     detected = list(profile["detected_chapters"])
     standard_coverage = detect_standard_chapter_coverage(paragraphs)
     doctoral_coverage = detect_doctoral_functional_coverage(paragraphs)
     flexible_doctoral = bool(
-        full_thesis and _is_doctoral_level(academic_level)
+        full_thesis and uses_flexible_phd_structure(academic_level)
     )
 
     if full_thesis:
@@ -438,16 +442,20 @@ def _partition_submission_for_review(
                     ", ".join(profile["detected_labels"])
                     or "a custom doctoral chapter structure"
                 )
-                missing = "; ".join(
+                missing_functions = "; ".join(
                     doctoral_coverage["missing_functions"]
-                )
+                ) or "none"
+                missing_elements = "; ".join(
+                    doctoral_coverage["missing_prescribed_elements"]
+                ) or "none"
                 raise ValueError(
-                    "The doctoral thesis may use custom chapter titles, order "
+                    "The PhD thesis may use custom chapter titles, order "
                     "and number, but the study or work does not yet demonstrate "
-                    "the complete set of core research functions. "
+                    "all prescribed doctoral research elements. "
                     f"Detected structure: {uploaded}. "
-                    f"Functional areas requiring confirmation: {missing}. "
-                    "Upload the complete doctoral thesis. A fixed five-chapter "
+                    f"Missing broad functions: {missing_functions}. "
+                    f"Missing prescribed elements: {missing_elements}. "
+                    "Upload the complete PhD thesis. A fixed five-chapter "
                     "sequence is not required."
                 )
 
@@ -463,7 +471,7 @@ def _partition_submission_for_review(
                 "chapter_profile": profile,
                 "structure_mode": "flexible_doctoral",
                 "structure_label": (
-                    "Flexible doctoral structure with custom chapter titles"
+                    "Flexible PhD structure with custom chapter titles"
                 ),
                 "fixed_five_chapter_required": False,
                 "structure_complete": True,
@@ -503,9 +511,14 @@ def _partition_submission_for_review(
         }
 
     if combined_chapter_end is not None:
-        if combined_chapter_end not in {2, 3, 4, 5}:
+        maximum = 20 if uses_flexible_phd_structure(academic_level) else 5
+        if combined_chapter_end < 2 or combined_chapter_end > maximum:
+            if maximum == 5:
+                raise ValueError(
+                    "Select Chapters 1–2, 1–3, 1–4 or 1–5 for the combined review."
+                )
             raise ValueError(
-                "Select Chapters 1–2, 1–3, 1–4 or 1–5 for the combined review."
+                "For a PhD combined review, select an ending chapter between 2 and 20."
             )
 
         required_chapters = list(range(1, combined_chapter_end + 1))
@@ -576,8 +589,11 @@ def _partition_submission_for_review(
             "required_combined_chapters": required_chapters,
         }
 
-    if selected_chapter not in {1, 2, 3, 4, 5}:
-        raise ValueError("Select Chapter 1, 2, 3, 4 or 5 for the chapter review.")
+    maximum_selected_chapter = 20 if uses_flexible_phd_structure(academic_level) else 5
+    if selected_chapter is None or selected_chapter < 1 or selected_chapter > maximum_selected_chapter:
+        if maximum_selected_chapter == 5:
+            raise ValueError("Select Chapter 1, 2, 3, 4 or 5 for the chapter review.")
+        raise ValueError("For a PhD chapter review, select a chapter number between 1 and 20.")
 
     selected_name = _chapter_name(selected_chapter)
     detected_text = ", ".join(profile["detected_labels"])
@@ -611,10 +627,23 @@ def _partition_submission_for_review(
     assigned_selected = [row for row in paragraphs if row.get("chapter_number") == selected_chapter]
     if assigned_selected:
         review_paragraphs = assigned_selected
-        embedded_context = [
-            dict(row) for row in paragraphs
-            if isinstance(row.get("chapter_number"), int) and row.get("chapter_number") != selected_chapter
-        ]
+        if guided_sequence:
+            # A guided supervisor turn sees only already-reviewed chapters and
+            # the shared reference list. Later chapters must not influence an
+            # earlier chapter's diagnosis.
+            embedded_context = [
+                dict(row) for row in paragraphs
+                if (
+                    isinstance(row.get("chapter_number"), int)
+                    and int(row.get("chapter_number")) < int(selected_chapter)
+                )
+                or row.get("is_reference_entry") is True
+            ]
+        else:
+            embedded_context = [
+                dict(row) for row in paragraphs
+                if isinstance(row.get("chapter_number"), int) and row.get("chapter_number") != selected_chapter
+            ]
     else:
         review_paragraphs = paragraphs
         embedded_context = []
@@ -649,6 +678,8 @@ def analyse(
     academic_level: str,
     research_approach: str,
     selected_chapter: Optional[int] = None,
+    section_scope_mode: str = "whole_chapter",
+    selected_sections: Optional[List[str]] = None,
     combined_chapter_end: Optional[int] = None,
     review_scope: str = "chapter",
     document_type: str = "chapter_one",
@@ -657,6 +688,8 @@ def analyse(
     supervisor_comment_documents: Optional[List[Dict[str, Any]]] = None,
     supervisor_comments_text: str = "",
     original_document: Optional[Dict[str, Any]] = None,
+    institutional_profile: str = "generic",
+    guided_sequence: bool = False,
 ) -> Dict[str, Any]:
     uploaded_paragraphs = _tag_paragraphs(
         parse_document(file_bytes, filename),
@@ -685,14 +718,28 @@ def analyse(
         combined_chapter_end=(
             combined_chapter_end if combined_scope else None
         ),
+        guided_sequence=guided_sequence,
     )
-    current_paragraphs = partition["review_paragraphs"]
+    chapter_paragraphs = list(partition["review_paragraphs"])
+    current_paragraphs, selected_section_scope = apply_selected_section_scope(
+        chapter_paragraphs,
+        selected_chapter=selected_chapter,
+        section_scope_mode=(
+            section_scope_mode
+            if not full_thesis and not combined_scope
+            else "whole_chapter"
+        ),
+        selected_sections=selected_sections or [],
+    )
     flexible_doctoral_structure = (
         full_thesis
         and partition["structure_mode"] == "flexible_doctoral"
     )
-    if flexible_doctoral_structure:
-        statistical_chapters = partition["reviewed_chapters"]
+    chapter_role_map = build_chapter_role_map(chapter_paragraphs, academic_level)
+    if uses_flexible_phd_structure(academic_level):
+        statistical_chapters = chapters_for_roles(
+            chapter_role_map, {"methodology", "results", "discussion", "article_or_study"}
+        )
     elif full_thesis:
         statistical_chapters = [3, 4]
     elif combined_scope:
@@ -958,6 +1005,10 @@ def analyse(
         str(item.get("source_filename") or "Supervisor comments") for item in supervisor_comments
     ))
 
+    objective_alignment_matrix = build_objective_alignment_matrix(
+        current_paragraphs, academic_level
+    )
+
     fact_index = build_factual_index(current_paragraphs)
     supervisory_manifest = {
         "chapter_paragraph_counts": {
@@ -987,7 +1038,11 @@ def analyse(
             "filename": filename,
             "academic_level": academic_level,
             "research_approach": research_approach,
+            "institutional_profile": clean_text(institutional_profile or "generic").lower(),
             "review_scope": review_scope,
+            "section_scope_mode": selected_section_scope.get("mode", "whole_chapter"),
+            "selected_section_scope": selected_section_scope,
+            "selected_sections_reviewed": selected_section_scope.get("selected_section_titles", []),
             "document_type": document_type,
             "document_label": document_label,
             "proposal_mode": proposal_mode,
@@ -1018,6 +1073,7 @@ def analyse(
                 and not combined_scope
                 and len(uploaded_chapters) > 1
             ),
+            "guided_sequence": bool(guided_sequence),
             "combined_chapters_reviewed_together": combined_scope,
             "thesis_structure_mode": partition["structure_mode"],
             "thesis_structure_label": partition["structure_label"],
@@ -1040,6 +1096,15 @@ def analyse(
             "missing_doctoral_functional_coverage": partition[
                 "doctoral_coverage"
             ]["missing_functions"],
+            "phd_prescribed_elements_covered": partition["doctoral_coverage"].get("covered_prescribed_elements", []),
+            "missing_phd_prescribed_elements": partition["doctoral_coverage"].get("missing_prescribed_elements", []),
+            "essential_missing_phd_prescribed_elements": partition["doctoral_coverage"].get("essential_missing_prescribed_elements", []),
+            "chapter_role_map": chapter_role_map,
+            "objective_alignment_matrix_summary": {
+                "objective_count": objective_alignment_matrix.get("objective_count", 0),
+                "complete_trace_count": objective_alignment_matrix.get("complete_trace_count", 0),
+                "incomplete_trace_count": objective_alignment_matrix.get("incomplete_trace_count", 0),
+            },
             "complete_thesis_structure_validated": bool(
                 full_thesis and partition["structure_complete"]
             ),
@@ -1047,6 +1112,7 @@ def analyse(
                 "coverage"
             ]["optional_chapters"],
             "paragraphs_extracted": len(current_paragraphs),
+            "chapter_paragraphs_available": len(chapter_paragraphs),
             "uploaded_paragraphs_extracted": len(uploaded_paragraphs),
             "rules_checked": len(combined_results),
             "official_rules_checked": len(results),
@@ -1080,6 +1146,7 @@ def analyse(
         },
         "context_documents": prepared_context,
         "statistical_review": statistical_review,
+        "objective_alignment_matrix": objective_alignment_matrix,
         "original_document": original_summary,
         "supervisor_comment_sources": comment_sources,
         "chapter_scores": chapter_scores,
@@ -1090,9 +1157,9 @@ def analyse(
         "results": results,
         "_runtime_context": {
             "current_paragraphs": current_paragraphs,
+            "selected_section_scope": selected_section_scope,
             "context_paragraphs": context_paragraphs,
             "original_paragraphs": original_paragraphs,
             "supervisor_comments": supervisor_comments,
         },
     }
-

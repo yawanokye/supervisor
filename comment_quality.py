@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .document_parser import clean_text, normalised
+from .student_friendly_review import make_issue_student_friendly, make_finding_student_friendly
 
 _INTERNAL_NOTICE_RE = re.compile(
     r"(?:\s*\[?Manual confirmation recommended because the independent audit request was unavailable;?"
@@ -51,7 +52,7 @@ _GENERIC_BRACKET_PLACEHOLDER_RE = re.compile(
 
 _DANGLING_END_RE = re.compile(
     r"(?:\b(?:and|or|of|to|for|with|among|between|while|including|such as|the|a|an|this|that|these|those|its|their|on|at|by|from)"
-    r"|\b(?:assessing|examining|including|manufacturing|Ghanaian|write|describe|explain|state|show|demonstrate|provide))\s*[.!?]?$",
+    r"|\b(?:assessing|examining|including|write|describe|explain|state|show|demonstrate|provide))\s*[.!?]?$",
     flags=re.I,
 )
 
@@ -122,7 +123,7 @@ def comment_max_chars() -> int:
 
 
 def similarity_threshold() -> float:
-    return _env_float("VPROF_COMMENT_SIMILARITY_THRESHOLD", 0.62, 0.45, 0.90)
+    return _env_float("VPROF_COMMENT_SIMILARITY_THRESHOLD", 0.92, 0.90, 0.98)
 
 
 def reject_placeholder_comments() -> bool:
@@ -165,10 +166,14 @@ def strip_internal_notices(value: Any) -> str:
         # paragraph-ID or recovery details. Drop the entire sentence because the
         # remaining fragment is usually not meaningful supervision.
         text = _INTERNAL_LEAK_SENTENCE_RE.sub(" ", text)
-    text = re.sub(r"\bthe uploaded documents\b", "the submitted work", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded documents\b", "the study materials", text, flags=re.I)
     text = re.sub(r"\bthe uploaded document\b", "the study", text, flags=re.I)
-    text = re.sub(r"\buploaded documents\b", "submitted work", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded chapter\b", "the chapter", text, flags=re.I)
+    text = re.sub(r"\bthe uploaded text\b", "the study", text, flags=re.I)
+    text = re.sub(r"\buploaded documents\b", "study materials", text, flags=re.I)
     text = re.sub(r"\buploaded document\b", "study", text, flags=re.I)
+    text = re.sub(r"\buploaded chapter\b", "chapter", text, flags=re.I)
+    text = re.sub(r"\buploaded text\b", "study", text, flags=re.I)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")
 
 
@@ -318,8 +323,23 @@ def _fallback_action(category: str) -> str:
     return "Revise the marked passage to address the identified academic weakness using only verified information from the study and authentic sources."
 
 
+def _evidence_locked_issue(issue: Dict[str, Any]) -> bool:
+    return (
+        normalised(issue.get("guidance_type")) == "deterministic supervisory checklist"
+        or normalised(issue.get("verification_status")) == "hard deterministic supervisory checklist"
+        or normalised(issue.get("finding_id")).startswith("dsc hard ")
+    )
+
+
 def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    output = dict(issue)
+    locked = _evidence_locked_issue(issue)
+    output = (
+        dict(issue)
+        if locked
+        else make_issue_student_friendly(
+            dict(issue), issue.get("_academic_level") or issue.get("academic_level")
+        )
+    )
     current_year = current_year or datetime.now(timezone.utc).year
     if _future_date_only_issue(output, current_year):
         return None
@@ -343,7 +363,7 @@ def finalise_public_issue(issue: Dict[str, Any], *, current_year: Optional[int] 
         output[field] = public_text(
             raw,
             reject_placeholders=True,
-            reject_incomplete=field in {"required_action", "illustrative_guidance"},
+            reject_incomplete=(field in {"required_action", "illustrative_guidance"} and not locked),
         )
 
     if not output.get("issue_title"):
@@ -383,8 +403,8 @@ def _similarity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
     intent_bonus = 0.0
     duplicate_intents = (
         {"hypotheses", "objectives"},
-        {"purpose", "operational", "performance"},
-        {"environmental", "sustainability", "performance"},
+        {"purpose", "objective", "alignment"},
+        {"statistical", "model", "diagnostic"},
         {"citation", "source", "verify"},
     )
     if any(len(shared & intent) >= 2 for intent in duplicate_intents):
@@ -432,7 +452,18 @@ def deduplicate_public_issues(issues: Sequence[Dict[str, Any]], *, threshold: Op
                 preserve_ucc_section_comments()
                 and _is_section_contract_issue(issue)
                 and _is_section_contract_issue(existing)
-                and normalised(issue.get("section", "")) != normalised(existing.get("section", ""))
+                and (
+                    int(issue.get("chapter_number") or 0) != int(existing.get("chapter_number") or 0)
+                    or normalised(
+                        issue.get("section_contract_label")
+                        or issue.get("missing_section_label")
+                        or issue.get("section", "")
+                    ) != normalised(
+                        existing.get("section_contract_label")
+                        or existing.get("missing_section_label")
+                        or existing.get("section", "")
+                    )
+                )
             ):
                 # UCC section-coverage findings must not be merged across
                 # different sections. Otherwise a Chapter One review can lose
@@ -472,7 +503,17 @@ def prepare_public_issues(issues: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[s
 
 
 def sanitise_finding_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    output = dict(row)
+    locked = _evidence_locked_issue(row)
+    output = (
+        dict(row)
+        if locked
+        else make_finding_student_friendly(
+            dict(row), row.get("_academic_level") or row.get("academic_level")
+        )
+    )
+    if locked:
+        output.setdefault("item", clean_text(output.get("issue_title")))
+        output.setdefault("comment", clean_text(output.get("assessment")))
     for field in ("item", "comment", "required_action", "illustrative_guidance", "reference_label", "section_reference", "section"):
         value = output.get(field, "")
         if field == "required_action":
@@ -527,6 +568,25 @@ def sanitise_finding_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 str(cleaned.get("category") or ""), str(existing.get("category") or "")
             } <= {"cross_section_coherence", "objectives_questions_hypotheses", "conceptual_clarity", "other"}
             if not (same_category or flexible_category):
+                continue
+
+            if (
+                preserve_ucc_section_comments()
+                and _is_section_contract_issue(cleaned)
+                and _is_section_contract_issue(existing)
+                and (
+                    int(cleaned.get("chapter_number") or 0) != int(existing.get("chapter_number") or 0)
+                    or normalised(
+                        cleaned.get("section_contract_label")
+                        or cleaned.get("missing_section_label")
+                        or cleaned.get("section", "")
+                    ) != normalised(
+                        existing.get("section_contract_label")
+                        or existing.get("missing_section_label")
+                        or existing.get("section", "")
+                    )
+                )
+            ):
                 continue
 
             cleaned_evidence = {

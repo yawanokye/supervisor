@@ -155,14 +155,21 @@ class CostAwareAIProvider:
     def _combined_openai_pipeline_enabled(self) -> bool:
         return bool(getattr(self.config, "combined_app_pipeline_enabled", False))
 
-    def _combined_pipeline_plan(self, stage: ReviewStage, profile: RoutingProfile) -> RoutePlan:
+    def _combined_pipeline_plan(
+        self,
+        stage: ReviewStage,
+        profile: RoutingProfile,
+        *,
+        requested_model: str = "",
+        requested_effort: str = "",
+        review_depth: str = "standard",
+    ) -> RoutePlan:
         """Three-role OpenAI thesis pipeline.
 
-        Phase 1 routes cleaning/formatting and JSON repair to the cheapest nano
-        model. Phase 2 routes section and domain checks to the configured mini
-        or chapter model. Phase 3 routes final synthesis and committee-style
-        audits to the bounded expert model. No unavailable preview model is used
-        by default.
+        Phase 1 routes cleaning, formatting and JSON repair to Luna at low
+        effort. Phase 2 routes ordinary coverage to Luna while respecting an
+        explicit Terra request for academically high-risk sections. Phase 3
+        routes final synthesis and committee-style audits to Terra.
 
         The Batch API is not used directly here because live reviews need a
         synchronous response. The role separation is compatible with a future
@@ -176,27 +183,37 @@ class CostAwareAIProvider:
         cleaning = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_cleaning_model,
-            "minimal",
+            self.config.openai_cleaning_reasoning_effort or "low",
         )
         section = RouteTarget(
             ProviderName.OPENAI,
-            self.config.openai_section_analysis_model,
-            self.config.openai_chapter_reasoning_effort or "medium",
+            requested_model or self.config.openai_section_analysis_model,
+            requested_effort or self.config.openai_section_analysis_reasoning_effort or "medium",
         )
         section_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_section_analysis_fallback_model,
-            self.config.openai_chapter_reasoning_effort or "medium",
+            self.config.openai_section_analysis_reasoning_effort or "medium",
         )
+        # Phase 3 is deliberately Terra-led. ``requested_model`` describes the
+        # degree-calibrated section route and may be Luna for an ordinary
+        # Standard review. Letting it override the final role caused every
+        # large review to repeat its strict comment audit on Luna before
+        # falling back to Terra.
         final = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_model,
-            self.config.openai_final_audit_reasoning_effort or "high",
+            requested_effort or self.config.openai_final_audit_reasoning_effort or "high",
         )
         final_fallback = RouteTarget(
             ProviderName.OPENAI,
             self.config.openai_final_synthesis_fallback_model,
-            self.config.openai_final_audit_reasoning_effort or "high",
+            requested_effort or self.config.openai_section_analysis_reasoning_effort or "medium",
+        )
+        external = RouteTarget(
+            ProviderName.OPENAI,
+            requested_model or self.config.openai_external_adjudicator_model,
+            requested_effort or self.config.openai_external_adjudicator_reasoning_effort or "xhigh",
         )
 
         phase1 = {
@@ -209,11 +226,15 @@ class CostAwareAIProvider:
         phase3 = {
             ReviewStage.FINAL_AUDIT,
             ReviewStage.RESEARCH_INTENSIVE_AUDIT,
-            ReviewStage.EXTERNAL_EXAMINATION,
         }
         if stage in phase1:
             primary, fallback, escalation = self._normalise_targets(
                 cleaning, section_fallback, None
+            )
+            return RoutePlan(stage, profile, primary, fallback, escalation, False)
+        if stage is ReviewStage.EXTERNAL_EXAMINATION:
+            primary, fallback, escalation = self._normalise_targets(
+                external, final_fallback, None
             )
             return RoutePlan(stage, profile, primary, fallback, escalation, False)
         if stage in phase3:
@@ -222,8 +243,17 @@ class CostAwareAIProvider:
             )
             return RoutePlan(stage, profile, primary, fallback, escalation, False)
 
+        # Routine packets stay on Luna. When the academic engine explicitly
+        # selects Terra for methods, results, statistics or synthesis, that
+        # request is honoured as the primary route instead of being downgraded.
+        allow_escalation = (
+            self.config.selective_escalation_enabled
+            and str(review_depth or "standard").strip().lower() == "advanced"
+        )
         primary, fallback, escalation = self._normalise_targets(
-            section, section_fallback, final
+            section,
+            section_fallback,
+            final if allow_escalation else None,
         )
         return RoutePlan(
             stage,
@@ -231,7 +261,7 @@ class CostAwareAIProvider:
             primary,
             fallback,
             escalation,
-            False,
+            allow_escalation,
         )
 
     def _enabled(self, target: Optional[RouteTarget]) -> bool:
@@ -254,18 +284,31 @@ class CostAwareAIProvider:
         escalation_enabled = escalation if self._enabled(escalation) else None
         selected_primary = primary_enabled or fallback_enabled or escalation_enabled
         if selected_primary is None:
+            configured_but_paused = (
+                (self.config.enable_openai_routing and self.openai)
+                or (self.config.enable_deepseek_routing and self.deepseek)
+            )
+            if configured_but_paused:
+                raise AIProviderError(
+                    "The configured AI provider is temporarily paused after repeated "
+                    "transport or service failures. Retry after the provider circuit "
+                    "cooldown; the API key is present."
+                )
             raise AIProviderError(
                 "No enabled AI provider is configured. Add OPENAI_API_KEY or "
                 "DEEPSEEK_API_KEY and enable the corresponding router provider."
             )
         selected_fallback = (
             fallback_enabled
-            if fallback_enabled is not None and fallback_enabled != selected_primary
+            if fallback_enabled is not None
+            and not self._same_endpoint(fallback_enabled, selected_primary)
             else None
         )
         if selected_fallback is None:
             for candidate in (primary_enabled, escalation_enabled):
-                if candidate is not None and candidate != selected_primary:
+                if candidate is not None and not self._same_endpoint(
+                    candidate, selected_primary
+                ):
                     selected_fallback = candidate
                     break
         selected_escalation = (
@@ -274,6 +317,80 @@ class CostAwareAIProvider:
             else None
         )
         return selected_primary, selected_fallback, selected_escalation
+
+    def _explicit_provider_plan(
+        self,
+        *,
+        stage: ReviewStage,
+        profile: RoutingProfile,
+        review_depth: str,
+        requested_model: str,
+        requested_effort: str,
+        ds_fast: RouteTarget,
+        ds_quality: RouteTarget,
+        oa_chapter: RouteTarget,
+        oa_fast: RouteTarget,
+        oa_expert: RouteTarget,
+        oa_requested: RouteTarget,
+    ) -> Optional[RoutePlan]:
+        """Honor the administrator-selected provider before profile routing.
+
+        VPROF_PRIMARY_PROVIDER may be ``openai``, ``deepseek`` or ``auto``.
+        Explicit selection is authoritative, including for the combined pipeline.
+        A cross-provider fallback is used only when VPROF_PROVIDER_FAILOVER=true
+        and VPROF_FALLBACK_PROVIDER permits it.
+        """
+        preference = (getattr(self.config, "primary_provider", "auto") or "auto").strip().lower()
+        if preference == "auto":
+            return None
+
+        cheap = {
+            ReviewStage.DOCUMENT_TRIAGE,
+            ReviewStage.STRUCTURE_MAP,
+            ReviewStage.LANGUAGE_SCAN,
+            ReviewStage.COMMENT_DEDUPLICATION,
+            ReviewStage.JSON_REPAIR,
+        }
+        high_risk = {
+            ReviewStage.RESEARCH_INTENSIVE_REVIEW,
+            ReviewStage.ADVANCED_REVIEW,
+            ReviewStage.FINAL_AUDIT,
+            ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+            ReviewStage.EXTERNAL_EXAMINATION,
+        }
+
+        if preference == "deepseek":
+            primary = ds_fast if stage in cheap else ds_quality
+            if stage in high_risk:
+                primary = ds_quality
+            other = oa_fast if stage in cheap else (oa_requested if requested_model else oa_expert)
+        else:
+            if self._combined_openai_pipeline_enabled():
+                return self._combined_pipeline_plan(
+                    stage,
+                    profile,
+                    requested_model=requested_model,
+                    requested_effort=requested_effort,
+                    review_depth=review_depth,
+                )
+            primary = oa_fast if stage in cheap else (oa_requested if requested_model else oa_chapter)
+            if stage in high_risk:
+                primary = oa_requested if requested_model else oa_expert
+            other = ds_fast if stage in cheap else ds_quality
+
+        fallback_pref = (getattr(self.config, "fallback_provider", "auto") or "auto").strip().lower()
+        allow_failover = bool(getattr(self.config, "provider_failover_enabled", True))
+        fallback: Optional[RouteTarget] = None
+        if allow_failover and fallback_pref != "none":
+            if fallback_pref == "auto":
+                fallback = other
+            elif fallback_pref == "openai" and preference != "openai":
+                fallback = other if other.provider is ProviderName.OPENAI else None
+            elif fallback_pref == "deepseek" and preference != "deepseek":
+                fallback = other if other.provider is ProviderName.DEEPSEEK else None
+
+        primary, fallback, escalation = self._normalise_targets(primary, fallback, None)
+        return RoutePlan(stage, profile, primary, fallback, escalation, False)
 
     def plan(
         self,
@@ -293,11 +410,20 @@ class CostAwareAIProvider:
             config.deepseek_reasoning_effort or "high",
             False,
         )
+        deepseek_thinking = (
+            config.deepseek_audit_thinking_enabled
+            if stage_value in {
+                ReviewStage.FINAL_AUDIT,
+                ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+                ReviewStage.EXTERNAL_EXAMINATION,
+            }
+            else config.deepseek_primary_thinking_enabled
+        )
         ds_quality = RouteTarget(
             ProviderName.DEEPSEEK,
             config.deepseek_quality_model,
             config.deepseek_advanced_primary_reasoning_effort or "high",
-            True,
+            deepseek_thinking,
         )
         oa_chapter = RouteTarget(
             ProviderName.OPENAI,
@@ -307,7 +433,7 @@ class CostAwareAIProvider:
         oa_fast = RouteTarget(
             ProviderName.OPENAI,
             config.openai_fast_model,
-            "low",
+            config.openai_cleaning_reasoning_effort or "low",
         )
         oa_expert = RouteTarget(
             ProviderName.OPENAI,
@@ -320,8 +446,30 @@ class CostAwareAIProvider:
             requested_effort or config.openai_chapter_reasoning_effort,
         )
 
+        explicit_plan = self._explicit_provider_plan(
+            stage=stage_value,
+            profile=profile,
+            review_depth=review_depth,
+            requested_model=requested_model,
+            requested_effort=requested_effort,
+            ds_fast=ds_fast,
+            ds_quality=ds_quality,
+            oa_chapter=oa_chapter,
+            oa_fast=oa_fast,
+            oa_expert=oa_expert,
+            oa_requested=oa_requested,
+        )
+        if explicit_plan is not None:
+            return explicit_plan
+
         if self._combined_openai_pipeline_enabled():
-            return self._combined_pipeline_plan(stage_value, profile)
+            return self._combined_pipeline_plan(
+                stage_value,
+                profile,
+                requested_model=requested_model,
+                requested_effort=requested_effort,
+                review_depth=review_depth,
+            )
 
         if self._deepseek_v4_pro_only_mode() and self._stage_allows_deepseek_pro_only(stage_value):
             # One expert-class DeepSeek V4 Pro route for every supervisory
@@ -365,8 +513,8 @@ class CostAwareAIProvider:
             else:
                 # Keep the ordinary review within DeepSeek when Flash has a
                 # transient/schema failure. If the provider is unavailable,
-                # use GPT-5.6 Terra rather than silently moving the whole
-                # chapter to GPT-5.6 Terra.
+                # use the configured GPT-5.6 Luna route rather than silently
+                # moving the whole chapter to another model tier.
                 primary, fallback, escalation = self._normalise_targets(
                     ds_fast, oa_fast, oa_chapter
                 )
@@ -432,8 +580,8 @@ class CostAwareAIProvider:
 
         if stage_value is ReviewStage.RESEARCH_INTENSIVE_AUDIT:
             # One bounded expert audit gives Research Master's/MPhil work the
-            # conceptual and methodological depth that GPT-5.6 Terra alone did
-            # not consistently provide. Economy mode may remain DeepSeek-led.
+            # conceptual and methodological depth required for research-level
+            # work. Economy mode may remain DeepSeek-led.
             if profile is RoutingProfile.ECONOMY:
                 primary, fallback, escalation = self._normalise_targets(
                     ds_quality,
@@ -493,6 +641,63 @@ class CostAwareAIProvider:
             requested_effort=requested_effort,
         ).signature()
 
+    @staticmethod
+    def _same_endpoint(
+        first: Optional[RouteTarget], second: Optional[RouteTarget]
+    ) -> bool:
+        """Return True when two routes call the same provider/model endpoint.
+
+        A different reasoning effort is useful for expert escalation, but it is
+        not a genuine provider fallback. Treating the same model as its own
+        fallback repeated truncation failures without adding resilience.
+        """
+        return bool(
+            first
+            and second
+            and first.provider is second.provider
+            and first.model == second.model
+        )
+
+    @staticmethod
+    def _should_trip_circuit(exc: Exception) -> bool:
+        """Trip the provider circuit only for transport or service failures.
+
+        Truncation, schema validation and evidence-contract failures are
+        request-level problems. The provider is reachable, so opening the
+        circuit would incorrectly turn the next packet into a misleading
+        ``No enabled AI provider`` error.
+        """
+        message = str(exc or "").strip().lower()
+        request_level = (
+            "truncated because the output-token limit" in message,
+            "failed schema validation" in message,
+            "invalid json" in message,
+            "empty json content" in message,
+            "must be a json object" in message,
+            "returned no structured text" in message,
+            "returned an incomplete response" in message,
+            "returned an empty academic" in message,
+            "refused the request" in message,
+        )
+        if any(request_level):
+            return False
+        service_signals = (
+            "http 408",
+            "http 409",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+            "timed out",
+            "timeout",
+            "connection error",
+            "connection reset",
+            "temporarily unavailable",
+            "provider resources were unavailable",
+        )
+        return any(signal in message for signal in service_signals)
+
     async def _call(
         self,
         target: RouteTarget,
@@ -521,8 +726,13 @@ class CostAwareAIProvider:
                 request_max_retries=request_max_retries,
                 thinking_enabled=target.thinking_enabled,
             )
-        except Exception:
-            _CircuitState.failure(target.provider)
+        except Exception as exc:
+            if self._should_trip_circuit(exc):
+                _CircuitState.failure(target.provider)
+            else:
+                # The provider returned a response, but this particular request
+                # exceeded its output/schema contract. Keep the provider live.
+                _CircuitState.success(target.provider)
             raise
         _CircuitState.success(target.provider)
         return result
@@ -653,6 +863,19 @@ class CostAwareAIProvider:
                 request_max_retries=request_max_retries,
             )
         except Exception as primary_error:
+            # A strict comment-audit response that reaches its output cap must
+            # be split by the academic engine. Repeating the same oversized
+            # batch on another model multiplied calls and left large reviews
+            # apparently fixed at 68 percent.
+            if (
+                plan.stage in {
+                    ReviewStage.FINAL_AUDIT,
+                    ReviewStage.RESEARCH_INTENSIVE_AUDIT,
+                }
+                and "comment_accuracy" in str(purpose or "").lower()
+                and "truncated because the output-token limit" in str(primary_error).lower()
+            ):
+                raise
             if plan.fallback is None:
                 raise
             logger.warning(

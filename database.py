@@ -101,6 +101,12 @@ class ReviewRecord(Base):
     token_reserved: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     tokens_used: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     token_accounting_status: Mapped[str] = mapped_column(String(30), default="unmetered", nullable=False)
+    guided_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    guided_current_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    guided_total_units: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    guided_units_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    guided_review_ids_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    guided_tokens_used: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
     lecturer: Mapped[User] = relationship(back_populates="reviews")
 
@@ -216,6 +222,12 @@ def _ensure_review_record_columns() -> None:
         "token_reserved": "BIGINT DEFAULT 0",
         "tokens_used": "BIGINT DEFAULT 0",
         "token_accounting_status": "VARCHAR(30) DEFAULT 'unmetered'",
+        "guided_mode": "BOOLEAN DEFAULT FALSE",
+        "guided_current_index": "INTEGER DEFAULT 0",
+        "guided_total_units": "INTEGER DEFAULT 0",
+        "guided_units_json": "TEXT",
+        "guided_review_ids_json": "TEXT",
+        "guided_tokens_used": "BIGINT DEFAULT 0",
     }
     for column_name, definition in migration_columns.items():
         if column_name not in existing:
@@ -247,6 +259,10 @@ def _ensure_review_record_columns() -> None:
         connection.execute(text("UPDATE review_records SET token_reserved=0 WHERE token_reserved IS NULL"))
         connection.execute(text("UPDATE review_records SET tokens_used=0 WHERE tokens_used IS NULL"))
         connection.execute(text("UPDATE review_records SET token_accounting_status='unmetered' WHERE token_accounting_status IS NULL OR token_accounting_status=''"))
+        connection.execute(text("UPDATE review_records SET guided_mode=FALSE WHERE guided_mode IS NULL"))
+        connection.execute(text("UPDATE review_records SET guided_current_index=0 WHERE guided_current_index IS NULL"))
+        connection.execute(text("UPDATE review_records SET guided_total_units=0 WHERE guided_total_units IS NULL"))
+        connection.execute(text("UPDATE review_records SET guided_tokens_used=0 WHERE guided_tokens_used IS NULL"))
 
 
 def init_db() -> None:

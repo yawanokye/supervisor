@@ -4,6 +4,8 @@ import io
 import re
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+from .thesis_structure import build_chapter_role_map
+
 try:
     import fitz
 except Exception:
@@ -112,6 +114,84 @@ DOCTORAL_ESSENTIAL_FUNCTIONS = {
     "conclusions_contribution_and_implications",
 }
 
+
+PHD_PRESCRIBED_ELEMENTS = {
+    "background_and_context": {
+        "label": "Background, context and rationale",
+        "terms": ["background to the study", "background of the study", "study context", "contextual framework", "rationale for the study"],
+    },
+    "problem_statement": {
+        "label": "Clearly evidenced research problem",
+        "terms": ["statement of the problem", "problem statement", "research problem"],
+    },
+    "purpose_objectives_questions": {
+        "label": "Purpose, objectives and research questions or hypotheses",
+        "terms": ["purpose of the study", "aim of the study", "research objectives", "specific objectives", "research questions", "research hypotheses", "hypothesis development"],
+    },
+    "significance_scope_and_definitions": {
+        "label": "Significance, scope and key definitions",
+        "terms": ["significance of the study", "scope of the study", "delimitations of the study", "definition of terms", "key concepts"],
+    },
+    "critical_literature_synthesis": {
+        "label": "Critical literature synthesis and scholarly positioning",
+        "terms": ["literature review", "empirical review", "critical synthesis", "state of the art", "research gap"],
+    },
+    "theory_and_conceptual_framework": {
+        "label": "Theoretical and conceptual framework",
+        "terms": ["theoretical framework", "theoretical review", "conceptual framework", "conceptual model"],
+    },
+    "originality_and_gap": {
+        "label": "Defensible research gap and originality claim",
+        "terms": ["research gap", "originality", "novelty", "original contribution", "contribution to knowledge"],
+    },
+    "methodology_design_and_philosophy": {
+        "label": "Methodology, design and philosophical justification",
+        "terms": ["research methodology", "methodology", "research design", "research philosophy", "research paradigm", "research approach"],
+    },
+    "data_sampling_measurement": {
+        "label": "Data sources, sampling and measurement",
+        "terms": ["population of the study", "sampling procedure", "sample size", "data sources", "data collection", "measurement of variables", "operationalisation of variables", "research instrument"],
+    },
+    "analysis_diagnostics_and_reproducibility": {
+        "label": "Analysis strategy, diagnostics and reproducibility",
+        "terms": ["data analysis", "model specification", "estimation strategy", "diagnostic tests", "assumption tests", "robustness", "software", "syntax", "code"],
+    },
+    "ethics_and_integrity": {
+        "label": "Ethics and research integrity",
+        "terms": ["ethical considerations", "research ethics", "ethics approval", "informed consent", "confidentiality", "research integrity"],
+    },
+    "results_and_evidence": {
+        "label": "Results, findings and analytical evidence",
+        "terms": ["results", "research findings", "empirical findings", "model estimates", "thematic findings", "analysis of evidence"],
+    },
+    "discussion_and_rival_explanations": {
+        "label": "Discussion, theory integration and rival explanations",
+        "terms": ["discussion of findings", "discussion of results", "integrative discussion", "alternative explanations", "rival explanations", "unexpected findings"],
+    },
+    "conclusions_and_contribution": {
+        "label": "Conclusions and original contribution to knowledge",
+        "terms": ["conclusions", "conclusion", "contribution to knowledge", "theoretical contribution", "methodological contribution", "original contribution"],
+    },
+    "implications_limitations_and_future_research": {
+        "label": "Implications, recommendations, limitations and future research",
+        "terms": ["recommendations", "policy implications", "practical implications", "limitations of the study", "future research", "directions for future research"],
+    },
+}
+
+PHD_ESSENTIAL_PRESCRIBED_ELEMENTS = {
+    "problem_statement",
+    "purpose_objectives_questions",
+    "critical_literature_synthesis",
+    "theory_and_conceptual_framework",
+    "methodology_design_and_philosophy",
+    "data_sampling_measurement",
+    "analysis_diagnostics_and_reproducibility",
+    "ethics_and_integrity",
+    "results_and_evidence",
+    "discussion_and_rival_explanations",
+    "conclusions_and_contribution",
+}
+
 CHAPTER_WORD_NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -126,64 +206,75 @@ CHAPTER_WORD_NUMBERS = {
 
 CHAPTER_EXPECTED_COMPONENTS = {
     1: [
+        "chapter introduction or overview",
         "background to the study",
         "statement of the problem",
         "purpose of the study",
-        "research objectives",
+        "research objectives, including general and specific objectives where used",
         "research questions",
-        "research hypotheses",
+        "research hypotheses where inferential testing is proposed",
         "significance of the study",
-        "delimitation",
+        "delimitations or adequately developed scope",
         "limitations",
-        "definition of terms",
+        "definition of terms or key concepts",
         "organisation of the study",
     ],
     2: [
+        "chapter introduction",
+        "theoretical review or framework where relevant",
         "conceptual review",
-        "theoretical review",
-        "theoretical framework",
-        "empirical review",
+        "empirical review organised around the objectives or relationships",
+        "critical literature synthesis and research gap",
         "conceptual framework",
-        "hypothesis development",
-        "literature review summary",
+        "hypothesis development where relevant",
+        "chapter summary",
     ],
     3: [
-        "research philosophy",
+        "chapter introduction",
+        "research philosophy or paradigm where required",
         "research approach",
         "research design",
-        "study area",
-        "population",
+        "study area or setting where relevant",
+        "population and unit of analysis",
+        "sampling frame where probability sampling is used",
         "sampling procedure",
-        "sample size",
-        "data collection instrument",
-        "validity and reliability",
+        "sample size and justification",
+        "data sources",
+        "data collection instrument or extraction protocol",
+        "operationalisation and measurement",
+        "pilot study or pre-testing where relevant",
+        "validity, reliability or trustworthiness",
         "data collection procedures",
-        "data processing and analysis",
-        "model specification",
-        "diagnostic tests",
-        "ethical considerations",
+        "data preparation and screening",
+        "data processing and analysis mapped to objectives",
+        "model specification and diagnostics where relevant",
+        "ethical considerations where human participants or protected data are involved",
+        "chapter summary",
     ],
     4: [
-        "response rate",
-        "sample characteristics",
-        "descriptive statistics",
-        "hypothesis testing",
-        "presentation of results",
-        "results",
-        "discussion of findings",
-        "discussion",
-        "model diagnostics",
-        "diagnostic tests",
+        "chapter introduction",
+        "response rate where relevant",
+        "sample or case characteristics",
+        "data quality and preliminary checks",
+        "descriptive or preliminary results",
+        "measurement quality where scales or latent constructs are used",
+        "results presented in objective or hypothesis order",
+        "assumption and diagnostic tests where relevant",
+        "discussion linked to the results, theory and prior evidence",
+        "chapter summary",
     ],
     5: [
-        "summary of findings",
-        "conclusions",
-        "recommendations",
-        "contribution to knowledge",
-        "implications",
+        "chapter introduction",
+        "summary of the study",
+        "summary of findings organised by objective",
+        "conclusions limited to the verified findings",
+        "recommendations linked to findings and responsible actors",
+        "contribution and theoretical, practical or policy implications",
+        "limitations of the completed study",
         "suggestions for further research",
     ],
 }
+
 
 KNOWN_SECTION_TERMS = [
     "introduction", "background", "background to the study", "background of the study",
@@ -208,7 +299,11 @@ KNOWN_SECTION_TERMS = [
     "response rate", "descriptive statistics", "hypothesis testing", "results", "findings",
     "presentation of results", "discussion", "discussion of findings", "summary of findings",
     "conclusion", "conclusions", "recommendation", "recommendations",
-    "suggestions for future research", "future research", "references", "appendix", "appendices",
+    "suggestions for future research", "future research", "summary of the study", "contribution to knowledge",
+    "theoretical implications", "practical implications", "policy implications", "references", "bibliography",
+    "appendix", "appendices", "abstract", "declaration", "table of contents", "list of tables", "list of figures",
+    "data screening", "missing data", "outlier treatment", "common method bias", "non-response bias",
+    "sample characteristics", "demographic characteristics", "data quality", "measurement quality",
 ]
 
 
@@ -396,7 +491,12 @@ def is_heading(text: str, style_name: str = "") -> bool:
     if "heading" in (style_name or "").lower() or "title" in (style_name or "").lower():
         return True
     if explicit_chapter_marker(raw) is not None:
-        return True
+        # A chapter marker is a heading only when it is a short display line.
+        # Sentences such as “Chapter two reviews the related literature …” in
+        # an organisation-of-study paragraph must not switch the parser into a
+        # new chapter. Styled headings and all-uppercase display headings have
+        # already been accepted above.
+        return len(raw.split()) <= 8 and not re.search(r"[.!?]\s*$", raw)
     if section_number_from_heading(raw) is not None and len(raw.split()) <= 20:
         return True
     if raw.isupper() and len(raw.split()) <= 14:
@@ -563,6 +663,8 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
             record("summary_conclusions_recommendations", "Strong Chapter Five component profile")
 
     missing_keys = [key for key in STANDARD_CHAPTER_FUNCTIONS if not evidence[key]]
+    required_chapters = {1, 2, 3, 4, 5}
+    missing_chapter_numbers = sorted(required_chapters - detected)
     return {
         "detected_chapter_numbers": profile["detected_chapters"],
         "detected_chapter_labels": profile["detected_labels"],
@@ -570,9 +672,11 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
         "function_evidence": evidence,
         "missing_function_keys": missing_keys,
         "missing_functions": [STANDARD_CHAPTER_FUNCTIONS[key] for key in missing_keys],
+        "required_chapter_numbers": sorted(required_chapters),
+        "missing_chapter_numbers": missing_chapter_numbers,
         "optional_chapters": [number for number in profile["detected_chapters"] if number > 5],
         "chapter_profile": profile,
-        "complete": not missing_keys,
+        "complete": not missing_keys and not missing_chapter_numbers,
     }
 
 
@@ -580,12 +684,12 @@ def detect_standard_chapter_coverage(paragraphs: List[Dict[str, Any]]) -> Dict[s
 def detect_doctoral_functional_coverage(
     paragraphs: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Validate a flexible doctoral thesis by research function, not chapter order.
+    """Validate a flexible PhD thesis by research function, not chapter order.
 
-    Professional Doctorate and PhD theses may use article-based, essay-based,
-    portfolio, monograph, practice-based or discipline-specific architectures.
-    The chapter names and sequence are therefore unrestricted. The document
-    must still demonstrate the core research functions.
+    PhD theses may use article-based, essay-based, portfolio, monograph,
+    practice-based or discipline-specific architectures. Chapter names, order
+    and number may vary, but every prescribed doctoral research element must be
+    demonstrably present and integrated in the complete thesis.
     """
     searchable_rows = [
         row for row in paragraphs
@@ -629,6 +733,25 @@ def detect_doctoral_functional_coverage(
             if len(evidence[key]) >= 5:
                 break
 
+    prescribed_evidence: Dict[str, List[Dict[str, Any]]] = {
+        key: [] for key in PHD_PRESCRIBED_ELEMENTS
+    }
+    for key, specification in PHD_PRESCRIBED_ELEMENTS.items():
+        for row in searchable_rows:
+            row_text = normalised(row.get("text", ""))
+            hits = [term for term in specification["terms"] if normalised(term) in row_text]
+            if not hits:
+                continue
+            prescribed_evidence[key].append({
+                "heading": clean_text(row.get("heading") or row.get("text", ""))[:240],
+                "paragraph": row.get("paragraph"),
+                "page": row.get("page"),
+                "chapter_number": row.get("chapter_number"),
+                "matched_terms": hits[:5],
+            })
+            if len(prescribed_evidence[key]) >= 5:
+                break
+
     covered_keys = [
         key for key, rows in evidence.items() if rows
     ]
@@ -641,13 +764,28 @@ def detect_doctoral_functional_coverage(
         if key not in covered_keys
     ]
 
-    # A flexible doctoral thesis must contain every essential function and at
-    # least five of the six broad research functions. The expert review still
-    # examines the adequacy and integration of each function.
+    prescribed_covered_keys = [
+        key for key, rows in prescribed_evidence.items() if rows
+    ]
+    missing_prescribed_keys = [
+        key for key in PHD_PRESCRIBED_ELEMENTS if key not in prescribed_covered_keys
+    ]
+    essential_prescribed_missing = [
+        key for key in PHD_ESSENTIAL_PRESCRIBED_ELEMENTS
+        if key not in prescribed_covered_keys
+    ]
+
+    # A PhD may use any defensible chapter architecture, but the architecture
+    # must still cover every broad research function and every prescribed
+    # doctoral element. Chapter variation must never become a reason to omit
+    # problem, theory, methods, ethics, evidence, discussion or contribution.
     complete = (
         not essential_missing
-        and len(covered_keys) >= 5
+        and len(covered_keys) == len(DOCTORAL_RESEARCH_FUNCTIONS)
+        and not missing_prescribed_keys
     )
+
+    role_map = build_chapter_role_map(paragraphs, "PhD")
 
     return {
         "covered_function_keys": covered_keys,
@@ -666,8 +804,16 @@ def detect_doctoral_functional_coverage(
             for key in essential_missing
         ],
         "function_evidence": evidence,
+        "prescribed_element_evidence": prescribed_evidence,
+        "covered_prescribed_element_keys": prescribed_covered_keys,
+        "covered_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in prescribed_covered_keys],
+        "missing_prescribed_element_keys": missing_prescribed_keys,
+        "missing_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in missing_prescribed_keys],
+        "essential_missing_prescribed_element_keys": essential_prescribed_missing,
+        "essential_missing_prescribed_elements": [PHD_PRESCRIBED_ELEMENTS[key]["label"] for key in essential_prescribed_missing],
+        "chapter_role_map": role_map,
         "functions_covered_count": len(covered_keys),
-        "functions_required_minimum": 5,
+        "functions_required_minimum": len(DOCTORAL_RESEARCH_FUNCTIONS),
         "fixed_chapter_sequence_required": False,
         "custom_chapter_titles_allowed": True,
         "complete": complete,
@@ -740,6 +886,35 @@ def _heading_level(text: str, style_name: str = "") -> int:
 BACK_MATTER_HEADINGS = {"references", "reference list", "bibliography", "appendix", "appendices"}
 REFERENCE_HEADINGS = {"references", "reference list", "bibliography"}
 APPENDIX_HEADINGS = {"appendix", "appendices"}
+TOC_HEADINGS = {"table of contents", "contents"}
+LIST_OF_TABLES_HEADINGS = {"list of tables"}
+LIST_OF_FIGURES_HEADINGS = {"list of figures", "list of illustrations"}
+ACRONYM_HEADINGS = {"acronyms", "list of acronyms", "abbreviations", "list of abbreviations"}
+
+
+def _document_zone(
+    current: str,
+    low_text: str,
+    *,
+    heading: bool,
+    chapter: Optional[int],
+) -> str:
+    """Track the semantic document zone independently of Word heading styles."""
+    if chapter is not None:
+        return "main_work"
+    if low_text in REFERENCE_HEADINGS:
+        return "references"
+    if low_text in APPENDIX_HEADINGS:
+        return "appendices"
+    if heading and low_text in TOC_HEADINGS:
+        return "table_of_contents"
+    if heading and low_text in LIST_OF_TABLES_HEADINGS:
+        return "list_of_tables"
+    if heading and low_text in LIST_OF_FIGURES_HEADINGS:
+        return "list_of_figures"
+    if heading and low_text in ACRONYM_HEADINGS:
+        return "acronyms"
+    return current
 
 
 def _section_path(stack: Dict[int, str]) -> List[str]:
@@ -754,6 +929,78 @@ def _iter_docx_blocks(document) -> Iterator[Any]:
             yield Paragraph(child, document)
         elif child.tag == qn("w:tbl"):
             yield Table(child, document)
+
+
+def _is_within_revision_deletion(node: Any) -> bool:
+    """Return True when a WordprocessingML node belongs to deleted/moved-out text."""
+    if qn is None:
+        return False
+    blocked = {qn("w:del"), qn("w:moveFrom")}
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    while parent is not None:
+        if parent.tag in blocked:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def docx_visible_text(block: Any) -> str:
+    """Read the text Word displays, including tracked insertions.
+
+    ``python-docx`` omits runs nested in ``w:ins`` from ``Paragraph.text``.
+    Supervisor instructions and unresolved edits are often stored that way, so
+    the review parser must include inserted/moved-to text while excluding
+    deleted/moved-from text.
+    """
+    if qn is None:
+        return clean_text(getattr(block, "text", ""))
+    element = getattr(block, "_p", None)
+    if element is None:
+        element = getattr(block, "_tc", None)
+    if element is None:
+        element = getattr(block, "_element", None)
+    if element is None:
+        return clean_text(getattr(block, "text", ""))
+    chunks: List[str] = []
+    for node in element.iter():
+        if _is_within_revision_deletion(node):
+            continue
+        if node.tag == qn("w:t"):
+            chunks.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            chunks.append("	")
+        elif node.tag in {qn("w:br"), qn("w:cr")}:
+            chunks.append("\n")
+    return clean_text("".join(chunks))
+
+
+def docx_revision_metadata(block: Any) -> Dict[str, Any]:
+    """Return visible revision metadata for a paragraph or table cell."""
+    if qn is None:
+        return {"contains_tracked_changes": False, "tracked_inserted_text": ""}
+    element = getattr(block, "_p", None)
+    if element is None:
+        element = getattr(block, "_tc", None)
+    if element is None:
+        element = getattr(block, "_element", None)
+    if element is None:
+        return {"contains_tracked_changes": False, "tracked_inserted_text": ""}
+    inserted: List[str] = []
+    has_change = False
+    for node in element.iter():
+        if node.tag in {qn("w:ins"), qn("w:del"), qn("w:moveFrom"), qn("w:moveTo")}:
+            has_change = True
+        if node.tag == qn("w:t") and not _is_within_revision_deletion(node):
+            parent = node.getparent()
+            while parent is not None and parent is not element:
+                if parent.tag in {qn("w:ins"), qn("w:moveTo")}:
+                    inserted.append(node.text or "")
+                    break
+                parent = parent.getparent()
+    return {
+        "contains_tracked_changes": has_change,
+        "tracked_inserted_text": clean_text("".join(inserted)),
+    }
 
 
 def extract_docx(data: bytes) -> List[Dict[str, Any]]:
@@ -772,6 +1019,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     in_references = False
     in_keywords = False
     in_appendix = False
+    current_zone = "preliminary_pages"
 
     for block in _iter_docx_blocks(doc):
         if Table is not None and isinstance(block, Table):
@@ -793,7 +1041,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 out[-1]["table_index"] = table_index
             current_path = _section_path(heading_stack)
             for row_index, row in enumerate(block.rows, start=1):
-                values = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
+                values = [docx_visible_text(cell) for cell in row.cells if docx_visible_text(cell)]
                 if not values:
                     continue
                 paragraph_no += 1
@@ -811,6 +1059,8 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     "section_number": None,
                     "section_number_chapter": None,
                     "chapter_detection_basis": "inherited" if current_chapter else "unassigned",
+                    "document_zone": current_zone,
+                    "is_reference_entry": current_zone == "references",
                     "is_toc_entry": False,
                     "style": "Table",
                     "source_kind": "table_row",
@@ -822,7 +1072,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             pending_caption_distance = 0
             continue
 
-        text = clean_text(block.text)
+        text = docx_visible_text(block)
         if not text:
             continue
         paragraph_no += 1
@@ -833,7 +1083,15 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
         raw_heading = is_heading(text, style_name)
         toc_entry = is_probable_toc_entry(text, style_name)
         low_text = normalised(text)
-        raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+        inside_navigation = (
+            current_zone in {"table_of_contents", "list_of_tables", "list_of_figures"}
+            and not bool(re.search(r"\bheading\s*1\b", style_name, flags=re.I))
+        )
+        raw_marker = (
+            explicit_chapter_marker(text)
+            if raw_heading and not toc_entry and not inside_navigation
+            else None
+        )
         if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
             in_references = True
             in_keywords = False
@@ -860,16 +1118,22 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 style_name=style_name,
                 current_chapter=current_chapter,
             )
-            if heading and not toc_entry and not in_appendix
+            if heading and not toc_entry and not in_appendix and not inside_navigation
             else None
         )
         section_number = (
-            section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
+            section_number_from_heading(text) if heading and not toc_entry and not in_appendix and not inside_navigation else None
         )
         section_chapter = (
             chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
         )
         chapter = marker or title_chapter or section_chapter
+        current_zone = _document_zone(
+            current_zone,
+            low_text,
+            heading=bool(raw_heading and not toc_entry),
+            chapter=chapter,
+        )
         if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
             current_chapter = None
             heading_stack = {}
@@ -914,6 +1178,8 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 else "unassigned"
             ),
             "is_toc_entry": toc_entry,
+            "document_zone": current_zone,
+            "is_reference_entry": current_zone == "references",
             "style": style_name,
             "source_kind": "table_caption" if caption else "paragraph",
             "table_index": None,
@@ -921,6 +1187,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "table_number": caption.get("table_number") if caption else None,
             "table_title": caption.get("table_title") if caption else None,
             "table_caption": caption.get("table_caption") if caption else None,
+            **docx_revision_metadata(block),
         })
     return out
 
@@ -934,6 +1201,10 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
     current_chapter = None
     heading_stack: Dict[int, str] = {}
     global_paragraph = 0
+    in_references = False
+    in_keywords = False
+    in_appendix = False
+    current_zone = "preliminary_pages"
     for page_index in range(len(doc)):
         page = doc[page_index]
         blocks = sorted(page.get_text("blocks"), key=lambda block: (round(block[1], 1), round(block[0], 1)))
@@ -951,7 +1222,14 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                 raw_heading = is_heading(text)
                 toc_entry = is_probable_toc_entry(text)
                 low_text = normalised(text)
-                raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+                inside_navigation = current_zone in {
+                    "table_of_contents", "list_of_tables", "list_of_figures"
+                }
+                raw_marker = (
+                    explicit_chapter_marker(text)
+                    if raw_heading and not toc_entry and not inside_navigation
+                    else None
+                )
                 if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
                     in_references = True
                     in_keywords = False
@@ -977,16 +1255,22 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                         text,
                         current_chapter=current_chapter,
                     )
-                    if heading and not toc_entry and not in_appendix
+                    if heading and not toc_entry and not in_appendix and not inside_navigation
                     else None
                 )
                 section_number = (
-                    section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
+                    section_number_from_heading(text) if heading and not toc_entry and not in_appendix and not inside_navigation else None
                 )
                 section_chapter = (
                     chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
                 )
                 chapter = marker or title_chapter or section_chapter
+                current_zone = _document_zone(
+                    current_zone,
+                    low_text,
+                    heading=bool(raw_heading and not toc_entry),
+                    chapter=chapter,
+                )
                 if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
                     current_chapter = None
                     heading_stack = {}
@@ -1021,6 +1305,8 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                         else "unassigned"
                     ),
                     "is_toc_entry": toc_entry,
+                    "document_zone": current_zone,
+                    "is_reference_entry": current_zone == "references",
                     "style": "",
                     "source_kind": "table_caption" if caption else "pdf_block",
                     "table_index": None,

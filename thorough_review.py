@@ -282,10 +282,37 @@ _METHOD_LABELS = {
 
 def _detected_methods(rows: Sequence[Dict[str, Any]], chapters: Optional[set[int]] = None) -> set[str]:
     text = normalised(_doc_text(rows, chapters))
-    return {
+    detected = {
         name for name, pattern in _METHOD_PATTERNS.items()
         if re.search(pattern, text, flags=re.I)
     }
+
+    # A phrase such as "a systematic review of established scales" inside a
+    # questionnaire methodology does not make the study a systematic review.
+    # Require a review-design cluster and no clear primary-data route before
+    # activating PRISMA/search-screening-appraisal requirements.
+    if "systematic_review" in detected:
+        review_signals = sum(
+            term in text
+            for term in (
+                "systematic review", "scoping review", "meta analysis",
+                "meta-analysis", "prisma", "search strategy",
+                "database search", "inclusion criteria",
+                "exclusion criteria", "quality appraisal", "risk of bias",
+            )
+        )
+        primary_signals = any(
+            term in text
+            for term in (
+                "questionnaire", "respondents", "participants",
+                "data collection", "sampling", "population",
+                "spss", "stata", "regression", "survey",
+                "interview", "focus group",
+            )
+        )
+        if review_signals < 2 or primary_signals:
+            detected.discard("systematic_review")
+    return detected
 
 
 def _has_any(text: str, terms: Sequence[str]) -> bool:

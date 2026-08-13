@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from . import object_storage
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +41,18 @@ def _hash_bytes(data: bytes) -> str:
 
 
 def _save_db_result_artifact(review_id: str, suffix: str, data: bytes, content_type: str) -> None:
+    key = f"results/{review_id}{suffix}"
+    if object_storage.put(
+        f"review-{review_id}",
+        key,
+        data,
+        content_type=content_type,
+    ):
+        return
     if not _db_artifact_storage_enabled():
         return
     try:
         from .database import ReviewArtifact, SessionLocal
-        key = f"results/{review_id}{suffix}"
         value = bytes(data or b"")
         with SessionLocal() as db:
             row = (
@@ -68,11 +77,14 @@ def _save_db_result_artifact(review_id: str, suffix: str, data: bytes, content_t
 
 
 def _load_db_result_artifact(review_id: str, suffix: str) -> Optional[bytes]:
+    key = f"results/{review_id}{suffix}"
+    value = object_storage.get(f"review-{review_id}", key)
+    if value is not None:
+        return value
     if not _db_artifact_storage_enabled():
         return None
     try:
         from .database import ReviewArtifact, SessionLocal
-        key = f"results/{review_id}{suffix}"
         with SessionLocal() as db:
             row = (
                 db.query(ReviewArtifact)
@@ -194,6 +206,26 @@ def load_annotated(review_id: str) -> Optional[bytes]:
     return _load_db_result_artifact(review_id, "-annotated.docx")
 
 
+def save_inline_annotated(review_id: str, data: bytes) -> None:
+    target = _path(review_id, "-inline-annotated.docx")
+    temp = target.with_suffix(".docx.tmp")
+    temp.write_bytes(data)
+    temp.replace(target)
+    _save_db_result_artifact(
+        review_id,
+        "-inline-annotated.docx",
+        data,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+def load_inline_annotated(review_id: str) -> Optional[bytes]:
+    target = _path(review_id, "-inline-annotated.docx")
+    if target.exists():
+        return target.read_bytes()
+    return _load_db_result_artifact(review_id, "-inline-annotated.docx")
+
+
 def storage_status() -> Dict[str, Any]:
     root = ensure_storage()
     path_text = str(root)
@@ -202,4 +234,5 @@ def storage_status() -> Dict[str, Any]:
         "configured_path": str(CONFIGURED_ROOT),
         "using_fallback": root == FALLBACK_ROOT and CONFIGURED_ROOT != FALLBACK_ROOT,
         "persistent_hint": not path_text.startswith("/tmp/"),
+        "durable_backend": object_storage.backend_name(),
     }

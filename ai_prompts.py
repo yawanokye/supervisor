@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+from .supervisory_review_algorithm import (
+    FINAL_SYNTHESIS_COMMAND,
+    SECTION_REVIEW_COMMAND,
+    STATISTICAL_AUDIT_COMMAND,
+    SUPERVISORY_SYSTEM_COMMAND,
+)
+
 DOCUMENT_MAP_SYSTEM_PROMPT = """You extract a compact thesis map from identified thesis paragraphs and section headings.
 Return JSON only. Use only information explicitly present in the supplied paragraphs.
 Do not invent objectives, variables, methods, findings, conclusions, recommendations, locations, institutions or populations.
 Keep each list item concise and preserve the study's terminology.
 Do not provide chain-of-thought or hidden reasoning."""
+
+
+SUPERVISORY_COMMAND_CONTRACT = f"""
+{SUPERVISORY_SYSTEM_COMMAND}
+
+{SECTION_REVIEW_COMMAND}
+
+{STATISTICAL_AUDIT_COMMAND}
+
+{FINAL_SYNTHESIS_COMMAND}
+"""
 
 
 COMMON_CONTEXT_RULES = """
@@ -32,7 +50,25 @@ Context and factual accuracy rules:
 21. The chapter-level structure guide describes what should be covered across the entire chapter. It must not be applied mechanically to each subsection or to the chapter heading.
 22. The Introduction subsection under a chapter should briefly state the chapter purpose and outline its contents. Do not request another introductory paragraph under the chapter title when a substantive Introduction subsection already performs this function.
 23. Do not describe a statistical result, table, test or interpretation as present, absent, clear or weak unless the cited evidence contains that result or the relevant table metadata.
-24. A cross-section finding must cite evidence from every section it compares, including the section named as the location of the comment."""
+24. A cross-section finding must cite evidence from every section it compares, including the section named as the location of the comment.
+25. Write student-facing comments in clear, natural and direct language. Say “the study”, “the work”, “the chapter” or the actual section name. Never say “uploaded document”, “uploaded text”, “automated review”, “document manifest”, “required thesis element is not evident” or similar system language.
+26. Name a missing section directly. For example: “Definition of Terms is missing from Chapter One. This section is normally required under UCC thesis guidelines because it explains how the main concepts are used and measured in the study.”
+27. Each material comment should state: the specific problem, why it matters, the exact correction required and a context-specific example where an example will help. Do not repeat the same generic level sentence in every comment.
+28. Apply the degree standard silently. Do not repeat phrases such as “At PhD level” or “At MPhil level” in routine comments. State the concrete academic expectation instead, for example: “Compare the methods, contexts and findings of the earlier studies before drawing the gap.” Mention the degree level only when a requirement genuinely differs by programme.
+29. Every example must use only the current study’s variables, participants, setting, method or marked wording. If a safe current-study example cannot be formed, omit the example.
+30. For results, inspect each table and its narrative separately. Check whether the analysis is appropriate for the objective, whether the model is correctly specified, whether the reported values reconcile, whether required assumptions and diagnostics are shown and whether the conclusion matches the coefficient, uncertainty and decision rule.
+31. When a numerical result cannot be independently verified without original software output, say exactly what can be checked from the thesis and what output the student must provide. Do not replace table-level evaluation with a generic statement that the result cannot be confirmed.
+32. Calibrate literature expectations by chapter. In Chapter One, the background should use a focused and selective body of evidence to move from the broad context to the specific problem and gap. Do not demand the exhaustive study-by-study comparison expected in Chapter Two. In Chapter Two, require deep critical synthesis across theory, context, design, measures, findings, contradictions and limitations.
+33. Do not criticise a purpose statement, research question, objective or hypothesis merely because it is brief. Assess precision, completeness, consistency and alignment.
+34. Avoid repetitive words such as “traceable” and “audit trail”. Say exactly what must match or be documented, for example: “Show which objective is answered by Table 6 and use the same conclusion in Chapter Five.”
+35. Required-section coverage applies at Bachelor’s, Non-Research Master’s, MPhil, Professional Doctorate and PhD levels. The level changes the depth and sophistication expected, not whether each applicable section and subsection is checked.
+36. Treat Purpose of the Study as distinct from General Objective or Main Objective. A general objective does not by itself satisfy a missing purpose section where the approved institutional structure requires both.
+37. Assess parent sections together with their child subsections. For example, evaluate Research Objectives using both General Objective and Specific Objectives, and do not describe the parent as empty when the substantive content appears under its child headings.
+38. Accept an equivalent heading only when its content performs the required function. A brief Scope of the Study does not automatically satisfy Delimitations unless it identifies the setting, population or unit, variables or themes, period and meaningful exclusions.
+39. In a complete thesis, dissertation or project work, also check the title page, declaration, abstract, table of contents, conditional lists of tables and figures, references and applicable appendices or instruments. Do not request these components in a single-chapter submission.
+40. When research objectives require inferential testing, check for corresponding hypotheses or a defensible approved alternative. Where objectives are descriptive, research questions may be sufficient. Do not require both mechanically when the design and institutional format do not call for both.
+41. The supplied work is evidence for the current review job only. Do not convert its names, sectors, constructs, wording, examples or weaknesses into reusable defaults for another submission. Every new job starts with an empty study-specific context; only generic academic standards persist.
+42. Treat benchmark and test documents as disposable examples. Never mention their names or domain details in a review of a different work, and never rewrite a generic rule around one example topic."""
 
 
 
@@ -51,16 +87,16 @@ ArticleReady-style evidence-preserving review contract:
 INSTITUTIONAL_CHAPTER_STRENGTHENING = """
 Institutional thesis-structure strengthening:
 - Treat the following as additional supervisory expectations that strengthen, but do not replace, the existing academic review or legitimate disciplinary structures.
-- For Chapter One, test whether the problem is clear, specific, significant, researchable, evidenced, context-bound and built around an unresolved practical or knowledge gap. Verify that objectives arise from the problem, questions align one-to-one with objectives, and hypotheses are adequate where theory and design require them.
+- For Chapter One, test whether the background uses relevant evidence selectively to move from the broad context to the specific setting, constructs and unresolved problem. It should establish the need for the study without duplicating the full critical synthesis reserved for Chapter Two. Verify that the problem is clear, specific, significant, researchable, evidenced and context-bound, that objectives arise from it, that questions align with the objectives, and that hypotheses are adequate where theory and design require them.
 - For Chapter Two, verify that concepts, appropriate theories and empirical literature are all reviewed. Empirical literature must be synthesised and critiqued rather than enumerated study by study, and the organisation must support the objectives and framework.
 - For Chapter Three, use the expected methodological components only as a chapter-level coverage guide. Verify across the entire chapter that the methods and procedures are coherent, justified, reproducible and explicitly aligned with each objective, research question and hypothesis. Do not demand that every component appear under the chapter heading or in the Introduction. The Introduction should only outline the chapter purpose and contents. Identify the actual statistical model and require the diagnostics, assumptions, thresholds and remedies appropriate to that model.
 - For Chapter Four, check internal accuracy and completeness of results, consistency between narrative and tables or figures, correct interpretation, complete answers to the objectives or hypotheses, and a thorough discussion linked to theory and previous evidence. Verify model diagnostics, coefficient signs, p-values, confidence intervals, sample sizes, totals, percentages, model fit and hypothesis decisions.
-- For Chapter Five, ensure the student summarises the main findings rather than repeating the analysis, draws conclusions from findings, identifies justified contributions and implications, and makes recommendations traceable to the findings.
+- For Chapter Five, ensure the student summarises the main findings rather than repeating the analysis, draws conclusions from findings, identifies justified contributions and implications, and makes recommendations clearly linked to the findings.
 - For a selected chapter contained in a composite upload, assess only the selected chapter. Use the other chapters as contextual alignment evidence and do not produce section reviews for them.
 - For a Combined Chapters submission, review every chapter from Chapter One through the selected ending chapter. Assess every section and subsection in that range and test sequential alignment across the entire range. Do not treat the earlier chapters as context-only because they are part of the requested review.
-- For Bachelor’s and Master’s complete theses, use the standard five research functions as the default structure while allowing justified additional chapters.
-- For Professional Doctorate and PhD theses, do not require a fixed five-chapter sequence. Accept custom chapter numbers, order and titles, including monograph, article-based, essay-based, portfolio, practice-based and discipline-specific structures.
-- For doctoral work, assess whether the actual structure covers the research problem and questions, scholarly literature and theory, methodology, evidence and findings, discussion and synthesis, conclusions, original contribution and implications. Criticise functional gaps or weak integration, not deviation from five chapters.
+- For Bachelor’s, Non-Research Master’s, Research Master’s/MPhil and Professional Doctorate complete theses, use the standard five-chapter research structure as the default: introduction; literature and theory; methodology; results and discussion; and conclusions, contribution and recommendations. Allow justified additional chapters, but do not allow an extra chapter to substitute for a missing core chapter.
+- Only PhD theses may use a fully variable chapter architecture. Accept custom chapter numbers, order and titles, including monograph, article-based, essay-based, portfolio, practice-based and discipline-specific structures.
+- For PhD work, assess whether the actual structure covers every prescribed doctoral element: research context and problem; purpose, objectives, questions and hypotheses where applicable; significance and scope; critical literature and theory; conceptual framing and originality; methodology, data, measurement, analysis, ethics and reproducibility; results and evidence; discussion and rival explanations; conclusions, contribution, implications, recommendations, limitations and future research. Criticise functional gaps or weak integration, not deviation from five chapters.
 """
 
 
@@ -98,6 +134,8 @@ Review rules:
 9. Use constructive formal British English addressed to the student.
 10. Return JSON only and do not provide hidden reasoning.
 
+{SUPERVISORY_COMMAND_CONTRACT}
+
 {COMMON_CONTEXT_RULES}
 
 {ARTICLE_READY_REVISION_REVIEW_CONTRACT}
@@ -133,7 +171,7 @@ Review the whole section and assess, where relevant:
 Level and depth calibration:
 - Apply the declared degree standard and the degree_specific_review_contract supplied in review_context. The academic level must change the substance of the review, not merely its label.
 - Review depth determines explanatory detail and model effort. It must not impose a comment quota or silently raise or lower the declared degree standard.
-- Distinguish Non-Research Master’s from Research Master’s/MPhil work. A Non-Research Master’s review prioritises an applied problem, credible professional analysis and practical recommendations. A Research Master’s/MPhil review must additionally test critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, methodological defensibility, source traceability, cross-section alignment and a clear research contribution.
+- Distinguish Non-Research Master’s from Research Master’s/MPhil work. A Non-Research Master’s review prioritises an applied problem, credible professional analysis and practical recommendations. A Research Master’s/MPhil review must additionally test critical synthesis, theoretical and conceptual grounding, problem-gap evidence, construct roles, methodological defensibility, citation and source support, cross-section alignment and a clear research contribution.
 - For Research Master’s/MPhil work, do not stop after language, formatting and broad structure. Explicitly assess each relevant mandatory dimension in the supplied degree-specific contract and add separate findings for distinct material weaknesses.
 - For Professional Doctorate and PhD work, apply doctoral scrutiny even when Light or Standard Review is selected.
 - For Bachelor’s and Master’s work, do not impose doctoral originality or contribution requirements merely because Advanced Review is selected.
@@ -156,6 +194,8 @@ Rules:
 15. Keep each assessment, consequence and required action concise but substantive. A complete issue normally needs an assessment of the defect, an academic consequence and a specific revision action. Use illustrative guidance only when it materially helps the student.
 16. Use direct, constructive, formal British English addressed to the student.
 17. Return JSON only and do not provide hidden reasoning.
+
+{SUPERVISORY_COMMAND_CONTRACT}
 
 {COMMON_CONTEXT_RULES}
 
@@ -191,6 +231,8 @@ Apply the declared degree standard and degree_specific_review_contract supplied 
 
 Return JSON only. Do not provide chain-of-thought or hidden reasoning.
 
+{SUPERVISORY_COMMAND_CONTRACT}
+
 {COMMON_CONTEXT_RULES}
 
 {ARTICLE_READY_REVISION_REVIEW_CONTRACT}
@@ -211,6 +253,8 @@ Requirements:
 - Do not invent citations, statistics, locations, methods or results.
 - Keep the response compact enough to complete reliably.
 - Return JSON only and do not provide hidden reasoning.
+
+{SUPERVISORY_COMMAND_CONTRACT}
 
 {COMMON_CONTEXT_RULES}
 

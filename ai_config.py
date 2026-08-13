@@ -45,22 +45,57 @@ def _env_float_alias(primary: str, legacy: str, default: float) -> float:
     return default
 
 
-def _normalise_effort(value: str, default: str = "high") -> str:
+
+
+def _env_choice(name: str, default: str, allowed: set[str]) -> str:
+    value = (os.getenv(name, default) or default).strip().lower()
+    return value if value in allowed else default
+
+
+def _normalise_effort(value: str, default: str = "xhigh") -> str:
     effort = (value or default).strip().lower()
     allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
     return effort if effort in allowed else default
 
 
+
+
+OBSOLETE_OR_UNSUPPORTED_ENV_VARS = {
+    "VPROF_ANALYSIS_ROUTE_DETECTION",
+    "VPROF_ARTICLEREADY_REVIEW_ENGINE",
+    "VPROF_COVERAGE_STATUS_LEDGER",
+    "VPROF_EVIDENCE_PRESERVING_REVIEW",
+    "VPROF_EXPORT_UNANCHORED_FINDINGS_AS_SUMMARY_COMMENTS",
+    "VPROF_GENERIC_METHOD_RESULTS_AUDIT",
+    "VPROF_METHOD_SPECIFIC_DIAGNOSTICS",
+    "VPROF_REFERENCE_RECONCILIATION_AUDIT",
+    "VPROF_REPORT_FIRST_REVIEW",
+    "VPROF_REQUIRE_STATISTICAL_AUDIT_FOR_RESULTS",
+    "VPROF_SAFE_COMMENT_MARKER_ANCHORS",
+    "VPROF_SHOW_FINDING_COMMENT_RECONCILIATION",
+    "VPROF_VERIFY_DOCX_COMMENT_COUNT",
+}
+
+
+def unsupported_environment_variables() -> list[str]:
+    """Return legacy settings that are present but do not control this build.
+
+    Surfacing these names prevents administrators from assuming that a dormant
+    flag is protecting a review. The corresponding behaviour is either always
+    enforced by the canonical pipeline or has been replaced by an active,
+    typed setting.
+    """
+    return sorted(name for name in OBSOLETE_OR_UNSUPPORTED_ENV_VARS if os.getenv(name) is not None)
+
 @dataclass(frozen=True)
 class HybridAIConfig:
     """Academic-review routing configuration.
 
-    The fast chapter reviewer uses GPT-5.6 Terra. Factual verification,
-    cross-chapter judgement, advanced research methods/results review and
-    external examination use GPT-5.6 Terra. Review depth controls breadth and detail,
+    Every active OpenAI review role uses GPT-5.6 Luna with xhigh reasoning.
+    Review depth controls breadth and detail,
     not the factual-accuracy threshold.
 
-    VProfessor v1.9.9.10 calibrates provider strength, review coverage and audit capacity to every declared degree level. The recommended production route is OpenAI-only for academic quality, with cheap nano/mini roles for extraction and section review and a bounded expert model for final judgement. Existing strict schemas, checkpoints and token accounting remain active.
+    V-Professor v2.7.0 applies research-design, submission-stage, contradiction, root-cause consolidation and current-submission isolation gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
     """
 
     enabled: bool
@@ -72,6 +107,20 @@ class HybridAIConfig:
     deepseek_advanced_reasoning_effort: str
     deepseek_advanced_primary_reasoning_effort: str
     deepseek_thinking_enabled: bool
+    deepseek_primary_thinking_enabled: bool
+    deepseek_audit_thinking_enabled: bool
+    deepseek_truncation_recovery_enabled: bool
+    deepseek_truncation_retry_multiplier: float
+    deepseek_max_output_tokens: int
+    deepseek_primary_max_output_tokens: int
+    deepseek_single_target_recovery_max_output_tokens: int
+    deepseek_compact_issue_limit_per_target: int
+    deepseek_coverage_prose_paragraphs_per_unit: int
+    deepseek_coverage_unit_max_chars: int
+    deepseek_coverage_table_rows_per_unit: int
+    deepseek_coverage_units_per_request: int
+    deepseek_coverage_high_risk_units_per_request: int
+    deepseek_coverage_request_max_chars: int
 
     openai_api_key: str
     openai_base_url: str
@@ -87,6 +136,8 @@ class HybridAIConfig:
     openai_expert_reasoning_effort: str
     openai_final_audit_model: str
     openai_final_audit_reasoning_effort: str
+    openai_cleaning_reasoning_effort: str
+    openai_section_analysis_reasoning_effort: str
     # Compatibility aliases for older deployments.
     openai_external_model: str
     openai_external_reasoning_effort: str
@@ -109,6 +160,10 @@ class HybridAIConfig:
     max_retries: int
     fast_request_timeout_seconds: int
     fast_request_max_retries: int
+    openai_background_mode_enabled: bool
+    openai_background_poll_seconds: int
+    openai_background_timeout_seconds: int
+    openai_prompt_cache_enabled: bool
     max_parallel_calls: int
     chapter_review_concurrency: int
     chapter_packet_max_chars: int
@@ -160,6 +215,7 @@ class HybridAIConfig:
     standard_phd_min_findings: int
     fast_audit_batch_issue_limit: int
     fast_audit_max_batches: int
+    long_audit_max_batches: int
     strict_failure: bool
     structured_output_retries: int
     advanced_quality_control: bool
@@ -168,6 +224,9 @@ class HybridAIConfig:
     routing_profile: str
     enable_openai_routing: bool
     enable_deepseek_routing: bool
+    primary_provider: str
+    fallback_provider: str
+    provider_failover_enabled: bool
     selective_escalation_enabled: bool
     escalation_confidence_threshold: float
     default_call_budget_usd: float
@@ -183,6 +242,8 @@ class HybridAIConfig:
     openai_section_analysis_fallback_model: str
     openai_final_synthesis_model: str
     openai_final_synthesis_fallback_model: str
+    openai_phd_final_synthesis_model: str
+    openai_phd_final_synthesis_reasoning_effort: str
     openai_cleaning_input_price: float
     openai_cleaning_cached_input_price: float
     openai_cleaning_output_price: float
@@ -224,10 +285,10 @@ class HybridAIConfig:
     deepseek_flash_input_price: float = 0.14
     deepseek_flash_cached_input_price: float = 0.0028
     deepseek_flash_output_price: float = 0.28
-    openai_mini_model: str = "gpt-5.6-terra"
-    openai_advanced_model: str = "gpt-5.6-terra"
-    openai_mini_reasoning_effort: str = "high"
-    openai_advanced_reasoning_effort: str = "high"
+    openai_mini_model: str = "gpt-5.6-luna"
+    openai_advanced_model: str = "gpt-5.6-luna"
+    openai_mini_reasoning_effort: str = "xhigh"
+    openai_advanced_reasoning_effort: str = "xhigh"
     mini_max_output_tokens: int = 7500
     review_max_output_tokens: int = 9000
     openai_mini_input_price: float = 2.50
@@ -266,7 +327,7 @@ class HybridAIConfig:
         # OPENAI_REVIEW_MODEL setting is intentionally ignored so a stale
         # o3-mini value cannot silently override the upgraded workflow.
         chapter_model = os.getenv(
-            "OPENAI_CHAPTER_MODEL", "gpt-5.6-terra"
+            "OPENAI_CHAPTER_MODEL", "gpt-5.6-luna"
         ).strip()
         expert_model = os.getenv(
             "OPENAI_EXPERT_MODEL", "gpt-5.6-terra"
@@ -285,22 +346,32 @@ class HybridAIConfig:
         ).strip()
 
         chapter_effort = _normalise_effort(
-            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "medium")
+            os.getenv("OPENAI_CHAPTER_REASONING_EFFORT", "medium"),
+            default="medium",
         )
         expert_effort = _normalise_effort(
-            os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "high")
+            os.getenv("OPENAI_EXPERT_REASONING_EFFORT", "high"),
+            default="high",
         )
         audit_effort = _normalise_effort(
-            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", expert_effort)
+            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", "xhigh")
+        )
+        cleaning_effort = _normalise_effort(
+            os.getenv("OPENAI_CLEANING_REASONING_EFFORT", "low"),
+            default="low",
+        )
+        section_effort = _normalise_effort(
+            os.getenv("OPENAI_SECTION_ANALYSIS_REASONING_EFFORT", chapter_effort),
+            default="medium",
         )
         legacy_external_effort = _normalise_effort(
             os.getenv("OPENAI_EXTERNAL_REASONING_EFFORT", expert_effort)
         )
         legacy_decision_effort = _normalise_effort(
             os.getenv(
-                "OPENAI_EXTERNAL_DECISION_REASONING_EFFORT", "high"
+                "OPENAI_EXTERNAL_DECISION_REASONING_EFFORT", "xhigh"
             ),
-            default="high",
+            default="xhigh",
         )
         external_domain_effort = _normalise_effort(
             os.getenv(
@@ -313,39 +384,39 @@ class HybridAIConfig:
                 "OPENAI_EXTERNAL_ADJUDICATOR_REASONING_EFFORT",
                 legacy_decision_effort,
             ),
-            default="high",
+            default="xhigh",
         )
 
-        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 6500)
+        standard_tokens = _env_int("AI_STANDARD_MAX_OUTPUT_TOKENS", 4800)
         advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
 
         chapter_input_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 2.50
+            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 0.20
         )
         chapter_cached_price = _env_float_alias(
             "PRICE_OPENAI_CHAPTER_CACHED_INPUT",
             "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-            0.25,
+            0.02,
         )
         chapter_output_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 15.00
+            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 1.20
         )
         expert_input_price = _env_float(
-            "PRICE_OPENAI_EXPERT_INPUT", 2.50
+            "PRICE_OPENAI_EXPERT_INPUT", 0.20
         )
         expert_cached_price = _env_float(
-            "PRICE_OPENAI_EXPERT_CACHED_INPUT", 0.25
+            "PRICE_OPENAI_EXPERT_CACHED_INPUT", 0.02
         )
         expert_output_price = _env_float(
-            "PRICE_OPENAI_EXPERT_OUTPUT", 15.00
+            "PRICE_OPENAI_EXPERT_OUTPUT", 1.20
         )
 
         combined_pipeline_enabled = _env_bool(
             "VPROF_COMBINED_APP_PIPELINE", False
         )
         cleaning_model = os.getenv(
-            "OPENAI_CLEANING_MODEL", "gpt-4.1-nano"
-        ).strip() or "gpt-4.1-nano"
+            "OPENAI_CLEANING_MODEL", "gpt-5.6-luna"
+        ).strip() or "gpt-5.6-luna"
         section_model = os.getenv(
             "OPENAI_SECTION_ANALYSIS_MODEL", chapter_model
         ).strip() or chapter_model
@@ -358,6 +429,13 @@ class HybridAIConfig:
         final_synthesis_fallback_model = os.getenv(
             "OPENAI_FINAL_SYNTHESIS_FALLBACK_MODEL", audit_model or expert_model
         ).strip() or audit_model or expert_model
+        phd_final_synthesis_model = os.getenv(
+            "OPENAI_PHD_FINAL_SYNTHESIS_MODEL", final_synthesis_model
+        ).strip() or final_synthesis_model
+        phd_final_synthesis_reasoning_effort = _normalise_effort(
+            os.getenv("OPENAI_PHD_FINAL_SYNTHESIS_REASONING_EFFORT", audit_effort),
+            default="xhigh",
+        )
 
         return cls(
             enabled=_env_bool("AI_REVIEW_ENABLED", True),
@@ -379,6 +457,52 @@ class HybridAIConfig:
             deepseek_thinking_enabled=_env_bool(
                 "DEEPSEEK_THINKING_ENABLED", True
             ),
+            # Strict JSON chapter packets are much more reliable and cheaper
+            # when hidden reasoning does not consume the same completion
+            # budget needed for the final JSON object. Keep deeper thinking for
+            # bounded audits unless the administrator explicitly overrides it.
+            deepseek_primary_thinking_enabled=_env_bool(
+                "DEEPSEEK_PRIMARY_THINKING_ENABLED", False
+            ),
+            deepseek_audit_thinking_enabled=_env_bool(
+                "DEEPSEEK_AUDIT_THINKING_ENABLED", True
+            ),
+            deepseek_truncation_recovery_enabled=_env_bool(
+                "DEEPSEEK_TRUNCATION_RECOVERY", True
+            ),
+            deepseek_truncation_retry_multiplier=_env_float(
+                "DEEPSEEK_TRUNCATION_RETRY_MULTIPLIER", 1.6, 1.0, 3.0
+            ),
+            deepseek_max_output_tokens=_env_int(
+                "DEEPSEEK_MAX_OUTPUT_TOKENS", 12000
+            ),
+            deepseek_primary_max_output_tokens=_env_int(
+                "DEEPSEEK_PRIMARY_MAX_OUTPUT_TOKENS", 7000
+            ),
+            deepseek_single_target_recovery_max_output_tokens=_env_int(
+                "DEEPSEEK_SINGLE_TARGET_RECOVERY_MAX_OUTPUT_TOKENS", 4200
+            ),
+            deepseek_compact_issue_limit_per_target=_env_int(
+                "DEEPSEEK_COMPACT_ISSUE_LIMIT_PER_TARGET", 2, 1
+            ),
+            deepseek_coverage_prose_paragraphs_per_unit=_env_int(
+                "DEEPSEEK_COVERAGE_PARAGRAPHS_PER_UNIT", 3, 1
+            ),
+            deepseek_coverage_unit_max_chars=_env_int(
+                "DEEPSEEK_COVERAGE_UNIT_MAX_CHARS", 7000
+            ),
+            deepseek_coverage_table_rows_per_unit=_env_int(
+                "DEEPSEEK_COVERAGE_TABLE_ROWS_PER_UNIT", 4, 1
+            ),
+            deepseek_coverage_units_per_request=_env_int(
+                "DEEPSEEK_COVERAGE_UNITS_PER_REQUEST", 1
+            ),
+            deepseek_coverage_high_risk_units_per_request=_env_int(
+                "DEEPSEEK_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 1
+            ),
+            deepseek_coverage_request_max_chars=_env_int(
+                "DEEPSEEK_COVERAGE_REQUEST_MAX_CHARS", 9000
+            ),
 
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_base_url=os.getenv(
@@ -392,6 +516,8 @@ class HybridAIConfig:
             openai_expert_reasoning_effort=expert_effort,
             openai_final_audit_model=audit_model,
             openai_final_audit_reasoning_effort=audit_effort,
+            openai_cleaning_reasoning_effort=cleaning_effort,
+            openai_section_analysis_reasoning_effort=section_effort,
             openai_external_model=external_domain_model,
             openai_external_reasoning_effort=external_domain_effort,
             openai_external_decision_reasoning_effort=external_adjudicator_effort,
@@ -409,7 +535,7 @@ class HybridAIConfig:
             max_map_input_chars=_env_int("AI_MAX_MAP_INPUT_CHARS", 30000),
             max_output_tokens=_env_int("AI_MAX_OUTPUT_TOKENS", 9000),
             light_max_output_tokens=_env_int(
-                "AI_LIGHT_MAX_OUTPUT_TOKENS", 4500
+                "AI_LIGHT_MAX_OUTPUT_TOKENS", 3000
             ),
             standard_max_output_tokens=standard_tokens,
             advanced_max_output_tokens=advanced_tokens,
@@ -420,6 +546,18 @@ class HybridAIConfig:
             ),
             fast_request_max_retries=_env_int(
                 "AI_FAST_REQUEST_MAX_RETRIES", 0, 0
+            ),
+            openai_background_mode_enabled=_env_bool(
+                "OPENAI_BACKGROUND_MODE", False
+            ),
+            openai_background_poll_seconds=_env_int(
+                "OPENAI_BACKGROUND_POLL_SECONDS", 5
+            ),
+            openai_background_timeout_seconds=_env_int(
+                "OPENAI_BACKGROUND_TIMEOUT_SECONDS", 1800, 60
+            ),
+            openai_prompt_cache_enabled=_env_bool(
+                "OPENAI_PROMPT_CACHE_ENABLED", True
             ),
             max_parallel_calls=_env_int("AI_MAX_PARALLEL_CALLS", 2),
             chapter_review_concurrency=_env_int(
@@ -438,7 +576,7 @@ class HybridAIConfig:
                 "VPROF_SYSTEMATIC_COVERAGE_REVIEW", True
             ),
             coverage_prose_paragraphs_per_unit=_env_int(
-                "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 7
+                "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 8
             ),
             coverage_context_paragraphs=_env_int(
                 "VPROF_COVERAGE_CONTEXT_PARAGRAPHS", 1, 0
@@ -450,18 +588,18 @@ class HybridAIConfig:
                 "VPROF_COVERAGE_TABLE_ROWS_PER_UNIT", 10
             ),
             coverage_units_per_request=_env_int(
-                "VPROF_COVERAGE_UNITS_PER_REQUEST", 4
+                "VPROF_COVERAGE_UNITS_PER_REQUEST", 6
             ),
             coverage_high_risk_units_per_request=_env_int(
-                "VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 2
+                "VPROF_COVERAGE_HIGH_RISK_UNITS_PER_REQUEST", 3
             ),
             coverage_request_max_chars=_env_int(
-                "VPROF_COVERAGE_REQUEST_MAX_CHARS", 28000
+                "VPROF_COVERAGE_REQUEST_MAX_CHARS", 36000
             ),
             coverage_release_gate_enabled=_env_bool(
                 "VPROF_COVERAGE_RELEASE_GATE", True
             ),
-            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 5),
+            section_batch_size=_env_int("AI_SECTION_BATCH_SIZE", 4),
             light_section_batch_size=_env_int(
                 "AI_LIGHT_SECTION_BATCH_SIZE", 6
             ),
@@ -495,49 +633,49 @@ class HybridAIConfig:
                 "AI_ADVANCED_AUDIT_MAX_OUTPUT_TOKENS", 8000
             ),
             light_audit_max_output_tokens=_env_int(
-                "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 2600
+                "AI_LIGHT_AUDIT_MAX_OUTPUT_TOKENS", 3200
             ),
             standard_audit_max_output_tokens=_env_int(
-                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 3800
+                "AI_STANDARD_AUDIT_MAX_OUTPUT_TOKENS", 4000
             ),
             non_research_masters_max_output_tokens=_env_int(
-                "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
+                "AI_NON_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 5800
             ),
             non_research_masters_audit_max_output_tokens=_env_int(
-                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4500
+                "AI_NON_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 4800
             ),
             non_research_masters_audit_reasoning_effort=_normalise_effort(
-                os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "medium")
+                os.getenv("OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "xhigh")
             ),
             research_masters_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 7500
+                "AI_RESEARCH_MASTERS_MAX_OUTPUT_TOKENS", 6800
             ),
             research_masters_audit_max_output_tokens=_env_int(
-                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 6500
+                "AI_RESEARCH_MASTERS_AUDIT_MAX_OUTPUT_TOKENS", 5600
             ),
             research_masters_audit_reasoning_effort=_normalise_effort(
-                os.getenv("OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "high")
+                os.getenv("OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT", "xhigh")
             ),
             research_masters_deep_review=_env_bool(
                 "VPROF_RESEARCH_MASTERS_DEEP_REVIEW", True
             ),
             professional_doctorate_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 8500
+                "AI_PROFESSIONAL_DOCTORATE_MAX_OUTPUT_TOKENS", 7600
             ),
             professional_doctorate_audit_max_output_tokens=_env_int(
-                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 7500
+                "AI_PROFESSIONAL_DOCTORATE_AUDIT_MAX_OUTPUT_TOKENS", 6400
             ),
             professional_doctorate_audit_reasoning_effort=_normalise_effort(
-                os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "high")
+                os.getenv("OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT", "xhigh")
             ),
             phd_max_output_tokens=_env_int(
-                "AI_PHD_MAX_OUTPUT_TOKENS", 9000
+                "AI_PHD_MAX_OUTPUT_TOKENS", 8200
             ),
             phd_audit_max_output_tokens=_env_int(
-                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 8000
+                "AI_PHD_AUDIT_MAX_OUTPUT_TOKENS", 7200
             ),
             phd_audit_reasoning_effort=_normalise_effort(
-                os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "high")
+                os.getenv("OPENAI_PHD_AUDIT_REASONING_EFFORT", "xhigh")
             ),
             all_levels_degree_calibrated=_env_bool(
                 "VPROF_ALL_LEVELS_DEGREE_CALIBRATED", True
@@ -561,10 +699,13 @@ class HybridAIConfig:
                 "VPROF_STANDARD_PHD_MIN_FINDINGS", 58, 0
             ),
             fast_audit_batch_issue_limit=_env_int(
-                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 100
+                "AI_FAST_AUDIT_BATCH_ISSUE_LIMIT", 4
             ),
             fast_audit_max_batches=_env_int(
                 "AI_FAST_AUDIT_MAX_BATCHES", 1
+            ),
+            long_audit_max_batches=_env_int(
+                "AI_LONG_AUDIT_MAX_BATCHES", 8
             ),
             strict_failure=_env_bool("AI_STRICT_FAILURE", False),
             structured_output_retries=_env_int(
@@ -582,6 +723,13 @@ class HybridAIConfig:
             ),
             enable_openai_routing=_env_bool("VPROF_ENABLE_OPENAI", True),
             enable_deepseek_routing=_env_bool("VPROF_ENABLE_DEEPSEEK", False),
+            primary_provider=_env_choice(
+                "VPROF_PRIMARY_PROVIDER", "auto", {"auto", "openai", "deepseek"}
+            ),
+            fallback_provider=_env_choice(
+                "VPROF_FALLBACK_PROVIDER", "auto", {"auto", "none", "openai", "deepseek"}
+            ),
+            provider_failover_enabled=_env_bool("VPROF_PROVIDER_FAILOVER", True),
             selective_escalation_enabled=_env_bool(
                 "VPROF_ENABLE_SELECTIVE_ESCALATION", True
             ),
@@ -589,7 +737,7 @@ class HybridAIConfig:
                 "VPROF_ESCALATE_CONFIDENCE_BELOW", 0.78, 0.0, 1.0
             ),
             default_call_budget_usd=_env_float(
-                "VPROF_DEFAULT_CALL_BUDGET_USD", 0.75, 0.01
+                "VPROF_DEFAULT_CALL_BUDGET_USD", 0.25, 0.01
             ),
             external_call_budget_usd=_env_float(
                 "VPROF_EXTERNAL_CALL_BUDGET_USD", 2.00, 0.01
@@ -597,8 +745,8 @@ class HybridAIConfig:
             deepseek_fast_model=deepseek_fast_model,
             deepseek_quality_model=deepseek_quality_model,
             openai_fast_model=os.getenv(
-                "OPENAI_FAST_MODEL", "gpt-5.6-terra"
-            ).strip() or "gpt-5.6-terra",
+                "OPENAI_FAST_MODEL", "gpt-5.6-luna"
+            ).strip() or "gpt-5.6-luna",
 
             combined_app_pipeline_enabled=combined_pipeline_enabled,
             openai_cleaning_model=cleaning_model,
@@ -606,15 +754,17 @@ class HybridAIConfig:
             openai_section_analysis_fallback_model=section_fallback_model,
             openai_final_synthesis_model=final_synthesis_model,
             openai_final_synthesis_fallback_model=final_synthesis_fallback_model,
-            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 2.50),
-            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.25),
-            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 15.00),
-            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 2.50),
-            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.25),
-            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 15.00),
-            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 2.50),
-            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.25),
-            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 15.00),
+            openai_phd_final_synthesis_model=phd_final_synthesis_model,
+            openai_phd_final_synthesis_reasoning_effort=phd_final_synthesis_reasoning_effort,
+            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 0.20),
+            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.02),
+            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 1.20),
+            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 0.20),
+            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.02),
+            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 1.20),
+            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 0.20),
+            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.02),
+            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 1.20),
 
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
@@ -644,13 +794,13 @@ class HybridAIConfig:
             openai_expert_cached_input_price=expert_cached_price,
             openai_expert_output_price=expert_output_price,
             openai_fast_input_price=_env_float(
-                "PRICE_OPENAI_FAST_INPUT", 2.50
+                "PRICE_OPENAI_FAST_INPUT", 0.20
             ),
             openai_fast_cached_input_price=_env_float(
-                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.25
+                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.02
             ),
             openai_fast_output_price=_env_float(
-                "PRICE_OPENAI_FAST_OUTPUT", 15.00
+                "PRICE_OPENAI_FAST_OUTPUT", 1.20
             ),
 
             deepseek_extract_model=deepseek_fast_model,
@@ -691,7 +841,7 @@ class HybridAIConfig:
                 "AI_EXTERNAL_ASSESSMENT_REQUEST_TIMEOUT_SECONDS", 360
             ),
             external_assessment_request_max_retries=_env_int(
-                "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES", 0, 0
+                "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES", 1, 0
             ),
         )
 
@@ -743,9 +893,15 @@ class HybridAIConfig:
         """Return input, cached-input and output prices for an OpenAI model.
 
         GPT-5.6 uses durable capability-tier names. Model-specific prices take
-        precedence over role prices so a Sol override is never costed as Terra.
+        precedence over role prices so overrides are costed correctly.
         """
         value = (model or "").strip().lower()
+        if value.startswith("gpt-5.6-luna"):
+            return (
+                _env_float("PRICE_OPENAI_LUNA_INPUT", 0.20),
+                _env_float("PRICE_OPENAI_LUNA_CACHED_INPUT", 0.02),
+                _env_float("PRICE_OPENAI_LUNA_OUTPUT", 1.20),
+            )
         if value.startswith("gpt-5.6-sol") or value == "gpt-5.6":
             return (
                 _env_float("PRICE_OPENAI_SOL_INPUT", 5.00),
@@ -754,9 +910,9 @@ class HybridAIConfig:
             )
         if value.startswith("gpt-5.6-terra"):
             return (
-                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.50),
-                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.25),
-                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 15.00),
+                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.00),
+                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.20),
+                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 12.00),
             )
         if value == self.openai_fast_model.lower():
             return (
@@ -840,6 +996,15 @@ class HybridAIConfig:
             or (self.enable_deepseek_routing and self.deepseek_configured)
         )
 
+    @property
+    def selected_provider_configured(self) -> bool:
+        preference = (self.primary_provider or "auto").strip().lower()
+        if preference == "openai":
+            return bool(self.enable_openai_routing and self.openai_configured)
+        if preference == "deepseek":
+            return bool(self.enable_deepseek_routing and self.deepseek_configured)
+        return self.any_provider_configured
+
     def resolve_mode(self, requested_mode: str, academic_level: str = "") -> str:
         requested = (requested_mode or "standard").strip().lower()
         requested = {
@@ -852,7 +1017,14 @@ class HybridAIConfig:
             raise AIConfigurationError(
                 "Choose Light Review, Standard Review or Advanced Review."
             )
-        if not self.any_provider_configured:
+        if not self.selected_provider_configured:
+            preference = (self.primary_provider or "auto").strip().lower()
+            if preference in {"openai", "deepseek"}:
+                raise AIConfigurationError(
+                    f"The selected {preference.title()} provider is not configured. "
+                    f"Add its API key and enable VPROF_ENABLE_{preference.upper()}=true, "
+                    "or set VPROF_PRIMARY_PROVIDER=auto."
+                )
             raise AIConfigurationError(
                 "The academic review service is temporarily unavailable because "
                 "no enabled AI provider key is configured."
@@ -862,7 +1034,7 @@ class HybridAIConfig:
     def public_status(self) -> Dict[str, Any]:
         available = (
             ["light", "standard", "advanced"]
-            if self.any_provider_configured
+            if self.selected_provider_configured
             else []
         )
         return {

@@ -33,13 +33,17 @@ from .annotated_exporter import (
     _specific_corrections_required_enabled,
     _add_specific_corrections_required,
     _specific_correction_text,
+    _visible_runs,
+    _visible_paragraph_text,
 )
-from .comment_quality import public_text, sanitise_finding_rows
-from .finding_order import order_and_number_rows
+from .comment_quality import public_text
+from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
+from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "1.9.9.21-expert-sequential-detailed-review"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.8.0-quality-gated-inline"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.8.0-quality-gated-inline"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -63,10 +67,10 @@ def _red_run_element(text: str, source_run: Optional[Run] = None):
 def _mark_span_red(paragraph: Paragraph, start: int, end: int, reference_numbers: Sequence[int] = ()) -> bool:
     if start < 0 or end <= start:
         return False
-    start, end = _expand_to_safe_text_span(paragraph.text or "", start, end)
+    start, end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
     if start < 0 or end <= start:
         return False
-    runs = list(paragraph.runs)
+    runs = _visible_runs(paragraph)
     cursor = 0
     changed = False
     trailing_element = None
@@ -134,10 +138,25 @@ def _add_inline_comment(paragraph: Paragraph, comments: Sequence[str]) -> None:
         else:
             body = value
     else:
-        body = _format_comment_group(comments, anchor_context=paragraph.text)
+        body = _format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))
     plain_body = _RICH_RED_RE.sub(lambda match: match.group(1), body)
-    plain_body = public_text(plain_body, limit=2200, reject_placeholders=True, reject_incomplete=True)
-    if not body or not plain_body or _PROHIBITED_PUBLIC_RE.search(plain_body):
+    released = public_text(
+        plain_body,
+        limit=2200,
+        reject_placeholders=True,
+        reject_incomplete=True,
+    )
+    # ``body`` is assembled only from the validated canonical ledger. Do not
+    # silently drop a numbered inline note when a quoted source fragment is
+    # judged incomplete at this final presentation boundary.
+    if not released:
+        released = public_text(
+            plain_body,
+            limit=2200,
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+    if not body or not released or _PROHIBITED_PUBLIC_RE.search(released):
         return
     note = _insert_paragraph_after(paragraph)
     lead = note.add_run("Detailed supervisor comment: ")
@@ -160,18 +179,209 @@ def _clean_comment(value: str) -> str:
     return text
 
 
+def _inline_comment_limit() -> int:
+    try:
+        return max(260, min(720, int(__import__("os").getenv("VPROF_INLINE_COMMENT_MAX_CHARS", "480"))))
+    except (TypeError, ValueError):
+        return 480
+
+
 def _row_comment(row: Dict[str, Any]) -> str:
-    base = _comment_body(row)
-    return _clean_comment(_specific_correction_text(row, base) or base)
+    """Build a concise, natural inline note from the canonical finding record."""
+    text = natural_supervisor_comment(
+        row,
+        compact=True,
+        include_reason=False,
+        include_verification=False,
+        include_example=False,
+    )
+    if text:
+        text = professionalise_reviewer_language(text, row.get("_academic_level") or row.get("academic_level"))
+        released = _clean_comment(public_text(text, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=True))
+        if released:
+            return released
+    fallback = clean_text(
+        row.get("student_comment")
+        or " ".join(value for value in (
+            clean_text(row.get("item") or row.get("issue_title")),
+            clean_text(row.get("required_action")),
+        ) if value)
+    )
+    return public_text(fallback, limit=_inline_comment_limit(), reject_placeholders=True, reject_incomplete=False)
 
 
 def _rows_for_inline(review: Dict[str, Any], source_map: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    supplied_rows = (
-        list(review.get("academic_findings", []))
-        + list(review.get("alignment_results", []))
-        + list(review.get("revision_results", []))
-    )
-    return sanitise_finding_rows(supplied_rows + _placeholder_finding_rows(source_map, supplied_rows))
+    # The exporter must use the same final, filtered and sequentially numbered
+    # findings as the report and native-comment version. Export-time fallback
+    # findings are synchronised before this function is called.
+    return build_canonical_finding_rows(review)
+
+
+
+
+def _iter_all_document_paragraphs(document: Document):
+    """Yield body and table-cell paragraphs for reliable inline audits."""
+    seen = set()
+    for paragraph in document.paragraphs:
+        key = id(paragraph._p)
+        if key not in seen:
+            seen.add(key)
+            yield paragraph
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    key = id(paragraph._p)
+                    if key not in seen:
+                        seen.add(key)
+                        yield paragraph
+                for nested in cell.tables:
+                    for nrow in nested.rows:
+                        for ncell in nrow.cells:
+                            for paragraph in ncell.paragraphs:
+                                key = id(paragraph._p)
+                                if key not in seen:
+                                    seen.add(key)
+                                    yield paragraph
+
+
+def _represented_inline_finding_numbers(document: Document) -> set[int]:
+    represented: set[int] = set()
+    for paragraph in _iter_all_document_paragraphs(document):
+        text = clean_text(paragraph.text)
+        if not text.startswith("Detailed supervisor comment:"):
+            continue
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                represented.add(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+    return represented
+
+
+def _lossless_inline_text(row: Dict[str, Any], comment: str) -> str:
+    """Return safe student-facing text without dropping a canonical finding."""
+    text = clean_text(comment)
+    if not text:
+        text = clean_text(" ".join(value for value in (
+            clean_text(row.get("item") or row.get("issue_title")),
+            clean_text(row.get("required_action")),
+        ) if value))
+    if not text:
+        text = "Revise the identified passage so that it is accurate, clearly explained and aligned with the study."
+    # Internal pipeline words should never prevent final delivery. Replace them
+    # with neutral public wording rather than suppressing the whole finding.
+    text = _PROHIBITED_PUBLIC_RE.sub("review", text)
+    text = public_text(text, limit=1400, reject_placeholders=False, reject_incomplete=False) or text
+    return clean_text(text).rstrip(" .") + "."
+
+
+def _lossless_inline_anchor(
+    document: Document,
+    row: Dict[str, Any],
+    source_map: Dict[int, Dict[str, Any]],
+) -> Optional[Paragraph]:
+    evidence = [
+        item for item in (row.get("evidence") or [])
+        if item.get("document_role", "current") == "current"
+    ]
+    evidence = _preferred_evidence(row, evidence)
+    best = evidence[0] if evidence else {}
+    try:
+        paragraph_number = int(best.get("paragraph") or 0)
+    except (TypeError, ValueError):
+        paragraph_number = 0
+    paragraph_number = _better_evidence_paragraph_number(row, source_map, paragraph_number)
+    locator = source_map.get(paragraph_number) or {}
+    paragraph = locator.get("paragraph")
+    if paragraph is not None:
+        return paragraph
+
+    wanted = normalised(row.get("section_reference") or row.get("section") or "")
+    if wanted:
+        for paragraph in document.paragraphs:
+            value = normalised(_visible_paragraph_text(paragraph))
+            if value and (value == wanted or wanted in value or value in wanted):
+                return paragraph
+
+    for paragraph in reversed(document.paragraphs):
+        value = clean_text(_visible_paragraph_text(paragraph))
+        if value and not value.startswith("SUPERVISORY REVIEW SUMMARY"):
+            return paragraph
+    return document.add_paragraph("")
+
+
+def _add_lossless_inline_comment(paragraph: Paragraph, number: int, body: str) -> None:
+    """Insert one guaranteed numbered inline note after the closest safe anchor."""
+    note = _insert_paragraph_after(paragraph)
+    lead = note.add_run("Detailed supervisor comment: ")
+    lead.bold = True
+    lead.font.color.rgb = COMMENT_BLUE
+    lead.font.italic = True
+    marker = note.add_run(f"{number}. ")
+    marker.font.color.rgb = COMMENT_RED
+    marker.bold = True
+    marker.font.italic = True
+    run = note.add_run(body)
+    run.font.color.rgb = COMMENT_BLUE
+    run.font.italic = True
+    try:
+        note.paragraph_format.space_before = paragraph.paragraph_format.space_after
+        note.paragraph_format.space_after = paragraph.paragraph_format.space_after
+        note.paragraph_format.left_indent = paragraph.paragraph_format.left_indent
+    except Exception:
+        pass
+
+
+def _ensure_inline_comment_reconciliation(
+    document: Document,
+    review_rows: Sequence[Dict[str, Any]],
+    source_map: Dict[int, Dict[str, Any]],
+) -> None:
+    """Restore any final finding lost through grouping, truncation or anchoring."""
+    represented = _represented_inline_finding_numbers(document)
+    by_number: Dict[int, Dict[str, Any]] = {}
+    for row in review_rows:
+        if row.get("status") not in ACTIONABLE_STATUSES or row.get("annotation_eligible") is False:
+            continue
+        try:
+            number = int(row.get("finding_number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        if number > 0:
+            by_number[number] = row
+
+    for number in sorted(set(by_number) - represented, reverse=True):
+        row = by_number[number]
+        comment = _lossless_inline_text(row, _row_comment(row))
+        anchor = _lossless_inline_anchor(document, row, source_map)
+        if anchor is None:
+            anchor = document.add_paragraph("")
+        text = _visible_paragraph_text(anchor)
+        if text:
+            quote = clean_text(row.get("problematic_quote") or "")
+            if quote and quote in text:
+                start = text.find(quote)
+                end = start + len(quote)
+            else:
+                start, end = _best_span(
+                    text,
+                    [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")],
+                    quote,
+                )
+            start, end = _expand_to_safe_text_span(text, start, end)
+            if start < end:
+                _mark_span_red(anchor, start, end, (number,))
+        _add_lossless_inline_comment(anchor, number, comment)
+        represented.add(number)
+
+    missing = sorted(set(by_number) - _represented_inline_finding_numbers(document))
+    if missing:
+        raise RuntimeError(
+            "The inline annotated document could not represent final finding numbers "
+            + ", ".join(str(value) for value in missing)
+            + " after lossless reconciliation."
+        )
 
 
 def build_inline_annotated_docx(
@@ -190,11 +400,17 @@ def build_inline_annotated_docx(
     source_map, _ = _source_locator_map(document)
     academic_level = (review.get("summary") or {}).get("academic_level")
     synchronise_export_fallback_findings(review, source_map)
-    review_rows = order_and_number_rows([
-        {**row, "_academic_level": academic_level} for row in _rows_for_inline(review, source_map)
-    ])
+    # Rebuild after export fallbacks have been synchronised. Numbering is then
+    # fixed once and reused everywhere.
+    review_rows = [
+        {**row, "_academic_level": academic_level}
+        for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
+    ]
 
-    after_paragraph: Dict[int, List[str]] = defaultdict(list)
+    # All findings tied to the same paragraph share one numbered inline note.
+    # This mirrors the native Word comment grouping and keeps the annotated
+    # chapter readable while preserving every canonical finding number.
+    after_anchor: Dict[int, Dict[str, Any]] = defaultdict(lambda: {"spans": [], "comments": []})
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
     def reference_number_for(row: Dict[str, Any]) -> int:
@@ -206,14 +422,14 @@ def build_inline_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
         if _is_missing_section_finding(row):
             raw_missing_comment = _row_comment(row)
             if raw_missing_comment:
                 reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
+            continue
+        if row.get("annotation_eligible") is False:
             continue
         raw_comment = _row_comment(row)
         if not raw_comment:
@@ -239,31 +455,52 @@ def build_inline_annotated_docx(
         if paragraph is None:
             continue
         quote = clean_text(row.get("problematic_quote", ""))
-        text = paragraph.text or ""
+        text = _visible_paragraph_text(paragraph)
         if quote and quote in text:
             quote_start = text.find(quote)
             start, end = _expand_to_safe_text_span(text, quote_start, quote_start + len(quote))
         else:
             terms = [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")]
             start, end = _best_span(text, terms, quote)
-        _mark_span_red(paragraph, start, end, _group_reference_numbers_from_comment(_format_comment_group([comment], anchor_context=text[start:end])))
-        after_paragraph[paragraph_number].append(comment)
+        start, end = _expand_to_safe_text_span(text, start, end)
+        if start >= end:
+            start, end = 0, len(text)
+        after_anchor[paragraph_number]["spans"].append((start, end))
+        after_anchor[paragraph_number]["comments"].append(comment)
 
+    # Missing-section findings must also be visible in the inline annotated
+    # document. They cannot be highlighted inside absent text, so add a numbered
+    # inline note at the end of the submitted chapter before the correction register.
+    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
-    else:
-        _add_missing_section_inline_bottom_notes(document, missing_section_rows)
 
-    for paragraph_number in sorted(after_paragraph, reverse=True):
+    for paragraph_number, group in sorted(after_anchor.items(), reverse=True):
         locator = source_map.get(paragraph_number) or {}
         paragraph = locator.get("paragraph")
-        if paragraph is not None:
-            comments = list(dict.fromkeys(after_paragraph[paragraph_number]))
-            # Keep each numbered correction as its own detailed blue annotation.
-            # This prevents several unrelated corrections from being compressed
-            # into one note merely because they occur in the same paragraph.
-            for comment in reversed(comments):
-                _add_inline_comment(paragraph, [comment])
+        if paragraph is None:
+            continue
+        comments = list(dict.fromkeys(group.get("comments") or []))
+        spans = list(group.get("spans") or [])
+        if not comments or not spans:
+            continue
+        text = _visible_paragraph_text(paragraph)
+        start = min(item[0] for item in spans)
+        end = max(item[1] for item in spans)
+        start, end = _expand_to_safe_text_span(text, start, end)
+        grouped = _format_comment_group(comments, anchor_context=text[start:end])
+        _mark_span_red(
+            paragraph,
+            start,
+            end,
+            _group_reference_numbers_from_comment(grouped),
+        )
+        _add_inline_comment(paragraph, comments)
+
+    # Grouped presentation can be intentionally concise, but it must never
+    # remove a final canonical number. Restore any omitted finding as a
+    # standalone, naturally worded inline note before release.
+    _ensure_inline_comment_reconciliation(document, review_rows, source_map)
 
     output = io.BytesIO()
     document.save(output)
@@ -278,3 +515,43 @@ def inline_annotation_count(source_bytes: bytes, review: Dict[str, Any]) -> int:
         if row.get("status") in ACTIONABLE_STATUSES and row.get("annotation_eligible") is not False and _row_comment(row):
             count += 1
     return count
+
+
+def inline_annotation_audit(docx_bytes: bytes, review: Dict[str, Any]) -> Dict[str, Any]:
+    """Verify that every actionable finding number appears in an inline note."""
+    from .annotated_exporter import expected_annotation_finding_numbers
+
+    expected = expected_annotation_finding_numbers(review)
+    expected_set = set(expected)
+    represented: set[int] = set()
+    note_count = 0
+    try:
+        document = Document(io.BytesIO(docx_bytes))
+    except Exception:
+        return {
+            "note_count": 0,
+            "expected_finding_numbers": expected,
+            "represented_finding_numbers": [],
+            "missing_finding_numbers": expected,
+            "passed": False,
+        }
+    for paragraph in _iter_all_document_paragraphs(document):
+        text = clean_text(paragraph.text)
+        if not text.startswith("Detailed supervisor comment:"):
+            continue
+        note_count += 1
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                number = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if not expected_set or number in expected_set:
+                represented.add(number)
+    missing = sorted(expected_set - represented)
+    return {
+        "note_count": note_count,
+        "expected_finding_numbers": expected,
+        "represented_finding_numbers": sorted(represented),
+        "missing_finding_numbers": missing,
+        "passed": bool(expected) and note_count > 0 and not missing,
+    }

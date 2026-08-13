@@ -19,7 +19,7 @@ POLL_SECONDS = max(2, int(os.getenv("VPROF_WORKER_POLL_SECONDS", "8")))
 CLAIM_LIMIT = max(1, int(os.getenv("VPROF_WORKER_CLAIM_LIMIT", str(WORKER_CONCURRENCY))))
 
 
-def _next_job_id() -> Optional[tuple[str, bool]]:
+def _next_job_id(excluded_job_ids: Optional[set[str]] = None) -> Optional[tuple[str, bool]]:
     """Return the next queued/recoverable job for this worker.
 
     The durable lease is still acquired inside app.main._run_review_job through
@@ -27,6 +27,7 @@ def _next_job_id() -> Optional[tuple[str, bool]]:
     processing rows back to queued so they can be recovered by any worker.
     """
     now = datetime.now(timezone.utc)
+    excluded = excluded_job_ids or set()
     with SessionLocal() as db:
         records = (
             db.query(ReviewRecord)
@@ -40,6 +41,8 @@ def _next_job_id() -> Optional[tuple[str, bool]]:
             .all()
         )
         for record in records:
+            if record.job_id in excluded:
+                continue
             lease_expires = _normalise_db_datetime(record.lease_expires_at)
             if record.status == "processing" and lease_expires and lease_expires > now:
                 continue
@@ -95,12 +98,15 @@ async def worker_loop() -> None:
     while True:
         running = {task for task in running if not task.done()}
         while len(running) < WORKER_CONCURRENCY:
-            candidate = _next_job_id()
+            active_job_ids = {
+                str(getattr(task, "_vprof_job_id", ""))
+                for task in running
+                if getattr(task, "_vprof_job_id", None)
+            }
+            candidate = _next_job_id(active_job_ids)
             if not candidate:
                 break
             job_id, resumed = candidate
-            if any(getattr(task, "_vprof_job_id", None) == job_id for task in running):
-                break
             task = asyncio.create_task(_run_candidate(job_id, resumed))
             setattr(task, "_vprof_job_id", job_id)
             running.add(task)

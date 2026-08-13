@@ -4,18 +4,21 @@ import re
 from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
-from .finding_order import chapter_number as ordered_chapter_number, document_order_key, order_and_number_rows
+from .finding_order import chapter_number as ordered_chapter_number, document_order_key, priority_order_key
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
+from .final_review_quality import build_canonical_finding_rows
+from .supervisory_review_algorithm import build_supervisory_report_spec
+from .thesis_structure import ROLE_SPECIALISTS, infer_chapter_role
 
 
 SEVERITY_ORDER = {"critical": 0, "major": 1, "moderate": 2, "minor": 3}
-CHAPTER_NAMES = {
-    1: "Chapter One",
-    2: "Chapter Two",
-    3: "Chapter Three",
-    4: "Chapter Four",
-    5: "Chapter Five",
-}
+CHAPTER_NAMES = {number: f"Chapter {number}" for number in range(1, 21)}
+CHAPTER_NAMES.update({
+    1: "Chapter One", 2: "Chapter Two", 3: "Chapter Three",
+    4: "Chapter Four", 5: "Chapter Five", 6: "Chapter Six",
+    7: "Chapter Seven", 8: "Chapter Eight", 9: "Chapter Nine",
+    10: "Chapter Ten",
+})
 
 
 def _clean(value: Any) -> str:
@@ -43,7 +46,7 @@ def _legacy_chapter_number(row: Dict[str, Any]) -> int | None:
     match = re.search(r"\bchapter\s+(\d+)\b", section)
     if match:
         return int(match.group(1))
-    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
     for word, number in words.items():
         if f"chapter {word}" in section:
             return number
@@ -89,8 +92,6 @@ def _scope_key(summary: Dict[str, Any]) -> str:
 
 def professional_scope_profile(summary: Dict[str, Any]) -> Dict[str, Any]:
     scope = _scope_key(summary)
-    level = academic_level_label(summary.get("academic_level"))
-    level_phrase = f"At {level}" if level != "the applicable academic level" else "At the applicable academic level"
     if scope == "full_thesis":
         return {
             "scope": scope,
@@ -139,7 +140,7 @@ def professional_scope_profile(summary: Dict[str, Any]) -> Dict[str, Any]:
         "report_title": "PROFESSIONAL CHAPTER REVIEW",
         "judgement_unit": "the selected chapter",
         "primary_task": (
-            f"Review every section and subsection of the chapter under review. {level_phrase}, apply the depth, rigour and scholarly independence expected. "
+            "Review every section and subsection of the chapter under review and apply the depth, rigour and scholarly independence appropriate to the programme. "
             "Use other supplied chapters only to test alignment and do not issue unsupported whole-thesis judgements."
         ),
         "required_outputs": [
@@ -153,23 +154,19 @@ def professional_scope_profile(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def specialist_role_for_chapter(chapter_number: Any, heading: str = "") -> str:
-    try:
-        chapter = int(chapter_number) if chapter_number is not None else None
-    except (TypeError, ValueError):
-        chapter = None
-    heading_norm = _norm(heading)
-    if chapter == 1 or any(term in heading_norm for term in ("problem statement", "research objective", "introduction")):
-        return "Research problem, framing and alignment specialist"
-    if chapter == 2 or any(term in heading_norm for term in ("literature review", "theoretical framework", "empirical review")):
-        return "Theory, evidence synthesis and research-gap specialist"
-    if chapter == 3 or any(term in heading_norm for term in ("methodology", "research methods", "sampling", "instrument")):
-        return "Research design, measurement, ethics and reproducibility specialist"
-    if chapter == 4 or any(term in heading_norm for term in ("results", "findings", "discussion", "analysis")):
-        return "Results, statistical or qualitative analysis, and interpretation specialist"
-    if chapter == 5 or any(term in heading_norm for term in ("conclusion", "recommendation", "summary of findings")):
-        return "Synthesis, contribution, conclusion and recommendation specialist"
-    return "Discipline-sensitive thesis reviewer"
+def specialist_role_for_chapter(
+    chapter_number: Any,
+    heading: str = "",
+    content: str = "",
+    academic_level: Any = "",
+) -> str:
+    role = infer_chapter_role(
+        chapter_number,
+        heading,
+        content,
+        academic_level=academic_level,
+    )
+    return ROLE_SPECIALISTS.get(role, ROLE_SPECIALISTS["other"])
 
 
 def professional_scope_contract(summary: Dict[str, Any]) -> str:
@@ -177,7 +174,7 @@ def professional_scope_contract(summary: Dict[str, Any]) -> str:
     scope = profile["scope"]
     shared = (
         "Act as a professional academic reviewer. Separate verified defects from matters that cannot be confirmed without original data or software output. "
-        "For every material finding state the exact location, the problem, why it matters at the actual academic level, the required correction, and a current-study example only when it is genuinely helpful. "
+        "For every material finding state the exact location, the problem, why it matters, the required correction, and a current-study example only when it is genuinely helpful. Apply the programme standard silently rather than repeating it in every comment. "
         "Use one canonical finding for the report, native Word comment, inline annotation and correction tracker. Do not create comments to meet a numerical quota. "
         "Prioritise validity, alignment, analytical accuracy and contribution above proofreading."
     )
@@ -241,44 +238,20 @@ def _anchor_sort(row: Dict[str, Any]) -> Tuple[int, int, int, str]:
 
 
 def build_finding_ledger(review: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Build one evidence-led ledger in the same order as the work.
+    """Build the professional ledger from the single canonical finding set.
 
-    Numbering follows chapter and passage order, not severity or model-return
-    order. Alignment and revision findings are included when actionable so the
-    report, native comments and inline annotations can share the same sequence.
+    Filtering, global contradiction checks, consolidation, exact section labels
+    and sequential numbering have already been completed by
+    ``build_canonical_finding_rows``. The report must not renumber or rewrite a
+    second, divergent set of findings.
     """
-    rows: List[Dict[str, Any]] = []
-    for source_key in ("academic_findings", "alignment_results", "revision_results"):
-        for row in review.get(source_key) or []:
-            status = str(row.get("status") or "").strip().lower()
-            if status in {"meets_requirement", "not_applicable", "addressed"}:
-                continue
-            if not any(_clean(row.get(field)) for field in ("item", "issue_title", "comment", "assessment", "required_action")):
-                continue
-            row.setdefault("finding_source", source_key)
-            rows.append(row)
-
-    # Deduplicate only exact finding/location pairs. Similar but distinct
-    # analytical issues must remain separate.
-    deduped: List[Dict[str, Any]] = []
-    seen = set()
-    for row in rows:
-        best = (row.get("evidence") or [{}])[0]
-        signature = (
-            _clean(row.get("finding_id")),
-            _norm(row.get("item") or row.get("issue_title") or row.get("comment")),
-            best.get("paragraph"), best.get("table_index"), best.get("table_row"),
-        )
-        if signature in seen:
-            continue
-        seen.add(signature)
-        deduped.append(row)
-
-    rows = order_and_number_rows(deduped)
+    rows = build_canonical_finding_rows(review)
     level = academic_level_label((review.get("summary") or {}).get("academic_level"))
     ledger: List[Dict[str, Any]] = []
     for row in rows:
-        number = int(row.get("finding_number"))
+        number = int(row.get("finding_number") or 0)
+        if number <= 0:
+            continue
         chapter = _chapter_number(row)
         evidence = row.get("evidence") or []
         assessment = professionalise_reviewer_language(_clean(row.get("comment") or row.get("assessment")), level)
@@ -303,6 +276,7 @@ def build_finding_ledger(review: Dict[str, Any]) -> List[Dict[str, Any]]:
             "requires_original_output": _requires_original_output(row),
             "evidence_count": len(evidence),
             "finding_source": row.get("finding_source"),
+            "evidence": evidence,
         })
     return ledger
 
@@ -334,7 +308,7 @@ def _chapter_decision(counts: Counter, score: float | None, level_label: str = "
         return "Targeted revision required"
     if score is not None and score < 70:
         return "Further development required"
-    return f"Broadly satisfactory at {level_label}"
+    return "Broadly satisfactory for progression"
 
 
 def build_chapter_judgements(review: Dict[str, Any], ledger: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -368,10 +342,16 @@ def build_chapter_judgements(review: Dict[str, Any], ledger: Sequence[Dict[str, 
         chapter_rows = [row for row in ledger if row.get("chapter_number") == chapter]
         counts = Counter(row.get("severity") for row in chapter_rows)
         score = _chapter_score(review, chapter)
+        role_row = (summary.get("chapter_role_map") or {}).get(chapter) or (summary.get("chapter_role_map") or {}).get(str(chapter)) or {}
         output.append({
             "chapter_number": chapter,
-            "chapter": CHAPTER_NAMES.get(chapter, f"Chapter {chapter}"),
-            "specialist_role": specialist_role_for_chapter(chapter),
+            "chapter": role_row.get("heading") or CHAPTER_NAMES.get(chapter, f"Chapter {chapter}"),
+            "chapter_role": role_row.get("role"),
+            "chapter_roles": list(role_row.get("roles") or []),
+            "specialist_role": (
+                role_row.get("specialist_role")
+                or specialist_role_for_chapter(chapter, academic_level=summary.get("academic_level"))
+            ),
             "score": score,
             "decision": _chapter_decision(counts, score, level_label),
             "severity_counts": dict(counts),
@@ -384,27 +364,37 @@ def build_chapter_judgements(review: Dict[str, Any], ledger: Sequence[Dict[str, 
 
 def _is_methods_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""))))
-    return row.get("chapter_number") == 3 or any(term in text for term in (
+    return row.get("chapter_role") == "methodology" or any(term in text for term in (
         "method", "design", "sampling", "instrument", "validity", "reliability", "ethics", "trustworthiness", "data collection",
     ))
 
 
 def _is_results_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""), row.get("assessment", ""))))
-    return row.get("chapter_number") == 4 or any(term in text for term in (
+    return (row.get("chapter_role") in {"results", "article_or_study"} or "results" in (row.get("chapter_roles") or [])) or any(term in text for term in (
         "result", "analysis", "statistic", "coefficient", "p value", "table", "regression", "anova", "sem", "theme", "moderation", "mediation",
     ))
 
 
 def _is_discussion_row(row: Dict[str, Any]) -> bool:
     text = _norm(" ".join((row.get("category", ""), row.get("section", ""), row.get("issue", ""))))
-    return any(term in text for term in ("discussion", "interpretation", "theory", "prior studies", "implication", "unexpected finding"))
+    return (row.get("chapter_role") == "discussion" or "discussion" in (row.get("chapter_roles") or [])) or any(term in text for term in ("discussion", "interpretation", "theory", "prior studies", "implication", "unexpected finding"))
 
 
-def build_methods_results_discussion_audit(ledger: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    methods = [row for row in ledger if _is_methods_row(row)]
-    results = [row for row in ledger if _is_results_row(row)]
-    discussion = [row for row in ledger if _is_discussion_row(row)]
+def build_methods_results_discussion_audit(review: Dict[str, Any], ledger: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = review.get("summary") or {}
+    role_map = summary.get("chapter_role_map") or {}
+    enriched: List[Dict[str, Any]] = []
+    for row in ledger:
+        copy = dict(row)
+        chapter = copy.get("chapter_number")
+        role_row = role_map.get(chapter) or role_map.get(str(chapter)) or {}
+        copy["chapter_role"] = role_row.get("role")
+        copy["chapter_roles"] = list(role_row.get("roles") or [])
+        enriched.append(copy)
+    methods = [row for row in enriched if _is_methods_row(row)]
+    results = [row for row in enriched if _is_results_row(row)]
+    discussion = [row for row in enriched if _is_discussion_row(row)]
     evidence_required = []
     for row in ledger:
         if row.get("requires_original_output"):
@@ -452,10 +442,11 @@ def _cross_chapter_rows(review: Dict[str, Any], ledger: Sequence[Dict[str, Any]]
 
 
 def _priority_plan(ledger: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    ordered = sorted((dict(row) for row in ledger), key=priority_order_key)
     return {
-        "priority_1_validity_and_submission_blockers": [row for row in ledger if row.get("severity") == "critical"],
-        "priority_2_major_scholarly_revision": [row for row in ledger if row.get("severity") == "major"],
-        "priority_3_targeted_and_editorial_revision": [row for row in ledger if row.get("severity") in {"moderate", "minor"}],
+        "priority_1_validity_and_submission_blockers": [row for row in ordered if row.get("severity") == "critical"],
+        "priority_2_major_scholarly_revision": [row for row in ordered if row.get("severity") == "major"],
+        "priority_3_targeted_and_editorial_revision": [row for row in ordered if row.get("severity") in {"moderate", "minor"}],
     }
 
 
@@ -470,7 +461,7 @@ def _overall_recommendation(scope: str, ledger: Sequence[Dict[str, Any]], summar
     elif counts.get("moderate", 0):
         decision = "Minor-to-moderate revision required"
     else:
-        decision = f"Broadly satisfactory at {academic_level_label(summary.get('academic_level'))}"
+        decision = "Broadly satisfactory for progression"
     if scope == "full_thesis":
         meaning = (
             "This is an examiner-style recommendation based on the manuscript and evidence supplied. "
@@ -488,7 +479,7 @@ def build_professional_review_package(review: Dict[str, Any]) -> Dict[str, Any]:
     profile = professional_scope_profile(summary)
     ledger = build_finding_ledger(review)
     chapter_judgements = build_chapter_judgements(review, ledger)
-    audit = build_methods_results_discussion_audit(ledger)
+    audit = build_methods_results_discussion_audit(review, ledger)
     package = {
         "profile": profile,
         "scope_contract": professional_scope_contract(summary),
@@ -508,6 +499,7 @@ def build_professional_review_package(review: Dict[str, Any]) -> Dict[str, Any]:
             "statistical_recomputation_claimed_only_with_original_evidence": True,
         },
     }
+    package["supervisory_report_spec"] = build_supervisory_report_spec(review, package)
     return package
 
 

@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -328,6 +329,85 @@ async def _post_json_with_retry(
     raise AIProviderError(str(last_error or "The provider request failed."))
 
 
+async def _get_json_with_retry(
+    *,
+    url: str,
+    headers: Dict[str, str],
+    timeout_seconds: int,
+    max_retries: int,
+) -> Tuple[Dict[str, Any], str]:
+    """Retrieve an asynchronous provider response with bounded retries."""
+    last_error: Optional[Exception] = None
+    timeout = httpx.Timeout(timeout_seconds, connect=min(30, timeout_seconds))
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(max_retries + 1):
+            try:
+                response = await client.get(url, headers=headers)
+                request_id = response.headers.get("x-request-id", "")
+                if response.status_code in {408, 409, 429} or response.status_code >= 500:
+                    if attempt < max_retries:
+                        await asyncio.sleep(min(8, 1.5 ** attempt))
+                        continue
+                if response.status_code >= 400:
+                    raise AIProviderError(
+                        f"HTTP {response.status_code} from {url}: {_short(response.text)}"
+                        + (f" [request_id={request_id}]" if request_id else "")
+                    )
+                value = response.json()
+                if not isinstance(value, dict):
+                    raise AIProviderError("Provider returned a non-object JSON response.")
+                return value, request_id
+            except (httpx.HTTPError, ValueError, AIProviderError) as exc:
+                last_error = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(min(8, 1.5 ** attempt))
+                    continue
+                break
+    raise AIProviderError(str(last_error or "The provider response could not be retrieved."))
+
+
+async def _poll_openai_background_response(
+    *,
+    base_url: str,
+    response_payload: Dict[str, Any],
+    headers: Dict[str, str],
+    poll_seconds: int,
+    timeout_seconds: int,
+    request_timeout_seconds: int,
+    max_retries: int,
+) -> Tuple[Dict[str, Any], str]:
+    """Poll a Responses API background job until it reaches a terminal state."""
+    response_id = str(response_payload.get("id") or "").strip()
+    if not response_id:
+        raise AIProviderError("OpenAI background response did not include an identifier.")
+
+    terminal = {"completed", "failed", "cancelled", "incomplete"}
+    payload = response_payload
+    request_id = ""
+    deadline = time.monotonic() + max(60, int(timeout_seconds))
+    while True:
+        status = str(payload.get("status") or "").strip().lower()
+        if status in terminal:
+            if status in {"failed", "cancelled"}:
+                error = payload.get("error") or payload.get("incomplete_details") or status
+                raise AIProviderError(
+                    f"OpenAI background response {status}: {_short(error)}"
+                )
+            return payload, request_id
+        if time.monotonic() >= deadline:
+            raise AIProviderError(
+                "OpenAI background response exceeded the configured processing window."
+            )
+        await asyncio.sleep(max(1, int(poll_seconds)))
+        payload, latest_request_id = await _get_json_with_retry(
+            url=f"{base_url}/responses/{response_id}",
+            headers=headers,
+            timeout_seconds=max(30, int(request_timeout_seconds)),
+            max_retries=max_retries,
+        )
+        request_id = latest_request_id or request_id
+
+
 
 def _deepseek_output_text(payload: Dict[str, Any]) -> str:
     choices = payload.get("choices") or []
@@ -409,9 +489,34 @@ class DeepSeekProvider:
 
         last_error: Optional[Exception] = None
         attempts = max(1, self.config.structured_output_retries + 1)
+        requested_output_tokens = int(
+            max_output_tokens or self.config.max_output_tokens
+        )
 
         for attempt in range(attempts):
             request_body = dict(body)
+            previous_message = str(last_error or "").strip().lower()
+            if (
+                attempt
+                and self.config.deepseek_truncation_recovery_enabled
+                and "truncated because the output-token limit" in previous_message
+            ):
+                expanded = max(
+                    requested_output_tokens + 1200,
+                    int(
+                        requested_output_tokens
+                        * self.config.deepseek_truncation_retry_multiplier
+                    ),
+                )
+                request_body["max_tokens"] = min(
+                    self.config.deepseek_max_output_tokens,
+                    expanded,
+                )
+                # A cut-off strict JSON object cannot be repaired while hidden
+                # reasoning continues to consume the same completion budget.
+                # The bounded retry therefore prioritises the complete schema.
+                request_body["thinking"] = {"type": "disabled"}
+                request_body.pop("reasoning_effort", None)
             if attempt:
                 request_body["messages"] = [
                     request_body["messages"][0],
@@ -420,8 +525,9 @@ class DeepSeekProvider:
                         "content": (
                             user_prompt
                             + "\n\nThe previous response was empty, incomplete, or did not "
-                              "match the required schema. Return one complete JSON object "
-                              "matching the schema exactly."
+                              "match the required schema. Return one complete compact JSON object "
+                              "matching the schema exactly. Do not repeat source passages, do not "
+                              "add commentary outside JSON, and keep assessments and actions concise."
                         ),
                     },
                 ]
@@ -485,6 +591,19 @@ class DeepSeekProvider:
 
             except (ValidationError, AIProviderError) as exc:
                 last_error = exc
+                message = str(exc).lower()
+                if (
+                    "truncated because the output-token limit" in message
+                    and purpose in {
+                        "batched_academic_review",
+                        "chapter_packet_coverage_recovery",
+                        "single_target_coverage_recovery",
+                    }
+                ):
+                    # Do not pay for the same oversized academic packet twice.
+                    # The academic engine responds to finish_reason=length by
+                    # splitting the unit into one-target recovery requests.
+                    break
                 if attempt + 1 >= attempts:
                     break
 
@@ -516,10 +635,10 @@ class OpenAIProvider:
         effort = (
             reasoning_effort
             or self.config.openai_reasoning_effort
-            or "high"
+            or "xhigh"
         ).strip().lower()
-        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
-            effort = "high"
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            effort = "xhigh"
 
         base_input = [
             {"role": "system", "content": system_prompt},
@@ -540,35 +659,76 @@ class OpenAIProvider:
             "store": False,
             "reasoning": {"effort": effort},
         }
+        if self.config.openai_prompt_cache_enabled:
+            cache_source = (
+                f"{model}\n{purpose}\n{system_prompt}\n"
+                + json.dumps(schema, sort_keys=True, separators=(",", ":"))
+            )
+            base_body["prompt_cache_key"] = hashlib.sha256(
+                cache_source.encode("utf-8")
+            ).hexdigest()[:64]
+
+        use_background = bool(
+            self.config.openai_background_mode_enabled
+            and effort in {"high", "xhigh", "max"}
+        )
+        if use_background:
+            base_body["background"] = True
 
         last_error: Optional[Exception] = None
         attempts = max(1, self.config.structured_output_retries + 1)
+        requested_output_tokens = int(
+            max_output_tokens or self.config.max_output_tokens
+        )
         for attempt in range(attempts):
             body = dict(base_body)
             if attempt:
+                previous_message = str(last_error or "").lower()
+                if "truncated because the output-token limit" in previous_message:
+                    # A strict JSON response cannot be repaired from a cut-off
+                    # object. Give the one structured-output retry enough room,
+                    # bounded by the application's global output ceiling.
+                    expanded = max(
+                        requested_output_tokens + 1600,
+                        requested_output_tokens * 2,
+                    )
+                    body["max_output_tokens"] = min(
+                        int(self.config.max_output_tokens), int(expanded)
+                    )
+                    retry_instruction = (
+                        "The previous JSON object was truncated. Return a complete, "
+                        "concise JSON object. Preserve every required field, avoid "
+                        "repeating the source text, and keep explanations direct."
+                    )
+                else:
+                    retry_instruction = (
+                        "The previous response was empty, incomplete, or did not "
+                        "match the required schema. Return one complete JSON object "
+                        "that follows the supplied schema exactly."
+                    )
                 body["input"] = [
                     base_input[0],
                     {
                         "role": "user",
-                        "content": (
-                            user_prompt
-                            + "\n\nThe previous response was empty, incomplete, or did not "
-                              "match the required schema. Return one complete JSON object "
-                              "that follows the supplied schema exactly."
-                        ),
+                        "content": user_prompt + "\n\n" + retry_instruction,
                     },
                 ]
             try:
+                headers = {
+                    "Authorization": f"Bearer {self.config.openai_api_key}",
+                    "Content-Type": "application/json",
+                }
                 payload, request_id = await _post_json_with_retry(
                     url=f"{self.config.openai_base_url}/responses",
-                    headers={
-                        "Authorization": f"Bearer {self.config.openai_api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                     payload=body,
                     timeout_seconds=(
-                        request_timeout_seconds
+                        min(90, request_timeout_seconds)
+                        if use_background and request_timeout_seconds is not None
+                        else request_timeout_seconds
                         if request_timeout_seconds is not None
+                        else min(90, self.config.timeout_seconds)
+                        if use_background
                         else self.config.timeout_seconds
                     ),
                     max_retries=(
@@ -577,6 +737,27 @@ class OpenAIProvider:
                         else self.config.max_retries
                     ),
                 )
+                if use_background and str(payload.get("status") or "").lower() not in {
+                    "completed", "failed", "cancelled", "incomplete"
+                }:
+                    payload, poll_request_id = await _poll_openai_background_response(
+                        base_url=self.config.openai_base_url,
+                        response_payload=payload,
+                        headers=headers,
+                        poll_seconds=self.config.openai_background_poll_seconds,
+                        timeout_seconds=self.config.openai_background_timeout_seconds,
+                        request_timeout_seconds=(
+                            request_timeout_seconds
+                            if request_timeout_seconds is not None
+                            else self.config.timeout_seconds
+                        ),
+                        max_retries=(
+                            request_max_retries
+                            if request_max_retries is not None
+                            else self.config.max_retries
+                        ),
+                    )
+                    request_id = poll_request_id or request_id
                 raw = _extract_json_text(_openai_output_text(payload))
                 raw = _normalise_model_payload(raw, schema_model)
                 validated = schema_model.model_validate(raw)
@@ -611,4 +792,3 @@ class OpenAIProvider:
             f"OpenAI request for model '{model}' and purpose '{purpose}' failed: "
             f"{str(last_error or 'unknown provider error')}"
         )
-

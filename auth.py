@@ -104,7 +104,8 @@ def create_bootstrap_admin(db: Session) -> Optional[str]:
     if db.query(User.id).filter(User.role == "admin").first():
         return None
     username = normalize_username(os.getenv("ADMIN_USERNAME", "admin")) or "admin"
-    password = os.getenv("ADMIN_PASSWORD") or generate_temporary_password(18)
+    configured_password = os.getenv("ADMIN_PASSWORD")
+    password = configured_password or generate_temporary_password(18)
     admin = User(
         username=username,
         password_hash=hash_secret(password),
@@ -117,4 +118,79 @@ def create_bootstrap_admin(db: Session) -> Optional[str]:
     )
     db.add(admin)
     db.commit()
-    return password
+    # Only a generated one-time credential may be returned for logging. Never
+    # return or log a password supplied through the environment.
+    return None if configured_password else password
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def initialise_admin_from_environment(db: Session) -> dict:
+    """Create the first admin or perform an explicit one-time environment reset.
+
+    ADMIN_PASSWORD remains bootstrap-only during normal startups. An existing
+    PostgreSQL administrator is changed only when
+    VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP=true. This prevents an ordinary
+    restart from silently overwriting a password chosen in the portal.
+    """
+    preferred_username = normalize_username(os.getenv("ADMIN_USERNAME", "admin")) or "admin"
+    admin = (
+        db.query(User)
+        .filter(User.username == preferred_username, User.role == "admin")
+        .first()
+    )
+    if admin is None:
+        admin = db.query(User).filter(User.role == "admin").order_by(User.id.asc()).first()
+
+    if admin is None:
+        generated = create_bootstrap_admin(db)
+        created = db.query(User).filter(User.role == "admin").order_by(User.id.asc()).first()
+        return {
+            "created": True,
+            "reset": False,
+            "username": created.username if created else preferred_username,
+            "generated_password": generated,
+        }
+
+    if not _env_truthy("VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP", False):
+        return {
+            "created": False,
+            "reset": False,
+            "username": admin.username,
+            "generated_password": None,
+        }
+
+    password = os.getenv("ADMIN_PASSWORD") or ""
+    validation_error = validate_password(password)
+    if validation_error:
+        raise RuntimeError(
+            "VPROF_RESET_ADMIN_PASSWORD_ON_STARTUP is enabled, but ADMIN_PASSWORD "
+            f"is missing or invalid. {validation_error}"
+        )
+
+    if preferred_username != admin.username:
+        conflict = db.query(User).filter(User.username == preferred_username).first()
+        if conflict is not None and conflict.id != admin.id:
+            raise RuntimeError(
+                "ADMIN_USERNAME cannot be applied because that username already belongs "
+                "to another account."
+            )
+        admin.username = preferred_username
+
+    admin.password_hash = hash_secret(password)
+    admin.is_active = True
+    admin.must_change_password = _env_truthy(
+        "VPROF_ADMIN_REQUIRE_PASSWORD_CHANGE_AFTER_RESET", False
+    )
+    db.commit()
+    return {
+        "created": False,
+        "reset": True,
+        "username": admin.username,
+        "generated_password": None,
+    }
+

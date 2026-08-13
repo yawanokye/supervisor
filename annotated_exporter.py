@@ -10,12 +10,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import RGBColor
+from docx.shared import Pt, RGBColor
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from docx.table import Table
 
-from .document_parser import clean_text, normalised
+from .document_parser import clean_text, normalised, docx_visible_text
 from .comment_quality import (
     comment_max_chars,
     public_text,
@@ -25,16 +25,125 @@ from .comment_quality import (
 )
 from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
-from .finding_order import order_and_number_rows
+from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
+from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
+from .finding_order import priority_order_key
 
-ANNOTATION_EXPORT_VERSION = "1.9.9.21-expert-sequential-detailed-review"
+ANNOTATION_EXPORT_VERSION = "2.8.0-quality-gated-native"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.8.0-quality-gated-native"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
 INLINE_BLUE = RGBColor(0x00, 0x70, 0xC0)
 _RICH_RED_RE = re.compile(r"\[\[VPROF_RED:(.*?)\]\]")
 _REFNO_RE = re.compile(r"\[\[VPROF_REFNO:(\d+)\]\]")
+
+
+def _existing_comment_policy() -> str:
+    value = os.getenv("VPROF_EXISTING_COMMENT_POLICY", "label").strip().lower()
+    return value if value in {"label", "preserve"} else "label"
+
+
+def _remove_comment_from_document(document, comment) -> None:
+    """Remove an empty source comment and its Word range markers safely."""
+    comment_id = str(getattr(comment, "comment_id", ""))
+    if not comment_id:
+        return
+    for tag in ("commentRangeStart", "commentRangeEnd"):
+        for node in list(document.element.xpath(f".//w:{tag}[@w:id='{comment_id}']")):
+            parent = node.getparent()
+            if parent is not None:
+                parent.remove(node)
+    for node in list(document.element.xpath(f".//w:commentReference[@w:id='{comment_id}']")):
+        run = node.getparent()
+        if run is not None:
+            run.remove(node)
+            if not run.xpath(".//w:t") and not run.xpath(".//w:drawing"):
+                parent = run.getparent()
+                if parent is not None:
+                    parent.remove(run)
+    element = getattr(comment, "_element", None)
+    if element is not None and element.getparent() is not None:
+        element.getparent().remove(element)
+
+
+def _source_comment_status(original_text: str, document_text: str) -> str:
+    """Return a conservative status for an earlier source-document comment.
+
+    Only directly verifiable missing-section comments are marked as addressed.
+    Other earlier comments remain clearly separated without being silently
+    accepted, rejected or treated as new V-Professor findings.
+    """
+    low = normalised(original_text)
+    if not any(term in low for term in ("missing", "where is", "not present", "is absent")):
+        return ""
+    section_patterns = (
+        ("purpose of the study", ("purpose of the study", "aim of the study", "general aim")),
+        ("introduction", ("introduction",)),
+        ("research objectives", ("research objectives", "objectives of the study", "specific objectives")),
+        ("research questions", ("research questions",)),
+        ("significance of the study", ("significance of the study",)),
+        ("scope of the study", ("scope of the study", "delimitation of the study", "delimitations of the study")),
+        ("limitations of the study", ("limitations of the study", "study limitations")),
+        ("organisation of the study", ("organisation of the study", "organization of the study")),
+        ("definition of terms", ("definition of terms", "operational definitions")),
+        ("research hypotheses", ("research hypotheses", "hypotheses")),
+    )
+    doc_low = normalised(document_text)
+    for canonical, variants in section_patterns:
+        if canonical in low or any(value in low for value in variants):
+            if any(re.search(rf"(?:^|\n)\s*(?:\d+(?:\.\d+)*)?\s*{re.escape(value)}\s*(?:\n|$)", document_text, flags=re.I) for value in variants):
+                return "appears addressed in the current version"
+            if any(value in doc_low for value in variants):
+                return "appears addressed in the current version"
+    return ""
+
+
+def _label_existing_source_comments(document) -> None:
+    """Separate earlier comments from current V-Professor findings.
+
+    Empty source comments are removed. A previous missing-section comment is
+    marked as apparently addressed only when the section is visibly present in
+    the current document. No topic, institution or correction from an example
+    document is retained as a future review rule.
+    """
+    if _existing_comment_policy() != "label":
+        return
+    document_text = "\n".join(
+        clean_text(paragraph.text) for paragraph in document.paragraphs if clean_text(paragraph.text)
+    )
+    try:
+        comments = list(document.comments)
+    except Exception:
+        comments = []
+    prefix_re = re.compile(r"^\[Previous comment from source document(?:\s*\|[^\]]+)?\]\s*", flags=re.I)
+    for comment in comments:
+        raw = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+        original = prefix_re.sub("", raw).strip()
+        if not original:
+            _remove_comment_from_document(document, comment)
+            continue
+        status = _source_comment_status(original, document_text)
+        prefix = "[Previous comment from source document"
+        if status:
+            prefix += f" | {status}"
+        prefix += "] "
+        if comment.paragraphs:
+            comment.paragraphs[0].text = prefix + original
+            for paragraph in list(comment.paragraphs[1:]):
+                paragraph._element.getparent().remove(paragraph._element)
+        else:
+            comment.add_paragraph(prefix + original)
+
+
+def _is_current_vprof_comment(comment, author: str = "") -> bool:
+    text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+    if text.startswith("[Previous comment from source document"):
+        return False
+    if author and clean_text(getattr(comment, "author", "")) != clean_text(author):
+        return False
+    return True
 
 
 # Unresolved drafting placeholders inside the student's own document must always
@@ -47,8 +156,35 @@ _BODY_PLACEHOLDER_RE = re.compile(
     flags=re.I,
 )
 
+
+
+def _xml_node_is_deleted(node: Any) -> bool:
+    blocked = {qn("w:del"), qn("w:moveFrom")}
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    while parent is not None:
+        if parent.tag in blocked:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _visible_runs(paragraph: Paragraph) -> List[Run]:
+    """Return displayed runs, including tracked insertions and excluding deletions."""
+    output: List[Run] = []
+    for element in paragraph._p.iter(qn("w:r")):
+        if _xml_node_is_deleted(element):
+            continue
+        run = Run(element, paragraph)
+        if clean_text(run.text):
+            output.append(run)
+    return output
+
+
+def _visible_paragraph_text(paragraph: Paragraph) -> str:
+    return docx_visible_text(paragraph)
+
 _NATURAL_LABEL_RE = re.compile(
-    r"\b(?:Issue|Why this matters|Revise by|Guidance|Academic implication|Academic consequence)\s*:\s*",
+    r"\b(?:Issue|Problem identified|Action required|Required correction|Required revision|Why this matters|Verification|How to verify completion|Revise by|Guidance|Illustrative guidance|Academic implication|Academic consequence)\s*:\s*",
     flags=re.I,
 )
 
@@ -71,7 +207,7 @@ def _missing_section_inline_bottom_enabled() -> bool:
 
 
 def _native_group_location_markers_enabled() -> bool:
-    return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", True)
+    return _env_bool("VPROF_NATIVE_GROUP_LOCATION_MARKERS", False)
 
 
 def _sequential_reference_numbers_enabled() -> bool:
@@ -80,6 +216,10 @@ def _sequential_reference_numbers_enabled() -> bool:
 
 def _specific_corrections_required_enabled() -> bool:
     return _env_bool("VPROF_SPECIFIC_CORRECTIONS_REQUIRED_BOTTOM", True)
+
+
+def _professional_review_appendix_enabled() -> bool:
+    return _env_bool("VPROF_PROFESSIONAL_REVIEW_APPENDIX", True)
 
 
 def _missing_section_haystack(row: Dict[str, Any]) -> str:
@@ -93,27 +233,37 @@ def _missing_section_haystack(row: Dict[str, Any]) -> str:
 
 
 def _is_missing_section_finding(row: Dict[str, Any]) -> bool:
-    """Return True for findings about an absent chapter section.
+    """Return True only for a genuinely absent structural section.
 
-    These findings should not be attached to an unrelated existing section. A
-    missing section has no exact anchor in the document, so it is handled as a
-    blue inline note at the bottom of the reviewed chapter.
+    Words such as ``missing spaces`` or ``missing reference-list entries`` are
+    correction issues, not missing sections. Verified section-contract metadata
+    is preferred, with a conservative textual fallback for legacy findings.
     """
+    if clean_text(row.get("missing_section_label")):
+        return True
+    if normalised(row.get("section_status")) == "missing":
+        return True
+    if row.get("section_contract_verified") and normalised(row.get("section_status")) in {"missing", "absent"}:
+        return True
+
     text = _missing_section_haystack(row)
     if not text:
         return False
-    missing_tokens = (
-        "missing", "not evident", "not present", "absent", "add or clearly label",
-        "expected ucc thesis section", "no references", "reference list is missing",
-        "bibliography section", "definition of terms",
-    )
-    section_tokens = (
-        "section", "definition of terms", "operational definition", "references",
-        "reference list", "bibliography", "glossary",
-    )
-    if "too thin" in text or "underdeveloped" in text or "not explicit" in text:
+    # Do not confuse citation/formatting language with an absent References
+    # section or other structural omission.
+    if any(token in text for token in (
+        "missing spaces", "missing space", "missing citation", "missing reference list entry",
+        "missing reference-list entry", "missing source detail", "missing punctuation",
+    )):
         return False
-    return any(token in text for token in missing_tokens) and any(token in text for token in section_tokens)
+
+    structural_patterns = (
+        r"\b(?:the\s+)?[a-z][a-z /&-]{2,70}\s+section\s+(?:is\s+)?(?:missing|absent|not present|not evident)\b",
+        r"\b(?:purpose of the study|research hypotheses|definition of terms|limitations of the study|delimitations of the study|chapter summary|references)\s+(?:is|are)\s+missing\b",
+        r"\bexpected\s+(?:ucc\s+)?(?:thesis|dissertation|project)?\s*section\s+(?:is\s+)?not evident\b",
+    )
+    return any(re.search(pattern, text, flags=re.I) for pattern in structural_patterns)
+
 
 
 def _missing_section_name(row: Dict[str, Any]) -> str:
@@ -165,7 +315,7 @@ def _insert_blue_paragraph_after(paragraph: Paragraph) -> Paragraph:
 
 def _last_chapter_body_paragraph(document) -> Optional[Paragraph]:
     for paragraph in reversed(document.paragraphs):
-        text = clean_text(paragraph.text)
+        text = _visible_paragraph_text(paragraph)
         if not text:
             continue
         low = normalised(text)
@@ -178,7 +328,7 @@ def _last_chapter_body_paragraph(document) -> Optional[Paragraph]:
 def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, Any]]) -> None:
     if not _missing_section_inline_bottom_enabled():
         return
-    comments: List[str] = []
+    comments: List[Tuple[int, str]] = []
     seen = set()
     for row in rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
@@ -188,20 +338,26 @@ def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, 
         if not _is_missing_section_finding(row):
             continue
         comment = _missing_section_bottom_comment(row)
-        key = normalised(comment)
+        try:
+            number = int(row.get("finding_number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        key = (number, normalised(comment))
         if not comment or key in seen:
             continue
         seen.add(key)
-        comments.append(comment)
+        comments.append((number, comment))
     if not comments:
         return
     anchor = _last_chapter_body_paragraph(document)
     if anchor is None:
         return
+    comments.sort(key=lambda item: item[0] if item[0] > 0 else 10**9)
     # Insert in reverse so the final visible order is heading, then numbered notes.
-    for idx, comment in reversed(list(enumerate(comments, start=1))):
+    for local_idx, (number, comment) in reversed(list(enumerate(comments, start=1))):
         note = _insert_blue_paragraph_after(anchor)
-        run = note.add_run(f"{idx}. {comment}")
+        visible_number = number if number > 0 else local_idx
+        run = note.add_run(f"Detailed supervisor comment: {visible_number}. {comment}")
         run.font.color.rgb = INLINE_BLUE
         run.font.italic = True
         try:
@@ -218,7 +374,7 @@ def _add_missing_section_inline_bottom_notes(document, rows: Sequence[Dict[str, 
 
 
 def _native_comment_style() -> str:
-    return (os.getenv("VPROF_NATIVE_COMMENT_STYLE") or "anchored_grouped").strip().lower()
+    return (os.getenv("VPROF_NATIVE_COMMENT_STYLE") or "exact_anchor_grouped").strip().lower()
 
 
 def _merge_comments_by_section() -> bool:
@@ -233,14 +389,22 @@ def _merge_comments_by_section() -> bool:
     back to grouped comments with a single new env setting.
     """
     style = _native_comment_style()
-    if style in {"anchored_grouped", "evidence_grouped", "numbered_grouped", "grouped", "section_grouped", "professional"}:
+    if style in {
+        "exact_anchor_grouped", "sentence_grouped", "anchored_grouped",
+        "evidence_grouped", "numbered_grouped", "grouped", "professional",
+    }:
         return True
     if style in {"one_per_finding", "separate", "individual"}:
         return False
-    return _env_bool("VPROF_COMMENT_MERGE_BY_SECTION", True)
+    return _env_bool("VPROF_COMMENT_MERGE_BY_SECTION", False)
 
 
 def _export_one_comment_per_finding() -> bool:
+    # Professional v2.1 rule: findings anchored to the same exact sentence or
+    # paragraph must share one numbered native comment box. A deployment can
+    # restore the legacy behaviour only by explicitly disabling this rule.
+    if _env_bool("VPROF_GROUP_SAME_ANCHOR_COMMENTS", True):
+        return False
     if _merge_comments_by_section():
         return False
     return _env_bool("VPROF_EXPORT_ONE_COMMENT_PER_FINDING", False)
@@ -251,7 +415,7 @@ def _split_related_concerns() -> bool:
     # deployment explicitly switches back to one-comment-per-finding mode.
     if _merge_comments_by_section():
         return False
-    return _env_bool("VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS", False)
+    return _env_bool("VPROF_SPLIT_RELATED_CONCERNS_INTO_SEPARATE_COMMENTS", True)
 
 
 def _include_section_review_comments() -> bool:
@@ -259,20 +423,50 @@ def _include_section_review_comments() -> bool:
 
 
 def _max_items_per_native_comment() -> int:
-    raw = os.getenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT") or "3"
+    raw = os.getenv("VPROF_MAX_ITEMS_PER_NATIVE_COMMENT") or "20"
     try:
-        return max(2, min(5, int(raw)))
+        return max(1, min(50, int(raw)))
     except ValueError:
-        return 3
+        return 20
+
+
+def _grouped_comment_max_chars() -> int:
+    """Allow a grouped native comment to retain every numbered action.
+
+    The per-finding limit remains concise, but a sentence may legitimately have
+    several distinct corrections. The grouped box therefore needs a larger
+    ceiling so later actions are not silently cut off.
+    """
+    raw = os.getenv("VPROF_GROUPED_COMMENT_MAX_CHARS") or "8000"
+    try:
+        return max(comment_max_chars(), min(12000, int(raw)))
+    except ValueError:
+        return max(comment_max_chars(), 8000)
 
 
 def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
     unique: List[str] = []
     seen = set()
     for value in comments:
-        text = _strip_visible_labels(
-            public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
-        ).strip("[] ").rstrip(" ;.")
+        ref_no = _comment_reference_number(value)
+        raw = _strip_comment_reference(value)
+        released = public_text(
+            raw,
+            limit=comment_max_chars(),
+            reject_placeholders=True,
+            reject_incomplete=True,
+        )
+        # The canonical ledger has already passed the release guard. A strict
+        # final prose check must not silently remove a valid numbered finding
+        # merely because a quoted source fragment ends at a citation boundary.
+        if not released:
+            released = public_text(
+                raw,
+                limit=comment_max_chars(),
+                reject_placeholders=True,
+                reject_incomplete=False,
+            )
+        text = _strip_visible_labels(released).strip("[] ").rstrip(" ;.")
         text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
         if not text:
             continue
@@ -287,7 +481,8 @@ def _prepare_comment_list(comments: Iterable[str]) -> List[str]:
             if not candidate or key in seen:
                 continue
             seen.add(key)
-            unique.append(_shorten_comment(candidate, comment_max_chars()).rstrip(" .") + ".")
+            body = _shorten_comment(candidate, comment_max_chars()).rstrip(" .") + "."
+            unique.append(_with_comment_reference(ref_no, body) if ref_no else body)
     return unique
 
 
@@ -393,45 +588,116 @@ def _run_element(text: str, source_run=None, colour: Optional[str] = None, itali
 
 
 def _sentence_spans(text: str) -> List[Tuple[int, int, str]]:
+    """Return sentence-like spans without splitting decimals, DOIs or initials.
+
+    The former punctuation-only expression split values such as ``11.4`` and
+    ``1.2°C`` and could place a visible comment reference inside the number.
+    This scanner treats full stops as boundaries only when they are not part of
+    a protected numeric, bibliographic or abbreviation pattern.
+    """
+    value = text or ""
+    if not value:
+        return []
+
+    abbreviations = {
+        "al", "e.g", "i.e", "etc", "fig", "no", "pp", "p", "prof",
+        "dr", "mr", "mrs", "ms", "st", "vs", "vol", "ed", "eds",
+    }
     spans: List[Tuple[int, int, str]] = []
-    for match in re.finditer(r"[^.!?\n]+(?:[.!?]+|$)", text or ""):
-        start, end = match.span()
-        if match.group(0).strip():
-            spans.append((start, end, match.group(0)))
-    if not spans and text:
-        spans.append((0, len(text), text))
+    start = 0
+    i = 0
+    length = len(value)
+
+    def protected_period(index: int) -> bool:
+        prev = value[index - 1] if index > 0 else ""
+        nxt = value[index + 1] if index + 1 < length else ""
+        if prev.isdigit() and nxt.isdigit():
+            return True
+        left = value[max(0, index - 12):index]
+        token_match = re.search(r"([A-Za-z](?:[A-Za-z.]*)?)$", left)
+        token = token_match.group(1).lower().rstrip(".") if token_match else ""
+        if token in abbreviations:
+            return True
+        next_nonspace = ""
+        for candidate in value[index + 1:]:
+            if not candidate.isspace():
+                next_nonspace = candidate
+                break
+        token_start = index - len(token)
+        token_preceding = value[token_start - 1] if token_start > 0 else ""
+        if (
+            len(token) == 1
+            and token.isalpha()
+            and next_nonspace.isupper()
+            and (not token_preceding or token_preceding.isspace() or token_preceding in "([{'\"")
+        ):
+            return True
+        current_lexeme = value[max(value.rfind(" ", 0, index), value.rfind("\n", 0, index)) + 1:index + 2]
+        if nxt.isalnum() and ("://" in current_lexeme or current_lexeme.lower().startswith(("www.", "doi."))):
+            return True
+        # DOI prefixes and version-like identifiers, for example 10.1108.
+        if re.search(r"(?:^|\s)10$", left) and nxt.isdigit():
+            return True
+        return False
+
+    while i < length:
+        char = value[i]
+        boundary = False
+        if char in "!?":
+            boundary = True
+        elif char == "." and not protected_period(i):
+            boundary = True
+        elif char == "\n":
+            boundary = True
+
+        if boundary:
+            end = i + 1
+            while end < length and value[end] in "\"'’”)]}":
+                end += 1
+            segment = value[start:end]
+            if segment.strip():
+                spans.append((start, end, segment))
+            start = end
+            i = end
+            continue
+        i += 1
+
+    if start < length and value[start:].strip():
+        spans.append((start, length, value[start:]))
+    if not spans:
+        spans.append((0, length, value))
     return spans
 
 
 def _expand_to_safe_text_span(text: str, start: int, end: int) -> Tuple[int, int]:
-    """Avoid inserting reference markers inside a word.
+    """Expand an evidence range to stable sentence or word boundaries.
 
-    When extracted evidence quotes are very short or align inside a word, the
-    previous exporter could create output such as "teache [6] r education".
-    Expand to a sentence where possible, otherwise at least expand to whole-word
-    boundaries before the native comment and red number are inserted.
+    Word comments look most natural when they sit beside the complete sentence
+    being discussed. Sentence anchoring also prevents red reference numbers from
+    splitting words when a model returns a truncated quotation.
     """
     if not text:
         return (0, 0)
     start = max(0, min(len(text), int(start)))
     end = max(start, min(len(text), int(end)))
+    # Evidence ranges may include the single separator space after a sentence.
+    # Trim that whitespace before choosing the final sentence, otherwise two
+    # consecutive sentences are incorrectly expanded into one comment anchor.
+    while end > start and text[end - 1].isspace():
+        end -= 1
     if start == end:
         return (0, len(text))
-    # Short spans are usually weak anchors. Use the containing sentence instead.
-    if end - start < 24:
-        for s, e, _sentence in _sentence_spans(text):
-            if s <= start and end <= e and e > s:
-                return (s, e)
+
+    spans = _sentence_spans(text)
+    first = next((span for span in spans if span[0] <= start < span[1]), None)
+    last = next((span for span in spans if span[0] < end <= span[1]), None)
+    if first and last:
+        return (first[0], last[1])
+
     while start > 0 and text[start - 1].isalnum() and text[start:start + 1].isalnum():
         start -= 1
     while end < len(text) and text[end - 1:end].isalnum() and text[end:end + 1].isalnum():
         end += 1
-    # Prefer the full sentence when the adjusted span is still fragmentary.
-    fragment = text[start:end].strip()
-    if len(fragment.split()) < 6:
-        for s, e, _sentence in _sentence_spans(text):
-            if s <= start and end <= e and e > s:
-                return (s, e)
     return start, end
 
 
@@ -508,106 +774,36 @@ def _shorten_comment(value: str, limit: Optional[int] = None) -> str:
     return sentence_safe_trim(value, effective_limit)
 
 def _comment_body(row: Dict[str, Any]) -> str:
+    """Build one evidence-grounded native comment as natural supervisory prose."""
     safe_row = sanitise_finding_row(row)
     if safe_row is None:
         return ""
     row = safe_row
-
-    reference = clean_text(
-        row.get("reference_label")
-        or row.get("section_reference")
-        or row.get("section")
-    )
-    if not row.get("table_reference"):
-        table_evidence = next(
-            (item for item in row.get("evidence") or [] if item.get("table_number")),
-            None,
-        )
-        if table_evidence:
-            number = clean_text(table_evidence.get("table_number", ""))
-            title = clean_text(table_evidence.get("table_title", ""))
-            table_reference = f"Table {number}" if number else "Table"
-            if title:
-                table_reference += f": {title}"
-            reference = f"{reference}, {table_reference}" if reference else table_reference
-
-    issue = _sanitise_guidance(row.get("item", ""))
-    section_label = clean_text(row.get("section_reference") or row.get("section") or "")
-    if (reference and normalised(issue) == normalised(reference)) or (section_label and normalised(issue) == normalised(section_label)):
-        issue = ""
-    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
-    consequence = _sanitise_guidance(
-        row.get("academic_consequence", "")
-        or row.get("consequence", "")
-        or row.get("why_it_matters", "")
-    )
-    action = _sanitise_guidance(row.get("required_action", ""))
-    example = _sanitise_guidance(row.get("illustrative_guidance", ""))
-    if not example:
-        example = _sanitise_guidance(context_specific_example(row))
-    example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
-
-    heading = reference or "Supervisor review"
-    parts: List[str] = []
-
-    if issue:
-        parts.append(issue.rstrip(" .") + ".")
-    if assessment:
-        parts.append(assessment.rstrip(" .") + ".")
-    if consequence and normalised(consequence) not in normalised(assessment):
-        parts.append(consequence.rstrip(" .") + ".")
-
-    level = academic_level_label(row.get("_academic_level") or row.get("academic_level"))
-    combined_so_far = " ".join(parts)
-    explicit_level_sentence = re.search(
-        r"(?:^|[.!?]\s+)At\s+(?:PhD|MPhil|professional doctorate|Master's|non-research Master's|Bachelor's)\s+level\b",
-        combined_so_far,
-    )
-    if level != "the applicable academic level" and not explicit_level_sentence:
-        category_text = normalised(" ".join(clean_text(row.get(field, "")) for field in ("category", "section", "item", "comment")))
-        if any(term in category_text for term in ("result", "statistic", "analysis", "regression", "anova", "sem", "mediation", "moderation", "table")):
-            expectation = "the analysis should be sufficiently complete and internally consistent for an examiner to trace each reported conclusion to the relevant table, model and diagnostic evidence"
-        elif any(term in category_text for term in ("method", "design", "sampling", "instrument", "validity", "reliability", "ethics")):
-            expectation = "the methodological choices should be justified, reproducible and explicitly aligned with the objectives, data and analysis"
-        elif any(term in category_text for term in ("discussion", "interpretation", "contribution", "theory")):
-            expectation = "the work should demonstrate independent scholarly interpretation, theoretical integration and defensible contribution"
-        else:
-            expectation = "the argument should demonstrate the precision, depth and independent scholarly judgement expected"
-        parts.append(f"At {level}, {expectation}.")
-
-    if action:
-        action_text = _normalise_action_start(action)
-        if re.match(r"^(?:revise|rewrite|replace|align|clarify|expand|state|define|support|remove|correct|ensure|explain|add|verify|use|undertake|apply|provide|insert|avoid|check|develop|formulate|show|demonstrate|indicate|link|situate|differentiate|populate|supply|fix|interpret|qualify|separate|clean)\b", action_text, flags=re.I):
-            parts.append(action_text + ".")
-        else:
-            parts.append("Revise the marked passage so that it " + action_text[0].lower() + action_text[1:] + ".")
-    elif assessment:
-        parts.append("Revise the marked passage so the academic point is clear, properly supported and aligned with the section purpose.")
-    if example:
-        example_text = _normalise_action_start(example)
-        if example_text:
-            parts.append("For example, " + example_text[0].lower() + example_text[1:] + ".")
-
-    deduped_parts: List[str] = []
-    seen_parts = set()
-    for part in parts:
-        key = normalised(part)
-        if not key or key in seen_parts:
-            continue
-        if any(_comment_similarity(key, existing) >= 0.88 for existing in seen_parts):
-            continue
-        seen_parts.add(key)
-        deduped_parts.append(part)
-    parts = deduped_parts
-
-    body = f"{heading}: " + " ".join(parts) if parts else f"{heading}: Revise this passage to address the identified academic weakness."
-    # Manual-confirmation and provider-failure status belongs in the internal
-    # audit trail, never in a student's Word comment. Student-facing comments
-    # remain developmental but must read as natural supervision, not as a
-    # labelled template.
-    body = _strip_visible_labels(body)
+    table_reference = clean_text(row.get("table_reference") or "")
+    section_reference = clean_text(row.get("section_reference") or row.get("section") or "")
+    reference = section_reference if table_reference and table_reference in section_reference else table_reference
+    body = natural_supervisor_comment(row, compact=False)
+    if reference and body:
+        body = reference + ": " + body
     body = professionalise_reviewer_language(body, row.get("_academic_level") or row.get("academic_level"))
-    return public_text(_shorten_comment(body), reject_placeholders=True, reject_incomplete=True)
+    released = public_text(_shorten_comment(body, comment_max_chars()), reject_placeholders=True, reject_incomplete=True)
+    if released:
+        return released
+    fallback = natural_supervisor_comment(row, compact=True, include_reason=False, include_verification=False, include_example=False)
+    released = public_text(fallback, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
+    if released:
+        return released
+    # A final canonical finding must never disappear from an annotated export
+    # merely because one prose-polishing filter rejects a sentence. The
+    # canonical student comment has already passed the release guard.
+    fallback = clean_text(
+        row.get("student_comment")
+        or " ".join(value for value in (
+            clean_text(row.get("item") or row.get("issue_title")),
+            clean_text(row.get("required_action")),
+        ) if value)
+    )
+    return public_text(fallback, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=False)
 
 
 _LEVEL_PHRASE_RE = re.compile(
@@ -617,10 +813,15 @@ _LEVEL_PHRASE_RE = re.compile(
 
 
 def _remove_level_repetition(value: str) -> str:
-    # Preserve a genuine level-specific expectation such as "At PhD level".
-    # Only collapse whitespace; old versions removed the level statement and
-    # made the comment sound generic.
-    return re.sub(r"\s{2,}", " ", clean_text(value)).strip()
+    text = clean_text(value)
+    text = re.sub(
+        r"(?:^|(?<=[.!?])\s+)At\s+(?:PhD|MPhil|professional doctorate|Master(?:'s|s)|non-research Master(?:'s|s)|Bachelor(?:'s|s))\s+level,\s*[^.!?]+[.!?]",
+        " ",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"\b(?:should|must) be traceable to\b", "should be clearly linked to", text, flags=re.I)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def _split_example(value: str) -> Tuple[str, str]:
@@ -631,30 +832,30 @@ def _split_example(value: str) -> Tuple[str, str]:
 
 
 def _compact_group_item(value: str) -> Tuple[str, str]:
+    """Compact one natural grouped comment without reintroducing field labels."""
     value = _strip_comment_reference(value)
-    text = _strip_visible_labels(
-        public_text(value, limit=comment_max_chars(), reject_placeholders=True, reject_incomplete=True)
-    ).strip("[] ").rstrip(" ;.")
-    text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
+    text = public_text(
+        value,
+        limit=max(comment_max_chars(), 1800),
+        reject_placeholders=True,
+        reject_incomplete=True,
+    )
+    # Do not lose a canonical finding at the final formatting boundary. This
+    # relaxed pass is limited to already validated student-facing prose and is
+    # still protected against placeholders and internal workflow language.
+    if not text:
+        text = public_text(
+            value,
+            limit=max(comment_max_chars(), 1800),
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+    text = text.strip("[] ").rstrip(" ;.")
     text = _remove_level_repetition(text)
     core, example = _split_example(text)
-    # When a grouped comment is anchored on a section heading, repeating
-    # "Problem Statement:" or "Introduction:" inside every numbered item looks
-    # mechanical. Remove only short heading prefixes; the section location is
-    # already provided by the Word anchor and the report.
-    core = re.sub(
-        r"^.{2,180}:\s*(?=(?:Add|Align|Ask|Avoid|Check|Clarify|Clean|Correct|Define|Develop|Ensure|Explain|Expand|Formulate|Interpret|Insert|Link|Provide|Qualify|Remove|Replace|Revise|Rewrite|Separate|Show|State|Support|Use|Verify)\b)",
-        "",
-        core,
-        flags=re.I,
-    ).strip()
-    core = re.sub(r"^(?:\d+(?:\.\d+){0,4}\s*)?[A-Za-z][A-Za-z0-9/&() \-]{2,90}:\s*", "", core).strip()
-    # Keep the full local guidance where possible. The comment is already
-    # grouped by the exact evidence passage, and using only the first two
-    # sentences can accidentally cut decimal headings such as 4.2 or table
-    # numbers such as Table 4.1.
-    core = _shorten_comment(core, 560).rstrip(" .")
-    example = _shorten_comment(example, 320).rstrip(" .") if example else ""
+    core = natural_group_item(core)
+    core = _shorten_comment(core, 1250).rstrip(" .")
+    example = _shorten_comment(example, 240).rstrip(" .") if example else ""
     return core, example
 
 
@@ -698,6 +899,14 @@ def _strip_comment_reference(comment: str) -> str:
     return _REFNO_RE.sub("", comment or "", count=1).strip()
 
 
+def _visible_numbered_comment(comment: str) -> str:
+    ref_no = _comment_reference_number(comment)
+    body = _strip_comment_reference(comment)
+    if ref_no is None:
+        return body
+    return f"{ref_no}. {body}"
+
+
 def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> str:
     """Format grouped text for the Word Review comment pane.
 
@@ -717,8 +926,8 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
             continue
         if key in seen:
             continue
-        if any(_comment_similarity(key, existing_key) >= 0.74 for existing_key in seen):
-            continue
+        # Distinct canonical findings on the same sentence must remain as
+        # separately numbered actions. Only exact duplicates are suppressed.
         seen.add(key)
         unique.append((ref_no, item.rstrip(" .") + "."))
         if example and all(_comment_similarity(normalised(example), normalised(existing)) < 0.60 for existing in examples):
@@ -727,6 +936,7 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
             break
     if not unique:
         return ""
+    unique.sort(key=lambda pair: pair[0] if pair[0] is not None else 10**9)
     parts = []
     for local_idx, (ref_no, item) in enumerate(unique, start=1):
         number = ref_no if ref_no is not None else local_idx
@@ -735,7 +945,7 @@ def _format_comment_group(comments: Iterable[str], anchor_context: str = "") -> 
     if examples:
         example = examples[0]
         body = body.rstrip() + " For example, " + example[0].lower() + example[1:]
-    return _shorten_comment(body, comment_max_chars())
+    return _shorten_comment(body, _grouped_comment_max_chars())
 
 
 def _is_synthetic_section_heading(value: str) -> bool:
@@ -760,13 +970,11 @@ _GENERIC_SECTION_ASSESSMENT_RE = re.compile(
 def _section_comment_template(heading: str, academic_level: Any = None) -> str:
     """Return a section-specific supervisory note rather than a generic coverage stamp."""
     low = normalised(heading)
-    level = academic_level_label(academic_level)
-    level_phrase = f"At {level}" if level != "the applicable academic level" else "At the applicable academic level"
     if "background" in low:
         return (
-            "This part should move logically from the broad sustainability debate to the specific Ghanaian and sectoral context of the study. "
-            "It should introduce the main constructs, show how they relate and prepare the reader for the problem statement rather than merely listing prior studies. "
-            "Strengthen the progression, localise the evidence and ensure that every central construct in the objectives is introduced before the problem is stated."
+            "This part should move logically from the broad context to the specific setting and problem of the study. "
+            "Use the literature selectively to introduce the main constructs, show their relevance and prepare the reader for the problem statement. "
+            "Do not duplicate the detailed comparison of studies, methods and conflicting findings expected in Chapter Two."
         )
     if "statement" in low and "problem" in low:
         return (
@@ -777,8 +985,8 @@ def _section_comment_template(heading: str, academic_level: Any = None) -> str:
     if "purpose" in low:
         return (
             "The purpose statement should express the central intent of the whole study in one coherent frame. "
-            "For MPhil-level work, it must cover every principal construct and outcome that later appears in the objectives and questions. "
-            "Revise the statement so a reader can trace the design, analysis and conclusions back to this purpose."
+            "It must cover every principal construct and outcome that later appears in the objectives and questions. "
+            "Revise the statement so the design, analysis and conclusions clearly follow from this purpose."
         )
     if "objective" in low:
         return (
@@ -1111,15 +1319,14 @@ def _add_native_comment(
 
 
 def _group_reference_numbers_from_comment(comment: str) -> List[int]:
-    """Extract grouped comment item numbers that need visible body references."""
+    """Extract final finding numbers for visible red body references."""
     numbers = []
-    for match in re.finditer(r"\[\[VPROF_RED:(\d+)\.\s*", comment or ""):
-        try:
-            numbers.append(int(match.group(1)))
-        except (TypeError, ValueError):
-            continue
-    # Only insert body markers for grouped comments. A single native comment is
-    # already clear from the highlighted text and does not need an extra marker.
+    for pattern in (r"\[\[VPROF_REFNO:(\d+)\]\]", r"\[\[VPROF_RED:(\d+)\.\s*"):
+        for match in re.finditer(pattern, comment or ""):
+            try:
+                numbers.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
     unique = []
     for number in numbers:
         if number not in unique:
@@ -1144,12 +1351,76 @@ def _insert_red_reference_markers_after_span(
         return
     marker_text = " " + " ".join(f"[{number}]" for number in reference_numbers)
     marker = _run_element(marker_text, source_run=source_run, colour="C00000")
-    parent = trailing_element.getparent() if trailing_element is not None else paragraph._p
-    if trailing_element is not None and trailing_element.getparent() is not None:
-        index = parent.index(trailing_element) + 1
-        parent.insert(index, marker)
-    else:
-        paragraph._p.append(marker)
+    # Visible markers are disabled by default. When explicitly enabled, append
+    # them at the paragraph end so they cannot split decimals, equations, DOIs,
+    # URLs, citations or words inside the student's original text.
+    paragraph._p.append(marker)
+
+
+def _normalise_red_reference_markers_after_span(
+    paragraph: Paragraph,
+    start: int,
+    end: int,
+    reference_numbers: Sequence[int],
+) -> None:
+    """Keep multiple markers on one anchor in ascending reading order.
+
+    Adding several native comments to the same text range nests Word comment
+    ranges, which can otherwise reverse the visible marker order. Remove the
+    individual marker runs and insert one combined marker after the nested
+    comment references.
+    """
+    numbers = sorted({int(number) for number in reference_numbers if int(number) > 0})
+    if not numbers:
+        return
+    wanted = {f"[{number}]" for number in numbers}
+    paragraph_element = paragraph._p
+
+    # Remove only the red marker runs for this finding set.
+    for child in list(paragraph_element):
+        if child.tag != qn("w:r"):
+            continue
+        text = "".join(node.text or "" for node in child.findall(".//" + qn("w:t"))).strip()
+        colour = child.find("./" + qn("w:rPr") + "/" + qn("w:color"))
+        if text in wanted and colour is not None and (colour.get(qn("w:val")) or "").upper() == "C00000":
+            paragraph_element.remove(child)
+
+    # Locate the run containing the final source character of the anchor while
+    # ignoring comment-reference runs, which have no visible source text.
+    cursor = 0
+    trailing = None
+    source_run = None
+    for child in list(paragraph_element):
+        if child.tag != qn("w:r"):
+            continue
+        if child.find(".//" + qn("w:commentReference")) is not None:
+            continue
+        text = "".join(node.text or "" for node in child.findall(".//" + qn("w:t")))
+        if not text:
+            continue
+        run_start, run_end = cursor, cursor + len(text)
+        cursor = run_end
+        if run_start < end <= run_end or (end == run_end and end > start):
+            trailing = child
+            source_run = Run(child, paragraph)
+            break
+    if trailing is None:
+        return
+
+    children = list(paragraph_element)
+    index = children.index(trailing) + 1
+    # Move past all nested range ends and their comment-reference runs.
+    while index < len(children):
+        child = children[index]
+        if child.tag == qn("w:commentRangeEnd"):
+            index += 1
+            continue
+        if child.tag == qn("w:r") and child.find(".//" + qn("w:commentReference")) is not None:
+            index += 1
+            continue
+        break
+    marker_text = " " + " ".join(f"[{number}]" for number in numbers)
+    paragraph_element.insert(index, _run_element(marker_text, source_run=source_run, colour="C00000"))
 
 
 def _mark_span_and_insert_comment(
@@ -1167,9 +1438,10 @@ def _mark_span_and_insert_comment(
     The paragraph text and visible formatting are preserved. The selected text
     is not recoloured and no comment paragraph is inserted into the document.
     """
+    start, end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
     if start >= end:
         return False
-    runs = list(paragraph.runs)
+    runs = _visible_runs(paragraph)
     cursor = 0
     marked_elements = []
     trailing_element = None
@@ -1202,7 +1474,7 @@ def _mark_span_and_insert_comment(
         )
     anchor_runs = [Run(element, paragraph) for element in marked_elements]
     return _add_native_comment(
-        document, anchor_runs, comment, author=author, initials=initials
+        document, anchor_runs, _visible_numbered_comment(comment), author=author, initials=initials
     )
 
 def _merge_nearby_span_groups(
@@ -1216,7 +1488,12 @@ def _merge_nearby_span_groups(
             merged.append(((start, end), list(comments)))
             continue
         (previous_start, previous_end), previous_comments = merged[-1]
-        if start <= previous_end + max_gap:
+        # Touching sentence boundaries are not overlapping. Using ``<=`` here
+        # merged consecutive sentences into one broad Word comment. Merge only
+        # true overlap, or an explicitly configured positive gap.
+        overlaps = start < previous_end
+        within_positive_gap = max_gap > 0 and start <= previous_end + max_gap
+        if overlaps or within_positive_gap:
             merged[-1] = ((previous_start, max(previous_end, end)), previous_comments + list(comments))
         else:
             merged.append(((start, end), list(comments)))
@@ -1268,7 +1545,7 @@ def _source_locator_map(document):
                     **table_info,
                 })
             for row_index, row in enumerate(block.rows, start=1):
-                values = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
+                values = [docx_visible_text(cell) for cell in row.cells if docx_visible_text(cell)]
                 if not values:
                     continue
                 paragraph_no += 1
@@ -1276,7 +1553,7 @@ def _source_locator_map(document):
                 for cell in row.cells:
                     cell_paragraphs.extend(
                         paragraph for paragraph in cell.paragraphs
-                        if clean_text(paragraph.text)
+                        if _visible_paragraph_text(paragraph)
                     )
                 output[paragraph_no] = {
                     "kind": "table_row",
@@ -1290,7 +1567,7 @@ def _source_locator_map(document):
             pending_caption = None
             continue
 
-        text = clean_text(block.text)
+        text = docx_visible_text(block)
         if not text:
             continue
         chapter_match = re.fullmatch(
@@ -1337,7 +1614,7 @@ def _find_heading(
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
     }
     for paragraph in document.paragraphs:
-        raw = clean_text(paragraph.text)
+        raw = _visible_paragraph_text(paragraph)
         low = normalised(raw)
         if not low or "supervisor comment" in low:
             continue
@@ -1378,19 +1655,33 @@ def _comment_on_paragraph(
     author: str,
     initials: str,
 ) -> bool:
-    runs = [run for run in paragraph.runs if clean_text(run.text)]
+    runs = _visible_runs(paragraph)
     if not runs:
         return False
     if _export_one_comment_per_finding():
         added = False
-        for comment in _prepare_comment_list(comments):
-            if _add_native_comment(document, runs, comment, author=author, initials=initials):
+        prepared = sorted(
+            _prepare_comment_list(comments),
+            key=lambda value: _comment_reference_number(value) or 0,
+        )
+        reference_numbers: List[int] = []
+        for comment in prepared:
+            reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+            if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
                 added = True
+        if added and _native_group_location_markers_enabled() and reference_numbers:
+            # Whole-paragraph anchoring is used when Word fields or hyperlinks
+            # make character offsets unreliable. Append one combined marker at
+            # the paragraph end rather than trying to calculate an internal
+            # position from incomplete run text.
+            _insert_red_reference_markers_after_span(
+                paragraph, runs[-1]._r, sorted(set(reference_numbers)), runs[-1]
+            )
         return added
     if len(comments) == 1 and re.match(r"^\s*1\.\s+", comments[0]) and re.search(r"\b2\.\s+", comments[0]):
         grouped = comments[0]
     else:
-        grouped = _format_comment_group(comments, anchor_context=paragraph.text)
+        grouped = _format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))
     if grouped and _native_group_location_markers_enabled():
         numbers = _group_reference_numbers_from_comment(grouped)
         if numbers:
@@ -1414,36 +1705,50 @@ def _comment_on_table(
     author: str,
     initials: str,
 ) -> bool:
-    prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=(caption.text if caption is not None else "the table"))]
+    prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=(_visible_paragraph_text(caption) if caption is not None else "the table"))]
     prepared = [comment for comment in prepared if comment]
     if not prepared:
         return False
     if caption is not None:
-        runs = [run for run in caption.runs if clean_text(run.text)]
+        runs = _visible_runs(caption)
         if runs:
             added = False
+            reference_numbers: List[int] = []
+            original_length = len(_visible_paragraph_text(caption))
             for comment in prepared:
-                if _add_native_comment(document, runs, comment, author=author, initials=initials):
+                reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+                if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
                     added = True
             if added:
+                if _native_group_location_markers_enabled() and reference_numbers:
+                    _normalise_red_reference_markers_after_span(
+                        caption, 0, original_length, reference_numbers
+                    )
                 return True
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
-                runs = [run for run in paragraph.runs if clean_text(run.text)]
+                runs = _visible_runs(paragraph)
                 if not runs:
                     continue
                 added = False
+                reference_numbers: List[int] = []
+                original_length = len(_visible_paragraph_text(paragraph))
                 for comment in prepared:
+                    reference_numbers.extend(_group_reference_numbers_from_comment(comment))
                     if _add_native_comment(
                         document,
                         runs,
-                        comment,
+                        _visible_numbered_comment(comment),
                         author=author,
                         initials=initials,
                     ):
                         added = True
                 if added:
+                    if _native_group_location_markers_enabled() and reference_numbers:
+                        _normalise_red_reference_markers_after_span(
+                            paragraph, 0, original_length, reference_numbers
+                        )
                     return True
     return False
 
@@ -1464,29 +1769,37 @@ def _comment_on_table_row(
     row = table.rows[row_index - 1]
     for cell in row.cells:
         for paragraph in cell.paragraphs:
-            runs = [run for run in paragraph.runs if clean_text(run.text)]
+            runs = _visible_runs(paragraph)
             if not runs:
                 continue
-            grouped = _format_comment_group(comments, anchor_context=paragraph.text)
-            if grouped:
-                # Keep the student's table values unchanged. The native Word
-                # comment range itself identifies the affected row, while the
-                # sequential number remains visible in the comment pane.
-                return _add_native_comment(
-                    document, runs, grouped, author=author, initials=initials
-                )
+            prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))]
+            added = False
+            reference_numbers: List[int] = []
+            original_length = len(_visible_paragraph_text(paragraph))
+            for comment in prepared:
+                if not comment:
+                    continue
+                reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+                if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
+                    added = True
+            if added:
+                if _native_group_location_markers_enabled() and reference_numbers:
+                    _normalise_red_reference_markers_after_span(
+                        paragraph, 0, original_length, reference_numbers
+                    )
+                return True
     return False
 
 def _first_native_anchor(document) -> Optional[Paragraph]:
     """Return a stable existing paragraph for document-level comments."""
     for paragraph in document.paragraphs:
-        if clean_text(paragraph.text):
+        if _visible_paragraph_text(paragraph):
             return paragraph
     for table in document.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
-                    if clean_text(paragraph.text):
+                    if _visible_paragraph_text(paragraph):
                         return paragraph
     return None
 
@@ -1498,7 +1811,7 @@ def _first_academic_anchor(document):
         "introduction", "background to the study", "statement of the problem",
     )
     for paragraph in document.paragraphs:
-        text = clean_text(paragraph.text)
+        text = _visible_paragraph_text(paragraph)
         low = normalised(text)
         if not text:
             continue
@@ -1509,7 +1822,7 @@ def _first_academic_anchor(document):
         "august", "september", "emmanuel", "candidate", "supervisor"
     )
     for paragraph in document.paragraphs:
-        text = clean_text(paragraph.text)
+        text = _visible_paragraph_text(paragraph)
         low = normalised(text)
         if len(text.split()) < 4:
             continue
@@ -1531,8 +1844,10 @@ def _attach_document_level_comments(
     """
     cleaned: List[str] = []
     for value in comments:
+        reference_number = _comment_reference_number(value)
+        raw_body = _strip_comment_reference(value)
         text = public_text(
-            value,
+            raw_body,
             limit=comment_max_chars(),
             reject_placeholders=True,
             reject_incomplete=True,
@@ -1552,7 +1867,7 @@ def _attach_document_level_comments(
             "recovery detail",
         )):
             continue
-        cleaned.append(text)
+        cleaned.append(_with_comment_reference(reference_number, text) if reference_number else text)
     unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
@@ -1585,7 +1900,7 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
             0 if target_table and item_table == target_table else 1,
             0 if quote and quote in text else 1,
             0 if target_section and item_section == target_section else 1,
-            0 if item.get("is_heading") else 1,
+            1 if item.get("is_heading") else 0,
             int(item.get("paragraph") or 0),
         )
     return sorted(evidence, key=rank)
@@ -1687,10 +2002,15 @@ def synchronise_export_fallback_findings(
             )
             academic_rows.append(row)
         review["academic_findings"] = academic_rows
-        # A previously cached professional package was built before these
-        # deterministic findings existed. Force a rebuild when the report is
-        # exported so every output uses the same sequence.
+        # A previously cached canonical ledger and professional package were
+        # built before these deterministic findings existed. Invalidate both
+        # once, then freeze the rebuilt sequence for every delivery format.
+        review.pop("canonical_findings", None)
         review.pop("professional_review", None)
+        review.pop("finding_ledger", None)
+        review["_export_fallback_added"] = True
+    else:
+        review.setdefault("_export_fallback_added", False)
     return (
         list(review.get("academic_findings") or [])
         + list(review.get("alignment_results") or [])
@@ -1699,12 +2019,91 @@ def synchronise_export_fallback_findings(
 
 
 def native_comment_count(docx_bytes: bytes) -> int:
-    """Return the number of native Word comments in an exported DOCX."""
+    """Return the total number of native Word comments in an exported DOCX.
+
+    This includes comments already present in the uploaded source document. Use
+    ``native_annotation_audit`` when validating a newly generated review.
+    """
     try:
         document = Document(io.BytesIO(docx_bytes))
         return len(list(document.comments))
     except Exception:
         return 0
+
+
+def expected_annotation_finding_numbers(review: Dict[str, Any]) -> List[int]:
+    """Return final actionable finding numbers that every annotated export must represent."""
+    numbers: List[int] = []
+    for row in build_canonical_finding_rows(review):
+        if row.get("status") not in ACTIONABLE_STATUSES:
+            continue
+        if row.get("annotation_eligible") is False:
+            continue
+        try:
+            number = int(row.get("finding_number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        if number > 0 and number not in numbers:
+            numbers.append(number)
+    return sorted(numbers)
+
+
+def native_annotation_audit(
+    docx_bytes: bytes,
+    review: Optional[Dict[str, Any]] = None,
+    *,
+    comment_author: str = "",
+) -> Dict[str, Any]:
+    """Audit current V-Professor comments separately from source-document comments.
+
+    Earlier validation counted every comment in the DOCX. A source file with old
+    supervisor comments could therefore make a new export appear valid even when
+    no current V-Professor comment had been inserted. This audit validates the
+    final finding numbers instead.
+    """
+    expected = expected_annotation_finding_numbers(review or {}) if review is not None else []
+    expected_set = set(expected)
+    represented: set[int] = set()
+    current_comment_count = 0
+    previous_comment_count = 0
+    total_comment_count = 0
+    try:
+        document = Document(io.BytesIO(docx_bytes))
+        comments = list(document.comments)
+    except Exception:
+        comments = []
+    total_comment_count = len(comments)
+    wanted_author = clean_text(comment_author)
+    for comment in comments:
+        text = clean_text(" ".join(paragraph.text for paragraph in comment.paragraphs))
+        if text.startswith("[Previous comment from source document"):
+            previous_comment_count += 1
+            continue
+        author = clean_text(getattr(comment, "author", ""))
+        numbers = set()
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                numbers.add(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+        matched = numbers & expected_set if expected_set else numbers
+        if wanted_author:
+            is_current = bool(text) and author == wanted_author
+        else:
+            is_current = bool(matched)
+        if is_current:
+            current_comment_count += 1
+            represented.update(matched if expected_set else numbers)
+    missing = sorted(expected_set - represented)
+    return {
+        "total_comment_count": total_comment_count,
+        "previous_comment_count": previous_comment_count,
+        "current_comment_count": current_comment_count,
+        "expected_finding_numbers": expected,
+        "represented_finding_numbers": sorted(represented),
+        "missing_finding_numbers": missing,
+        "passed": bool(expected) and current_comment_count > 0 and not missing,
+    }
 
 
 def _canonical_group_label(row: Dict[str, Any]) -> str:
@@ -1716,6 +2115,8 @@ def _canonical_group_label(row: Dict[str, Any]) -> str:
         or "Chapter-level review"
     )
     low = normalised(raw)
+    if low.startswith("table ") or ", table " in low or any(term in low for term in ("results", "regression", "model", "coefficient", "reliability", "validity")):
+        return raw
     if "general objective" in low or "specific objective" in low or "research objectives" in low:
         return "Research Objectives"
     if "research question" in low or "hypoth" in low:
@@ -1776,11 +2177,11 @@ def _row_group_key(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> T
 def _paragraph_text_from_locator(locator: Dict[str, Any]) -> str:
     paragraph = locator.get("paragraph")
     if paragraph is not None:
-        return clean_text(paragraph.text)
+        return _visible_paragraph_text(paragraph)
     if locator.get("kind") == "table_row":
         values: List[str] = []
         for paragraph in locator.get("cell_paragraphs") or []:
-            values.append(clean_text(paragraph.text))
+            values.append(_visible_paragraph_text(paragraph))
         return clean_text(" ".join(values))
     return ""
 
@@ -1899,6 +2300,16 @@ def _better_evidence_paragraph_number(
 
 
 def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[int, int]:
+    exact_text = clean_text(row.get("exact_source_text", ""))
+    try:
+        exact_start = int(row.get("exact_anchor_start"))
+        exact_end = int(row.get("exact_anchor_end"))
+    except (TypeError, ValueError):
+        exact_start = exact_end = -1
+    if 0 <= exact_start < exact_end <= len(paragraph_text):
+        candidate = clean_text(paragraph_text[exact_start:exact_end])
+        if not exact_text or candidate == exact_text:
+            return _expand_to_safe_text_span(paragraph_text, exact_start, exact_end)
     quote = clean_text(row.get("problematic_quote", ""))
     if quote:
         exact_start = paragraph_text.find(quote)
@@ -1915,89 +2326,325 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
 
 
 def _specific_correction_text(row: Dict[str, Any], comment: str) -> str:
-    """Return a detailed blue correction that mirrors the academic finding."""
-    label = _canonical_group_label(row)
-    issue = _sanitise_guidance(row.get("item", "") or row.get("issue_title", ""))
-    assessment = _sanitise_guidance(row.get("comment", "") or row.get("assessment", ""))
-    consequence = _sanitise_guidance(
-        row.get("academic_consequence", "") or row.get("consequence", "") or row.get("why_it_matters", "")
-    )
-    action = _sanitise_guidance(row.get("required_action", ""))
+    """Return the same natural finding used by the native comment and report."""
+    safe_row = sanitise_finding_row(row)
+    if safe_row is None:
+        return ""
+    text = natural_supervisor_comment(safe_row, compact=False)
+    text = professionalise_reviewer_language(text, safe_row.get("_academic_level") or safe_row.get("academic_level"))
+    return public_text(_shorten_comment(text, 1100), reject_placeholders=True, reject_incomplete=True)
+
+
+
+def _correction_tracker_text(row: Dict[str, Any], comment: str) -> str:
+    """Return a concise action tracker without duplicating the full comment."""
+    safe_row = sanitise_finding_row(row)
+    if safe_row is None:
+        return ""
+    label = _canonical_group_label(safe_row)
+    issue = _sanitise_guidance(safe_row.get("item", "") or safe_row.get("issue_title", "")).rstrip(" .")
+    action = _sanitise_guidance(safe_row.get("required_action", "")).rstrip(" .")
     if not action:
-        action = _strip_comment_reference(comment)
-    example = _sanitise_guidance(row.get("illustrative_guidance", "")) or _sanitise_guidance(context_specific_example(row))
-    example = re.sub(r"^(?:for\s+)?(?:context\s+)?example[:,]?\s*", "", example, flags=re.I).strip(" .")
-
-    parts: List[str] = []
+        action = _strip_comment_reference(comment).rstrip(" .")
     if label and issue:
-        parts.append(f"{label}: {issue.rstrip(' .')}.")
-    elif issue:
-        parts.append(issue.rstrip(" .") + ".")
-    elif label:
-        parts.append(f"{label} requires revision.")
-    if assessment and normalised(assessment) not in normalised(" ".join(parts)):
-        parts.append(assessment.rstrip(" .") + ".")
-    if consequence and normalised(consequence) not in normalised(" ".join(parts)):
-        parts.append(consequence.rstrip(" .") + ".")
-
-    level = academic_level_label(row.get("_academic_level") or row.get("academic_level"))
-    explicit_level_sentence = re.search(
-        r"(?:^|[.!?]\s+)At\s+(?:PhD|MPhil|professional doctorate|Master's|non-research Master's|Bachelor's)\s+level\b",
-        " ".join(parts),
-    )
-    if level != "the applicable academic level" and not explicit_level_sentence:
-        parts.append(f"At {level}, the correction should demonstrate clear scholarly judgement, methodological or analytical defensibility, and traceable support from the study evidence.")
-
-    if action:
-        parts.append(_normalise_action_start(action).rstrip(" .") + ".")
-    else:
-        parts.append("Revise the marked passage so that the claim is clear, evidence-supported and aligned with the chapter purpose.")
-    if example:
-        example = _normalise_action_start(example).rstrip(" .")
-        parts.append("For example, " + example[0].lower() + example[1:] + ".")
-
-    text = professionalise_reviewer_language(" ".join(parts), row.get("_academic_level") or row.get("academic_level"))
-    return public_text(_shorten_comment(text, 2000), reject_placeholders=True, reject_incomplete=True)
-
+        return f"{label}: {issue}. {action}."
+    if issue:
+        return f"{issue}. {action}."
+    return action + "." if action else ""
 
 def _add_specific_corrections_required(
     document,
     numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
 ) -> None:
-    """Append a blue end-of-chapter checklist that matches red body numbers."""
-    if not _specific_corrections_required_enabled() or not numbered_rows:
+    """Append a compact professional supervisory summary and correction register.
+
+    Native comments remain beside the exact passages. The appendix gives the
+    student a decision-led overview, a priority order and a readable register
+    without repeating the full Word comments in blue italic text.
+    """
+    if not _specific_corrections_required_enabled() or not _professional_review_appendix_enabled() or not numbered_rows:
         return
-    anchor = _last_chapter_body_paragraph(document)
-    if anchor is None:
-        return
-    entries: List[Tuple[int, str]] = []
+
+    entries: List[Tuple[int, Dict[str, Any], str]] = []
     seen = set()
     for number, row, comment in numbered_rows:
-        text = _specific_correction_text(row, comment)
-        key = (number, normalised(text))
+        text = _correction_tracker_text(row, comment)
+        key = (int(number or 0), normalised(text))
         if not text or key in seen:
             continue
         seen.add(key)
-        entries.append((number, text))
+        entries.append((int(number or 0), row, text))
+    entries.sort(key=lambda item: item[0])
+    entries = [item for item in entries if item[0] > 0]
     if not entries:
         return
-    entries.sort(key=lambda item: item[0])
-    for number, text in reversed(entries):
-        note = _insert_blue_paragraph_after(anchor)
-        run = note.add_run(f"{number}. {text}")
-        run.font.color.rgb = INLINE_BLUE
-        run.font.italic = True
-        try:
-            note.paragraph_format.left_indent = anchor.paragraph_format.left_indent
-            note.paragraph_format.space_before = anchor.paragraph_format.space_after
-            note.paragraph_format.space_after = anchor.paragraph_format.space_after
-        except Exception:
-            pass
-    heading = _insert_blue_paragraph_after(anchor)
+
+    severities = [normalised(row.get("severity") or "moderate") for _, row, _ in entries]
+    critical_count = sum(value == "critical" for value in severities)
+    major_count = sum(value == "major" for value in severities)
+    moderate_count = sum(value == "moderate" for value in severities)
+    if critical_count or major_count >= 2:
+        decision = "MAJOR REVISION REQUIRED"
+    elif major_count or moderate_count >= 3:
+        decision = "SUBSTANTIVE REVISION REQUIRED"
+    else:
+        decision = "MINOR REVISION REQUIRED"
+
+    # Start the review summary on a clean page so it reads as a formal appendix
+    # rather than as blue text inserted into the student's final paragraph.
+    document.add_page_break()
+    title = document.add_paragraph()
+    title.alignment = 1
+    run = title.add_run("SUPERVISORY REVIEW SUMMARY")
+    run.bold = True
+    run.font.size = Pt(15)
+    run.font.color.rgb = INLINE_BLUE
+
+    decision_p = document.add_paragraph()
+    decision_p.paragraph_format.space_after = Pt(5)
+    lead = decision_p.add_run("Overall decision: ")
+    lead.bold = True
+    lead.font.size = Pt(10.5)
+    verdict = decision_p.add_run(decision)
+    verdict.bold = True
+    verdict.font.size = Pt(10.5)
+    verdict.font.color.rgb = COMMENT_RED if decision == "MAJOR REVISION REQUIRED" else INLINE_BLUE
+
+    major_rows = [(number, row, text) for number, row, text in entries if normalised(row.get("severity")) in {"critical", "major"}]
+    top_issues: List[str] = []
+    for _, row, _ in major_rows:
+        issue = clean_text(row.get("item") or row.get("issue_title"))
+        if issue and normalised(issue) not in {normalised(value) for value in top_issues}:
+            top_issues.append(issue)
+        if len(top_issues) >= 4:
+            break
+
+    assessment = document.add_paragraph()
+    assessment.paragraph_format.space_after = Pt(7)
+    assessment.add_run(
+        f"The review identified {len(entries)} actionable matter{'s' if len(entries) != 1 else ''}. "
+        "The work contains a recognisable research structure, but the corrections below should be addressed before the chapter is accepted for the next stage."
+    )
+    if top_issues:
+        assessment.add_run(" The main priorities are ")
+        assessment.add_run("; ".join(value[0].lower() + value[1:] if value else value for value in top_issues) + ".")
+
+    priority_heading = document.add_paragraph()
+    priority_heading.paragraph_format.space_before = Pt(5)
+    priority_heading.paragraph_format.space_after = Pt(3)
+    priority_run = priority_heading.add_run("Priority corrections")
+    priority_run.bold = True
+    priority_run.font.size = Pt(11.5)
+    priority_run.font.color.rgb = INLINE_BLUE
+
+    priority_source = sorted(major_rows or entries[:5], key=lambda item: priority_order_key(item[1]))
+    for number, row, text in priority_source[:6]:
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.left_indent = Pt(14)
+        paragraph.paragraph_format.first_line_indent = Pt(-10)
+        paragraph.paragraph_format.space_after = Pt(2)
+        bullet = paragraph.add_run("• ")
+        bullet.font.color.rgb = INLINE_BLUE
+        number_run = paragraph.add_run(f"Correction {number}: ")
+        number_run.bold = True
+        issue = clean_text(row.get("item") or row.get("issue_title"))
+        action = clean_text(row.get("required_action"))
+        paragraph.add_run((issue.rstrip(" .") + ". " if issue else "") + action.rstrip(" .") + ".")
+
+    heading = document.add_paragraph()
+    heading.paragraph_format.space_before = Pt(8)
+    heading.paragraph_format.space_after = Pt(4)
     lead = heading.add_run("Specific corrections required")
     lead.bold = True
+    lead.font.size = Pt(11.5)
     lead.font.color.rgb = INLINE_BLUE
-    lead.font.italic = True
+
+    for number, row, text in entries:
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.left_indent = Pt(12)
+        paragraph.paragraph_format.first_line_indent = Pt(-12)
+        paragraph.paragraph_format.space_after = Pt(5)
+        number_run = paragraph.add_run(f"{number}. ")
+        number_run.bold = True
+        number_run.font.color.rgb = INLINE_BLUE
+        severity = clean_text(row.get("severity") or "moderate").capitalize()
+        severity_run = paragraph.add_run(f"[{severity}] ")
+        severity_run.bold = True
+        severity_run.font.color.rgb = COMMENT_RED if normalised(severity) in {"critical", "major"} else INLINE_BLUE
+        paragraph.add_run(text)
+
+
+def _represented_finding_numbers(document, *, author: str = "") -> set[int]:
+    numbers: set[int] = set()
+    try:
+        comments = list(document.comments)
+    except Exception:
+        comments = []
+    for comment in comments:
+        if not _is_current_vprof_comment(comment, author):
+            continue
+        text = " ".join(paragraph.text for paragraph in comment.paragraphs)
+        for match in re.finditer(r"(?:^|\s)(\d{1,4})\.\s", text):
+            try:
+                numbers.add(int(match.group(1)))
+            except (TypeError, ValueError):
+                continue
+    return numbers
+
+
+def _reconciliation_comment_body(row: Dict[str, Any], comment: str) -> str:
+    """Return a compact, lossless body for a reconciliation-only native comment.
+
+    The normal grouped formatter is intentionally allowed to consolidate exact
+    duplicates for readability. Reconciliation is different: every canonical
+    finding number must remain visible even when two findings have similar prose,
+    a grouped box reaches its item limit, or a presentation filter shortens text.
+    """
+    candidates = [
+        comment,
+        clean_text(row.get("student_comment")),
+        " ".join(
+            value for value in (
+                clean_text(row.get("item") or row.get("issue_title")),
+                clean_text(row.get("required_action")),
+            )
+            if value
+        ),
+    ]
+    for candidate in candidates:
+        body = public_text(
+            _strip_comment_reference(clean_text(candidate)),
+            limit=comment_max_chars(),
+            reject_placeholders=True,
+            reject_incomplete=False,
+        )
+        body = _strip_visible_labels(body).strip("[] ").rstrip(" ;.")
+        if body:
+            return _shorten_comment(body, comment_max_chars()).rstrip(" .") + "."
+    return "Review this passage against the corresponding correction in the supervisory report."
+
+
+def _reconciliation_anchor(document, row: Dict[str, Any]) -> Optional[Paragraph]:
+    """Find the closest safe anchor for a reconciliation-only comment."""
+    quotes = [
+        clean_text(row.get("problematic_quote")),
+        *[
+            clean_text(item.get("text"))
+            for item in (row.get("evidence") or [])
+            if item.get("document_role", "current") == "current"
+        ],
+    ]
+    for quote in quotes:
+        if not quote:
+            continue
+        normalised_quote = normalised(quote)
+        for paragraph in document.paragraphs:
+            paragraph_text = _visible_paragraph_text(paragraph)
+            if quote in paragraph_text or (normalised_quote and normalised_quote in normalised(paragraph_text)):
+                if _visible_runs(paragraph):
+                    return paragraph
+
+    headings = tuple(
+        value for value in (
+            *(row.get("headings") or []),
+            row.get("section_reference"),
+            row.get("section"),
+        )
+        if clean_text(value)
+    )
+    if headings:
+        chapter_number = row.get("chapter_number")
+        try:
+            chapter_number = int(chapter_number) if chapter_number is not None else None
+        except (TypeError, ValueError):
+            chapter_number = None
+        heading = _find_heading(document, headings, chapter_number=chapter_number)
+        if heading is not None and _visible_runs(heading):
+            return heading
+    return _first_academic_anchor(document) or _first_native_anchor(document)
+
+
+def _attach_lossless_reconciliation_comments(
+    document,
+    missing: Sequence[int],
+    expected: Dict[int, Tuple[Dict[str, Any], str]],
+    *,
+    author: str,
+    initials: str,
+) -> None:
+    """Attach one non-lossy fallback comment for every missing finding number.
+
+    This bypasses grouped-comment deduplication and size limits. It is used only
+    when normal exact anchoring has failed. The exporter first tries the quoted
+    passage or section heading and uses a stable academic-body anchor only as the
+    final fallback.
+    """
+    for number in missing:
+        row, comment = expected[number]
+        anchor = _reconciliation_anchor(document, row)
+        if anchor is None:
+            raise RuntimeError(
+                "The source document has no text that can anchor native Word comments."
+            )
+        runs = _visible_runs(anchor)
+        if not runs:
+            raise RuntimeError(
+                "The source document has no visible run that can anchor native Word comments."
+            )
+        body = _reconciliation_comment_body(row, comment)
+        visible = f"{number}. {body}"
+        if not _add_native_comment(
+            document,
+            runs,
+            visible,
+            author=author,
+            initials=initials,
+        ):
+            raise RuntimeError(
+                f"A reconciliation comment for canonical finding {number} could not be anchored."
+            )
+
+
+def _ensure_native_comment_reconciliation(
+    document,
+    numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
+    *,
+    author: str,
+    initials: str,
+) -> None:
+    """Ensure every canonical finding number appears in the native review pane.
+
+    Normal placement remains paragraph- or table-specific. When grouping,
+    deduplication, Word anchoring or comment-size limits omit a final number, the
+    guard adds one lossless fallback comment for that finding rather than sending
+    the job into a repeated export-recovery loop.
+    """
+    expected = {
+        int(number): (row, comment)
+        for number, row, comment in numbered_rows
+        if int(number or 0) > 0
+        and row.get("annotation_eligible") is not False
+    }
+    missing = sorted(set(expected) - _represented_finding_numbers(document, author=author))
+    if not missing:
+        return
+
+    _attach_lossless_reconciliation_comments(
+        document,
+        missing,
+        expected,
+        author=author,
+        initials=initials,
+    )
+
+    remaining = sorted(set(expected) - _represented_finding_numbers(document, author=author))
+    if remaining and _env_bool("VPROF_STRICT_NATIVE_RECONCILIATION", True):
+        raise RuntimeError(
+            "The reviewed DOCX could not be released because canonical finding numbers "
+            + ", ".join(str(number) for number in remaining)
+            + " are absent from the native Word comments after lossless reconciliation."
+        )
+
 
 def _build_grouped_annotated_docx(
     document,
@@ -2025,7 +2672,7 @@ def _build_grouped_annotated_docx(
         row = dict(source_row)
         row["_academic_level"] = academic_level
         prepared_rows.append(row)
-    review_rows = order_and_number_rows(prepared_rows)
+    review_rows = prepared_rows
 
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
@@ -2042,14 +2689,14 @@ def _build_grouped_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
         if _is_missing_section_finding(row):
             raw_missing_comment = _missing_section_bottom_comment(row) or _comment_body(row)
             if raw_missing_comment:
                 reference_number = reference_number_for(row)
                 numbered_rows.append((reference_number, row, raw_missing_comment))
             missing_section_rows.append(row)
+            continue
+        if row.get("annotation_eligible") is False:
             continue
         raw_comment = _comment_body(row)
         if not raw_comment:
@@ -2086,7 +2733,7 @@ def _build_grouped_annotated_docx(
                     by_table[(table_index, table_row)].append(comment)
                     continue
             paragraph = locator.get("paragraph")
-            paragraph_text = paragraph.text if paragraph is not None else ""
+            paragraph_text = _visible_paragraph_text(paragraph) if paragraph is not None else ""
             if paragraph is not None and paragraph_text:
                 start, end = _row_span_for_paragraph(row, paragraph_text)
                 if start < end:
@@ -2106,19 +2753,24 @@ def _build_grouped_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        # Keep sentence-level references precise. Only overlapping spans are
-        # grouped, so each red number remains attached to the exact sentence or
-        # phrase it refers to rather than drifting to the end of a broad passage.
-        merged_groups = _merge_nearby_span_groups(span_groups, max_gap=0)
-        for (start, end), comments in reversed(merged_groups):
-            combined = _format_comment_group(comments, anchor_context=(paragraph.text or "")[start:end])
-            if not combined:
-                continue
-            if not _mark_span_and_insert_comment(
-                document, paragraph, start, end, combined,
-                author=author, initials=initials,
-            ):
-                after_paragraph[paragraph_number].extend(comments)
+        # All findings tied to one paragraph share one native Word comment box.
+        # Their global finding numbers remain visible inside the grouped comment,
+        # so the report, inline version and native review pane stay reconciled.
+        spans = list(span_groups.keys())
+        comments = [comment for values in span_groups.values() for comment in values]
+        if not spans or not comments:
+            continue
+        start = min(item[0] for item in spans)
+        end = max(item[1] for item in spans)
+        start, end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
+        combined = _format_comment_group(comments, anchor_context=(_visible_paragraph_text(paragraph))[start:end])
+        if not combined:
+            continue
+        if not _mark_span_and_insert_comment(
+            document, paragraph, start, end, combined,
+            author=author, initials=initials,
+        ):
+            after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
         locator = source_map.get(paragraph_number) or {}
@@ -2163,6 +2815,9 @@ def _build_grouped_annotated_docx(
         author=author,
         initials=initials,
     )
+    _ensure_native_comment_reconciliation(
+        document, numbered_rows, author=author, initials=initials
+    )
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
     else:
@@ -2177,6 +2832,7 @@ def build_annotated_docx(
     comment_author: Optional[str] = None,
 ) -> bytes:
     document = Document(io.BytesIO(source_bytes))
+    _label_existing_source_comments(document)
     author, initials = _comment_identity(review, comment_author)
     source_map, table_map = _source_locator_map(document)
 
@@ -2189,13 +2845,17 @@ def build_annotated_docx(
     missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
+    numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
 
-    supplied_rows = synchronise_export_fallback_findings(review, source_map)
-    review_rows = _sanitise_rows_for_export(supplied_rows)
+    # Final student-facing exports use the same canonical rows and numbering as
+    # the professional report. Synchronise deterministic placeholder findings
+    # first, then filter, consolidate, sort and number once.
     academic_level = (review.get("summary") or {}).get("academic_level")
-    review_rows = order_and_number_rows([
-        {**row, "_academic_level": academic_level} for row in review_rows
-    ])
+    synchronise_export_fallback_findings(review, source_map)
+    review_rows = [
+        {**row, "_academic_level": academic_level}
+        for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
+    ]
     if _merge_comments_by_section():
         return _build_grouped_annotated_docx(
             document,
@@ -2210,20 +2870,48 @@ def build_annotated_docx(
     for row in review_rows:
         if row.get("status") not in ACTIONABLE_STATUSES:
             continue
-        if row.get("annotation_eligible") is False:
-            continue
-        if _is_missing_section_finding(row):
+        is_missing_section = _is_missing_section_finding(row)
+        comment = _comment_body(row)
+        if is_missing_section:
+            if comment:
+                try:
+                    reference_number = int(row.get("finding_number"))
+                except (TypeError, ValueError):
+                    reference_number = 0
+                if reference_number:
+                    numbered_rows.append((reference_number, row, comment))
             missing_section_rows.append(row)
             continue
-
-        comment = _comment_body(row)
-        if not comment:
+        if row.get("annotation_eligible") is False or not comment:
             continue
+        try:
+            reference_number = int(row.get("finding_number"))
+        except (TypeError, ValueError):
+            reference_number = 0
+        if reference_number:
+            numbered_rows.append((reference_number, row, comment))
+        comment = _with_comment_reference(reference_number, comment) if reference_number else comment
         evidence = [
             item for item in (row.get("evidence") or [])
             if item.get("document_role", "current") == "current"
         ]
         evidence = _preferred_evidence(row, evidence)
+        if is_missing_section:
+            # Verified structural findings carry the paragraph after which the
+            # section should be inserted. A generic missing-section finding with
+            # no verified insertion point remains in the end-of-chapter tracker
+            # rather than being attached to an unrelated sentence.
+            insertion_paragraph = 0
+            if row.get("section_contract_verified") and evidence:
+                try:
+                    insertion_paragraph = int(evidence[0].get("paragraph"))
+                except (TypeError, ValueError):
+                    insertion_paragraph = 0
+            if insertion_paragraph and source_map.get(insertion_paragraph, {}).get("paragraph") is not None:
+                after_paragraph[insertion_paragraph].append(comment)
+                continue
+            missing_section_rows.append(row)
+            continue
         if evidence:
             best = evidence[0]
             try:
@@ -2240,10 +2928,22 @@ def build_annotated_docx(
                 paragraph = locator.get("paragraph")
                 if paragraph is not None:
                     quote = clean_text(row.get("problematic_quote", ""))
-                    exact_start = paragraph.text.find(quote) if quote else -1
-                    if exact_start >= 0:
+                    exact_start = _visible_paragraph_text(paragraph).find(quote) if quote else -1
+                    # Word may store citations, hyperlinks and fields in nested
+                    # XML runs that python-docx does not expose through
+                    # ``paragraph.runs``. Character offsets are unsafe in that
+                    # case and previously split words such as ``challen[5]ges``.
+                    # Anchor to the complete paragraph instead.
+                    exposed_text = "".join(run.text or "" for run in _visible_runs(paragraph))
+                    offsets_are_safe = exposed_text == (_visible_paragraph_text(paragraph))
+                    if exact_start >= 0 and offsets_are_safe:
+                        safe_start, safe_end = _expand_to_safe_text_span(
+                            _visible_paragraph_text(paragraph),
+                            exact_start,
+                            exact_start + len(quote),
+                        )
                         by_paragraph[paragraph_number][
-                            (exact_start, exact_start + len(quote))
+                            (safe_start, safe_end)
                         ].append(comment)
                     else:
                         after_paragraph[paragraph_number].append(comment)
@@ -2271,27 +2971,42 @@ def build_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        merged_groups = _merge_nearby_span_groups(span_groups)
-        for (start, end), comments in reversed(merged_groups):
-            if _export_one_comment_per_finding():
-                placed_any = False
-                for comment in _prepare_comment_list(comments):
-                    if _mark_span_and_insert_comment(
-                        document, paragraph, start, end, comment,
-                        author=author, initials=initials,
-                    ):
-                        placed_any = True
-                    else:
-                        after_paragraph[paragraph_number].append(comment)
-                if not placed_any and comments:
-                    after_paragraph[paragraph_number].extend(comments)
-                continue
-            combined = _format_comment_group(comments, anchor_context=(paragraph.text or "")[start:end])
-            if not _mark_span_and_insert_comment(
-                document, paragraph, start, end, combined,
-                author=author, initials=initials,
-            ):
+        spans = list(span_groups.keys())
+        comments = [comment for values in span_groups.values() for comment in values]
+        if not spans or not comments:
+            continue
+        start = min(item[0] for item in spans)
+        end = max(item[1] for item in spans)
+        safe_start, safe_end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
+        if _export_one_comment_per_finding():
+            placed_any = False
+            prepared_comments = sorted(
+                _prepare_comment_list(comments),
+                key=lambda value: _comment_reference_number(value) or 0,
+            )
+            reference_numbers: List[int] = []
+            for comment in prepared_comments:
+                reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+                if _mark_span_and_insert_comment(
+                    document, paragraph, safe_start, safe_end, comment,
+                    author=author, initials=initials,
+                ):
+                    placed_any = True
+                else:
+                    after_paragraph[paragraph_number].append(comment)
+            if placed_any and reference_numbers:
+                _normalise_red_reference_markers_after_span(
+                    paragraph, safe_start, safe_end, reference_numbers
+                )
+            elif comments:
                 after_paragraph[paragraph_number].extend(comments)
+            continue
+        combined = _format_comment_group(comments, anchor_context=(_visible_paragraph_text(paragraph))[safe_start:safe_end])
+        if not _mark_span_and_insert_comment(
+            document, paragraph, safe_start, safe_end, combined,
+            author=author, initials=initials,
+        ):
+            after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
         locator = source_map.get(paragraph_number) or {}
@@ -2339,17 +3054,17 @@ def build_annotated_docx(
         else:
             fallback_comments.extend(unique_comments)
 
-    # Add a section-level review note for every reviewed section or subsection.
-    # These comments are separate from issue findings and make coverage visible
-    # in the native Word Review pane. They are added after issue comments so
-    # exact issue anchors remain the primary feedback.
-    _add_section_review_comments(
-        document,
-        review,
-        author=author,
-        initials=initials,
-        fallback_comments=fallback_comments,
-    )
+    # Section coverage is recorded in the report and coverage ledger. Native
+    # section comments are optional because routine PASS notes clutter the Word
+    # Review pane and can disturb the final finding/comment reconciliation.
+    if _include_section_review_comments():
+        _add_section_review_comments(
+            document,
+            review,
+            author=author,
+            initials=initials,
+            fallback_comments=fallback_comments,
+        )
 
     _attach_document_level_comments(
         document,
@@ -2357,7 +3072,13 @@ def build_annotated_docx(
         author=author,
         initials=initials,
     )
-    _add_missing_section_inline_bottom_notes(document, missing_section_rows)
+    _ensure_native_comment_reconciliation(
+        document, numbered_rows, author=author, initials=initials
+    )
+    if _specific_corrections_required_enabled():
+        _add_specific_corrections_required(document, numbered_rows)
+    else:
+        _add_missing_section_inline_bottom_notes(document, missing_section_rows)
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()

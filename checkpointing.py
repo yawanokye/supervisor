@@ -13,6 +13,7 @@ from .ai_schemas import AIUsageRecord
 from .database import ReviewArtifact, ReviewCheckpoint, ReviewRecord, SessionLocal
 from .ai_providers import ProviderResult
 from .storage import storage_root
+from . import object_storage
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,13 @@ def _save_db_artifact(
     filename: str = "",
     content_type: str = "application/octet-stream",
 ) -> None:
+    if object_storage.put(
+        job_id,
+        artifact_key,
+        data,
+        content_type=content_type,
+    ):
+        return
     if not _db_artifact_storage_enabled():
         return
     value = bytes(data or b"")
@@ -62,6 +70,9 @@ def _save_db_artifact(
 
 
 def _load_db_artifact(job_id: str, artifact_key: str) -> Optional[bytes]:
+    value = object_storage.get(job_id, artifact_key)
+    if value is not None:
+        return value
     if not _db_artifact_storage_enabled():
         return None
     with SessionLocal() as db:
@@ -438,6 +449,11 @@ class CheckpointManager:
             if job:
                 job.current_stage = stage_key
                 job.last_heartbeat_at = now
+                job.progress = max(
+                    int(job.progress or 0),
+                    min(100, int(progress or 0)),
+                )
+                job.message = message or job.message
             db.commit()
 
     def save(
@@ -503,6 +519,11 @@ class CheckpointManager:
             if job:
                 job.current_stage = stage_key
                 job.last_heartbeat_at = now
+                job.progress = max(
+                    int(job.progress or 0),
+                    min(100, int(progress or 0)),
+                )
+                job.message = message or job.message
                 job.checkpoint_count = int(
                     db.query(ReviewCheckpoint)
                     .filter(

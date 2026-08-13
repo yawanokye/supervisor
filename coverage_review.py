@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
+
+from .supervisory_review_algorithm import coverage_statuses_for_review
 
 
 def _clean(value: Any) -> str:
@@ -252,6 +254,60 @@ def coverage_packets(
     return packets
 
 
+
+
+def split_coverage_units_to_single_targets(
+    units: Sequence[Dict[str, Any]],
+    *,
+    context_paragraphs: int = 1,
+) -> List[Dict[str, Any]]:
+    """Split failed coverage units into one-target recovery units.
+
+    The returned units retain ``parent_section_key`` and the parent's full
+    target list so the academic engine can merge several compact recovery
+    responses back into one canonical coverage record. This is used only after
+    a provider has returned ``finish_reason=length``.
+    """
+    context_paragraphs = max(0, int(context_paragraphs or 0))
+    output: List[Dict[str, Any]] = []
+    for unit in units:
+        targets = list(dict.fromkeys(unit.get("target_paragraph_ids") or []))
+        if len(targets) <= 1:
+            row = dict(unit)
+            row["parent_section_key"] = unit.get("parent_section_key") or unit.get("section_key")
+            row["parent_target_paragraph_ids"] = list(
+                unit.get("parent_target_paragraph_ids") or targets
+            )
+            output.append(row)
+            continue
+
+        paragraphs = list(unit.get("paragraphs") or [])
+        index_by_id = {_pid(row): index for index, row in enumerate(paragraphs)}
+        parent_key = unit.get("parent_section_key") or unit.get("section_key")
+        parent_targets = list(unit.get("parent_target_paragraph_ids") or targets)
+        for target_index, target_id in enumerate(targets, start=1):
+            position = index_by_id.get(target_id)
+            if position is None:
+                continue
+            start = max(0, position - context_paragraphs)
+            end = min(len(paragraphs), position + context_paragraphs + 1)
+            selected = paragraphs[start:end]
+            row = dict(unit)
+            row["section_key"] = f"{unit.get('section_key')}T{target_index:03d}"
+            row["parent_section_key"] = parent_key
+            row["parent_target_paragraph_ids"] = parent_targets
+            row["target_paragraph_ids"] = [target_id]
+            row["context_paragraph_ids"] = [
+                _pid(item) for item in selected if _pid(item) != target_id
+            ]
+            row["paragraphs"] = selected
+            row["coverage_unit_index"] = target_index
+            row["coverage_unit_total"] = len(targets)
+            row["single_target_recovery"] = True
+            output.append(row)
+    return output
+
+
 def build_coverage_ledger(
     units: Sequence[Dict[str, Any]],
     section_reviews: Sequence[Dict[str, Any]],
@@ -271,6 +327,7 @@ def build_coverage_ledger(
         targets = list(dict.fromkeys(unit.get("target_paragraph_ids") or []))
         review = review_by_key.get(key) or {}
         assessed = list(dict.fromkeys(review.get("assessed_paragraph_ids") or []))
+        target_statuses = coverage_statuses_for_review(review, targets)
         assessed_set = set(assessed)
         target_set = set(targets)
         complete = bool(review) and target_set.issubset(assessed_set)
@@ -291,6 +348,8 @@ def build_coverage_ledger(
             "target_paragraph_ids": targets,
             "assessed_paragraph_ids": assessed,
             "missing_paragraph_ids": sorted(target_set - assessed_set),
+            "target_statuses": target_statuses,
+            "status_counts": dict(Counter(target_statuses.values())),
             "complete": complete,
             "issue_count": len(review.get("issues") or []),
             "strength_count": len(review.get("strengths") or []),
@@ -298,6 +357,9 @@ def build_coverage_ledger(
     unit_count = len(entries)
     target_percent = round(100.0 * assessed_targets / max(1, total_targets), 1)
     unit_percent = round(100.0 * completed_units / max(1, unit_count), 1)
+    overall_status_counts = Counter()
+    for entry in entries:
+        overall_status_counts.update(entry.get("status_counts") or {})
     return {
         "mode": "systematic_coverage_driven",
         "unit_count": unit_count,
@@ -307,6 +369,7 @@ def build_coverage_ledger(
         "assessed_target_count": assessed_targets,
         "target_coverage_percent": target_percent,
         "complete": bool(unit_count) and completed_units == unit_count and assessed_targets == total_targets,
+        "status_counts": dict(overall_status_counts),
         "entries": entries,
         "chapters": {str(key): value for key, value in chapter_stats.items()},
     }

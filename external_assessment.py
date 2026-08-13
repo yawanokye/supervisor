@@ -73,8 +73,12 @@ conclusions, recommendations and contribution. A thesis cannot receive pass
 without corrections when this foundation is materially deficient, but the gate
 must be based on verified quality deficiencies rather than retrieval failure.
 
-Do not impose a fixed five-chapter format. Assess the actual architecture by
-research function, integration, originality and contribution. For quantitative,
+For Bachelor’s, Non-Research Master’s, Research Master’s/MPhil and Professional
+Doctorate submissions, use the standard five-chapter research architecture as the
+default while allowing justified additional chapters. Only PhD submissions may
+use a fully variable chapter architecture. For PhD work, assess the actual
+architecture by prescribed doctoral research function, integration, originality
+and contribution rather than chapter number. For quantitative,
 econometric, SEM or mixed-method work, scrutinise model specification,
 assumptions, diagnostics, statistical accuracy and interpretation. For
 qualitative work, scrutinise philosophical coherence, sampling logic, data

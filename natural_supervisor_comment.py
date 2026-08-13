@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import re
+from difflib import SequenceMatcher
+from typing import Any, Dict, Iterable, List, Mapping
+
+from .document_parser import clean_text, normalised
+
+_LABEL_RE = re.compile(
+    r"(?:^|(?<=[.!?])\s+|\s+)"
+    r"(?:Issue|Problem identified|Action required|Required correction|Required revision|"
+    r"Why this matters|Academic consequence|Academic implication|Verification|"
+    r"How to verify completion|Illustrative guidance|Guidance|Example)\s*:\s*",
+    flags=re.I,
+)
+
+_GENERIC_VERIFICATION = (
+    "confirm that the revised sentence or paragraph now performs the stated academic function "
+    "and remains aligned with the relevant objective method and evidence"
+)
+
+_GENERIC_ACTIONS = (
+    "revise the marked passage to address the identified academic weakness",
+    "state the missing information directly in the relevant section",
+    "state the exact weakness in the cited passage",
+    "using the actual design evidence and terminology of the study",
+    "grounded in the current study design evidence and terminology",
+)
+
+
+def _clean(value: Any) -> str:
+    text = clean_text(str(value or ""))
+    text = _LABEL_RE.sub(" ", text)
+    return re.sub(r"\s{2,}", " ", text).strip(" .;:")
+
+
+def _norm(value: Any) -> str:
+    return normalised(_clean(value))
+
+
+def _sentence(value: Any) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "?", "!")) else text + "."
+
+
+
+
+def _sentences(value: Any) -> List[str]:
+    """Split prose into complete sentences without breaking quoted examples."""
+    text = _clean(value)
+    if not text:
+        return []
+    output: List[str] = []
+    start = 0
+    round_depth = 0
+    square_depth = 0
+    curly_quote_open = False
+    straight_quote_open = False
+    for index, char in enumerate(text):
+        if char == "(":
+            round_depth += 1
+        elif char == ")" and round_depth:
+            round_depth -= 1
+        elif char == "[":
+            square_depth += 1
+        elif char == "]" and square_depth:
+            square_depth -= 1
+        elif char == "‘":
+            curly_quote_open = True
+        elif char == "’" and curly_quote_open:
+            curly_quote_open = False
+        elif char == '"':
+            straight_quote_open = not straight_quote_open
+        if char not in ".!?" or round_depth or square_depth or curly_quote_open or straight_quote_open:
+            continue
+        next_char = text[index + 1:index + 2]
+        if next_char and not next_char.isspace():
+            continue
+        sentence = text[start:index + 1].strip()
+        if sentence:
+            output.append(sentence)
+        start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        output.append(tail)
+    return output
+
+
+def _direct_action(value: Any) -> str:
+    text = _clean(value)
+    if not text or any(phrase in _norm(text) for phrase in _GENERIC_ACTIONS):
+        return ""
+    text = re.sub(r"^(?:the student should|you should|please)\s+", "", text, flags=re.I)
+    text = re.sub(r"^revise(?: the)?(?: marked)? passage by\s+", "", text, flags=re.I)
+    text = re.sub(r"^by\s+", "", text, flags=re.I)
+    gerunds = {
+        "adding": "Add", "aligning": "Align", "applying": "Apply", "checking": "Check",
+        "clarifying": "Clarify", "correcting": "Correct", "defining": "Define",
+        "developing": "Develop", "ensuring": "Ensure", "explaining": "Explain",
+        "identifying": "Identify", "inserting": "Insert", "linking": "Link",
+        "providing": "Provide", "removing": "Remove", "reorganising": "Reorganise",
+        "reorganizing": "Reorganise", "replacing": "Replace", "reporting": "Report",
+        "rewriting": "Rewrite", "stating": "State", "using": "Use", "verifying": "Verify",
+    }
+    first, *rest = text.split(maxsplit=1)
+    if first.lower() in gerunds:
+        text = gerunds[first.lower()] + ((" " + rest[0]) if rest else "")
+    else:
+        text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "?", "!")) else text + "."
+
+
+def _is_generic_verification(value: str) -> bool:
+    low = _norm(value)
+    return not low or SequenceMatcher(None, low, _GENERIC_VERIFICATION).ratio() >= 0.74
+
+
+def _unique_sentences(values: Iterable[str], limit: int = 7) -> List[str]:
+    output: List[str] = []
+    keys: List[str] = []
+    for value in values:
+        sentence = _sentence(value)
+        key = _norm(sentence)
+        if not sentence or not key:
+            continue
+        if any(key == old or SequenceMatcher(None, key, old).ratio() >= 0.86 for old in keys):
+            continue
+        keys.append(key)
+        output.append(sentence)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def natural_supervisor_comment(
+    row: Mapping[str, Any],
+    *,
+    compact: bool = False,
+    include_reason: bool = True,
+    include_verification: bool = False,
+    include_example: bool = False,
+) -> str:
+    """Render one finding as natural supervisory prose without field labels.
+
+    The canonical finding record remains structured internally. Only the student-
+    facing rendering is flattened into fluent prose. This prevents Word comments
+    from reading like database fields while preserving the corrective action.
+    """
+    issue = _clean(row.get("item") or row.get("issue_title"))
+    assessment = _clean(row.get("assessment") or row.get("comment"))
+    action = _direct_action(row.get("required_action"))
+    reason = _clean(row.get("academic_consequence") or row.get("why_it_matters"))
+    verification = _clean(row.get("verification_test") or row.get("verification"))
+    example = _clean(row.get("illustrative_guidance"))
+
+    opening_parts: List[str] = []
+    assessment_sentences = _sentences(assessment)
+    issue_norm = _norm(issue)
+    assessment_norm = _norm(assessment)
+    high_level_alignment = any(term in issue_norm for term in (
+        "purpose", "objectives", "research questions", "unit and scope",
+        "ethical clearance", "statistical model", "measurement", "citation", "reference",
+        "supervisor", "editorial instruction",
+    ))
+    if assessment_sentences:
+        # Most comments open directly with the diagnosis. For a high-level
+        # alignment or validity finding, retain the concise issue statement when
+        # it adds scope that the diagnostic sentences do not themselves name.
+        if high_level_alignment and issue and issue_norm not in assessment_norm:
+            opening_parts.append(issue)
+            opening_parts.extend(assessment_sentences[:1])
+        else:
+            opening_parts.extend(assessment_sentences[:2])
+    elif issue:
+        opening_parts.append(issue)
+
+    sentences: List[str] = []
+    sentences.extend(_unique_sentences(opening_parts, limit=2))
+    if action:
+        sentences.extend(_unique_sentences(_sentences(action)[:1], limit=1))
+
+    if not compact and include_reason and reason and len(sentences) < 3:
+        # Consequences are retained only when the diagnostic and action have not
+        # already filled the three-sentence student-facing limit.
+        sentences.extend(_unique_sentences(_sentences(reason)[:1], limit=1))
+
+    if not compact and include_verification and verification and not _is_generic_verification(verification):
+        verification = re.sub(r"^(?:verify|confirm|check)\s+", "", verification, flags=re.I)
+        verification = re.sub(r"^that\s+", "", verification, flags=re.I)
+        if re.match(r"^(?:add|align|apply|check|clarify|correct|define|explain|identify|insert|link|provide|remove|report|revise|rewrite|state|use|verify)\b", verification, flags=re.I):
+            verification_sentence = "Confirm completion by checking that the revision follows this instruction: " + verification
+        else:
+            verification_sentence = "Confirm that " + verification
+        sentences.extend(_unique_sentences([verification_sentence], limit=1))
+
+    if not compact and include_example and example:
+        example = re.sub(r"^for example[:,]?\s*", "", example, flags=re.I)
+        if example:
+            sentences.extend(_unique_sentences(["For example, " + example], limit=1))
+
+    return " ".join(_unique_sentences(sentences, limit=3))
+
+
+def natural_group_item(value: Any) -> str:
+    """Normalise legacy labelled comments before exact-anchor grouping."""
+    text = _clean(value)
+    text = re.sub(r"^Supervisor comments?\s*:\s*", "", text, flags=re.I)
+    return _sentence(text)

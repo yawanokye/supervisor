@@ -38,6 +38,11 @@ GUIDE_BY_SECTION: Dict[str, List[str]] = {
         "Every hypothesis should be theoretically or empirically justified and align with an objective, variables and intended analysis.",
         "Causal terms such as effect, impact or influence should be consistent with the design and evidence that can be produced.",
     ],
+    "introduction_background": [
+        "The Chapter One background should use a focused and selective body of literature to introduce the central constructs, establish the broad-to-local context and lead directly to the study problem.",
+        "It should integrate evidence sufficiently to justify the study, but it should not duplicate the exhaustive comparison of methods, contexts, findings, contradictions and limitations expected in Chapter Two.",
+        "Precise numerical, historical and policy claims should be supported, and causal wording should remain consistent with the design.",
+    ],
     "significance_scope": [
         "The significance should explain realistic theoretical, practical, policy or contextual contributions appropriate to the level of study.",
         "Delimitations should state the intended boundaries of topic, setting, participants, variables and time where relevant.",
@@ -102,7 +107,7 @@ GUIDE_BY_SECTION: Dict[str, List[str]] = {
     ],
     "instrument_measurement": [
         "The data type, source and collection instrument should be described and justified.",
-        "The source of questionnaire items, scales, interview guides or archival variables should be traceable.",
+        "The source of questionnaire items, scales, interview guides or archival variables should be clearly identified and documented.",
         "Constructs, dimensions, indicators, scales, coding and composite-score procedures should be explicit.",
         "Pilot testing, refinement, validity, reliability or qualitative trustworthiness should be addressed as applicable.",
     ],
@@ -118,7 +123,7 @@ GUIDE_BY_SECTION: Dict[str, List[str]] = {
         "Results should be presented in the order of objectives, questions or hypotheses with complete and internally accurate tables, figures, themes and statistics.",
         "Check consistency among narrative claims, table values, totals, percentages, sample sizes, coefficient signs, significance values, confidence intervals and hypothesis decisions.",
         "Interpretation should distinguish statistical, qualitative or mixed-method evidence from speculation and should not exceed the design.",
-        "Every objective, research question and hypothesis should receive a clear, traceable result.",
+        "Every objective, research question and hypothesis should receive a clear result linked to the relevant table, theme or analysis.",
     ],
     "discussion": [
         "The discussion should explain why the findings matter, not merely repeat the results.",
