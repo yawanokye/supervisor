@@ -317,6 +317,24 @@
             <em id="fileName">No file selected</em>
           </label>
 
+          <div class="context-card detected-chapter-card hidden" id="detectedChapterCard">
+            <div class="context-heading">
+              <div>
+                <span class="optional-badge">Detected after upload</span>
+                <h3>Choose the first chapter to review</h3>
+              </div>
+              <span class="context-icon">1→</span>
+            </div>
+            <p id="chapterDetectionStatus">Reading the uploaded document and identifying genuine chapter headings.</p>
+            <label class="field compact-field">
+              <span>Start the guided review with</span>
+              <select name="guided_start_chapter" id="guidedStartChapterSelect" disabled>
+                <option value="0">Detect chapters first</option>
+              </select>
+            </label>
+            <p class="chapter-start-note" id="guidedStartChapterNote"></p>
+          </div>
+
           <div class="context-card section-scope-card hidden" id="sectionScopeCard">
             <div class="context-heading">
               <div>
