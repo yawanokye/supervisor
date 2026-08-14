@@ -22,6 +22,12 @@ def test_toc_rows_do_not_become_guided_chapters():
     assert should_use_guided_review(
         workflow_type="supervisory_review", review_scope="full_thesis", units=[1, 2]
     )
+    assert should_use_guided_review(
+        workflow_type="supervisory_review", review_scope="chapter_range", units=[1, 2]
+    )
+    assert should_use_guided_review(
+        workflow_type="supervisory_review", review_scope="chapter", units=[1, 2]
+    )
     assert not should_use_guided_review(
         workflow_type="external_assessment", review_scope="full_thesis", units=[1, 2]
     )
@@ -113,6 +119,20 @@ def test_portal_and_api_expose_explicit_continue_action():
     assert "Continue to next chapter" in portal
     assert 'job.status === "awaiting_continue"' in javascript
     assert "requestChapterContinue" in javascript
+
+
+def test_every_multichapter_supervisory_upload_is_guided_and_visible():
+    source = Path("app/main.py").read_text(encoding="utf-8")
+    page = Path("app/templates/index.html").read_text(encoding="utf-8")
+    javascript = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert 'if workflow_type == "supervisory_review":' in source
+    assert "even when\n    # the form was left on Single chapter or Combined chapters" in source
+    assert "Upgrade retained jobs created by an earlier build" in source
+    assert 'id="loadingTitle"' in page
+    assert 'id="guidedStage"' in page
+    assert "Only this chapter is being reviewed now" in javascript
+    assert "reviewing coverage packet" in source
+    assert "checking the next group of paragraphs and tables" in source
 
 
 def test_database_migration_carries_guided_state():
