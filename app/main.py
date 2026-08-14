@@ -47,7 +47,9 @@ from .checkpointing import (
 )
 from .document_parser import clean_text, parse_document
 from .guided_review import (
+    guided_start_index,
     guided_chapter_units,
+    latest_completed_guided_review_id,
     merge_guided_reviews,
     parse_json_list,
     parse_review_id_map,
@@ -99,7 +101,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.9.1"
+APP_VERSION = "2.10.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -1603,12 +1605,52 @@ async def _run_review_job(
                     guided_record.review_scope = "full_thesis"
                     guided_record.selected_chapter = None
                     guided_db.commit()
+    original_source_data = bytes(payload.get("data") or b"")
+    cumulative_annotation_source_data = original_source_data
+    guided_annotation_source_review_id = ""
     if guided_mode:
         payload = scoped_guided_payload(
             payload,
             units=guided_units,
             current_index=guided_current_index,
         )
+        if (
+            guided_current_index > 0
+            and str(payload.get("filename") or "").lower().endswith(".docx")
+        ):
+            with SessionLocal() as guided_db:
+                guided_record = (
+                    guided_db.query(ReviewRecord)
+                    .filter(ReviewRecord.job_id == job_id)
+                    .first()
+                )
+                guided_mapping = parse_review_id_map(
+                    guided_record.guided_review_ids_json if guided_record else None
+                )
+            guided_annotation_source_review_id = latest_completed_guided_review_id(
+                guided_mapping,
+                units=guided_units,
+                current_index=guided_current_index,
+            )
+            if guided_annotation_source_review_id:
+                cumulative_data = (
+                    ANNOTATED_CACHE.get(guided_annotation_source_review_id)
+                    or await asyncio.to_thread(
+                        load_annotated,
+                        guided_annotation_source_review_id,
+                    )
+                )
+                if cumulative_data:
+                    cumulative_annotation_source_data = cumulative_data
+                    payload["guided_annotation_source_review_id"] = (
+                        guided_annotation_source_review_id
+                    )
+                    payload["guided_cumulative_annotation_source"] = True
+                else:
+                    logger.warning(
+                        "The cumulative annotated source for guided review %s is unavailable; using the original upload",
+                        guided_annotation_source_review_id,
+                    )
     guided_chapter = int(payload.get("guided_current_chapter") or 0)
     guided_position = guided_current_index + 1
 
@@ -1627,7 +1669,7 @@ async def _run_review_job(
     RUNNING_JOB_IDS.add(job_id)
     heartbeat_task = asyncio.create_task(_heartbeat_loop(job_id))
     document_hash = str(payload.get("document_hash") or "")
-    payload_hash = str(
+    saved_payload_hash = str(
         payload.get("payload_hash")
         or stable_hash({
             "document_hash": document_hash,
@@ -1643,6 +1685,15 @@ async def _run_review_job(
             "submission_stage": payload.get("submission_stage"),
             "review_depth": payload.get("review_depth"),
         })
+    )
+    payload_hash = (
+        stable_hash({
+            "saved_payload_hash": saved_payload_hash,
+            "guided_chapter": guided_chapter,
+            "annotation_source_review_id": guided_annotation_source_review_id,
+        })
+        if guided_mode
+        else saved_payload_hash
     )
     checkpoint_job_id = (
         f"{job_id}-chapter-{payload.get('guided_current_chapter')}"
@@ -1963,6 +2014,12 @@ async def _run_review_job(
                 "guided_total_units": len(guided_units),
                 "guided_current_chapter": payload.get("guided_current_chapter"),
                 "guided_is_last": bool(payload.get("guided_is_last")),
+                "guided_cumulative_annotation_source": bool(
+                    payload.get("guided_cumulative_annotation_source")
+                ),
+                "guided_annotation_source_review_id": (
+                    payload.get("guided_annotation_source_review_id") or None
+                ),
             })
             checkpoints.save(
                 "pipeline-final",
@@ -2038,10 +2095,22 @@ async def _run_review_job(
             # final finding number.
             comment_author = reviewer_name or None
             expected_numbers = expected_annotation_finding_numbers(review)
+            native_export_source = (
+                original_source_data
+                if guided_mode and payload.get("guided_is_last")
+                else cumulative_annotation_source_data
+            )
+            # The inline copy is regenerated from the clean original. Native
+            # Word comments are the cumulative working copy between chapters.
+            inline_export_source = (
+                original_source_data
+                if guided_mode
+                else bytes(payload.get("data") or original_source_data)
+            )
             try:
                 annotated_data = await asyncio.to_thread(
                     build_annotated_docx,
-                    payload["data"],
+                    native_export_source,
                     review,
                     comment_author,
                 )
@@ -2058,7 +2127,7 @@ async def _run_review_job(
 
                 inline_data = await asyncio.to_thread(
                     build_inline_annotated_docx,
-                    payload["data"],
+                    inline_export_source,
                     review,
                     comment_author,
                 )
@@ -2090,6 +2159,10 @@ async def _run_review_job(
                     "native_comment_reconciliation_passed": True,
                     "inline_comment_reconciliation_passed": True,
                     "annotation_bundle_validation_passed": True,
+                    "cumulative_guided_annotation": bool(guided_mode),
+                    "annotated_through_chapter": (
+                        guided_chapter if guided_mode else None
+                    ),
                 })
                 review["summary"].pop("annotation_warning", None)
                 review["summary"].pop("review_rebuild_recommended", None)
@@ -2432,6 +2505,7 @@ async def create_review(
     thesis_title: str = Form(""),
     review_scope: str = Form("chapter"),
     selected_chapter: int = Form(0),
+    guided_start_chapter: int = Form(0),
     section_scope_mode: str = Form("whole_chapter"),
     selected_sections_json: str = Form("[]"),
     combined_chapter_end: int = Form(0),
@@ -2545,10 +2619,16 @@ async def create_review(
     # the form was left on Single chapter or Combined chapters.
     guided_units: List[int] = []
     guided_mode = False
+    guided_current_index = 0
     if workflow_type == "supervisory_review":
         try:
             structural_rows = await asyncio.to_thread(parse_document, data, filename)
             guided_units = guided_chapter_units(structural_rows)
+            if review_scope == "chapter_range" and combined_chapter_end:
+                guided_units = [
+                    chapter for chapter in guided_units
+                    if chapter <= int(combined_chapter_end)
+                ]
         except Exception as exc:
             logger.exception("Could not build the guided thesis chapter plan")
             raise HTTPException(
@@ -2564,6 +2644,13 @@ async def create_review(
             units=guided_units,
         )
         if guided_mode:
+            try:
+                guided_current_index = guided_start_index(
+                    guided_units,
+                    guided_start_chapter,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             review_scope = "full_thesis"
             selected_chapter = 0
             combined_chapter_end = 0
@@ -2591,7 +2678,7 @@ async def create_review(
         )
 
     initial_message = (
-        f"Detected {len(guided_units)} chapters. Chapter {guided_units[0]} of {len(guided_units)} queued for review."
+        f"Detected {len(guided_units)} chapters. Chapter {guided_units[guided_current_index]} of {len(guided_units)} queued for review."
         if guided_mode
         else "Review queued and safely saved"
     )
@@ -2714,7 +2801,10 @@ async def create_review(
         "token_reserved": token_reserved,
         "guided_mode": guided_mode,
         "guided_units": guided_units,
-        "guided_current_index": 0,
+        "guided_current_index": guided_current_index,
+        "guided_start_chapter": (
+            guided_units[guided_current_index] if guided_mode else 0
+        ),
         "original_review_scope": submitted_review_scope,
     }
     try:
@@ -2766,7 +2856,7 @@ async def create_review(
         token_reserved=(token_plan.reserved_tokens if token_reserved else 0),
         token_accounting_status=("reserved" if token_reserved else "unmetered"),
         guided_mode=guided_mode,
-        guided_current_index=0,
+        guided_current_index=guided_current_index,
         guided_total_units=(len(guided_units) if guided_mode else 0),
         guided_units_json=(json.dumps(guided_units) if guided_mode else None),
         guided_review_ids_json=("{}" if guided_mode else None),
@@ -2788,9 +2878,12 @@ async def create_review(
         "updated_at": time.time(),
         "resume_url": f"/api/review/jobs/{job_id}/resume",
         "guided_mode": guided_mode,
-        "guided_current_index": 0,
+        "guided_current_index": guided_current_index,
         "guided_total_units": len(guided_units) if guided_mode else 0,
         "guided_units": guided_units,
+        "guided_current_chapter": (
+            guided_units[guided_current_index] if guided_mode else None
+        ),
     }
     _schedule_review_job(job_id, payload, resumed=False)
     return {
@@ -2804,9 +2897,12 @@ async def create_review(
         "estimated_pages": estimated_pages,
         "reserved_tokens": token_plan.reserved_tokens if token_reserved else 0,
         "guided_mode": guided_mode,
-        "guided_current_index": 0,
+        "guided_current_index": guided_current_index,
         "guided_total_units": len(guided_units) if guided_mode else 0,
         "guided_units": guided_units,
+        "guided_current_chapter": (
+            guided_units[guided_current_index] if guided_mode else None
+        ),
     }
 
 

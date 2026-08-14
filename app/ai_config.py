@@ -54,7 +54,7 @@ def _env_choice(name: str, default: str, allowed: set[str]) -> str:
 
 def _normalise_effort(value: str, default: str = "xhigh") -> str:
     effort = (value or default).strip().lower()
-    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    allowed = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
     return effort if effort in allowed else default
 
 
@@ -91,9 +91,9 @@ def unsupported_environment_variables() -> list[str]:
 class HybridAIConfig:
     """Academic-review routing configuration.
 
-    Every active OpenAI review role uses GPT-5.6 Luna with xhigh reasoning.
-    Review depth controls breadth and detail,
-    not the factual-accuracy threshold.
+    Routine coverage uses GPT-5.6 Luna. Academically decisive sections and
+    mandatory framework/final audits use GPT-5.6 Terra. Review depth controls
+    breadth and detail, not the factual-accuracy threshold.
 
     V-Professor v2.7.0 applies research-design, submission-stage, contradiction, root-cause consolidation and current-submission isolation gates before findings are released. The administrator can select OpenAI or DeepSeek V4 Pro through environment variables, while exact evidence anchors, selective audits, checkpoints and token accounting remain active.
     """
@@ -170,6 +170,11 @@ class HybridAIConfig:
     chapter_recovery_concurrency: int
     chapter_recovery_max_output_tokens: int
     systematic_coverage_review_enabled: bool
+    selective_ai_review_enabled: bool
+    bachelors_clean_sample_rate: float
+    research_masters_clean_sample_rate: float
+    doctoral_clean_sample_rate: float
+    quantitative_framework_audit_enabled: bool
     coverage_prose_paragraphs_per_unit: int
     coverage_context_paragraphs: int
     coverage_unit_max_chars: int
@@ -354,7 +359,8 @@ class HybridAIConfig:
             default="high",
         )
         audit_effort = _normalise_effort(
-            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", "xhigh")
+            os.getenv("OPENAI_FINAL_AUDIT_REASONING_EFFORT", "high"),
+            default="high",
         )
         cleaning_effort = _normalise_effort(
             os.getenv("OPENAI_CLEANING_REASONING_EFFORT", "low"),
@@ -391,24 +397,24 @@ class HybridAIConfig:
         advanced_tokens = _env_int("AI_ADVANCED_MAX_OUTPUT_TOKENS", 9000)
 
         chapter_input_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 0.20
+            "PRICE_OPENAI_CHAPTER_INPUT", "PRICE_OPENAI_REVIEW_INPUT", 1.00
         )
         chapter_cached_price = _env_float_alias(
             "PRICE_OPENAI_CHAPTER_CACHED_INPUT",
             "PRICE_OPENAI_REVIEW_CACHED_INPUT",
-            0.02,
+            0.10,
         )
         chapter_output_price = _env_float_alias(
-            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 1.20
+            "PRICE_OPENAI_CHAPTER_OUTPUT", "PRICE_OPENAI_REVIEW_OUTPUT", 6.00
         )
         expert_input_price = _env_float(
-            "PRICE_OPENAI_EXPERT_INPUT", 0.20
+            "PRICE_OPENAI_EXPERT_INPUT", 2.50
         )
         expert_cached_price = _env_float(
-            "PRICE_OPENAI_EXPERT_CACHED_INPUT", 0.02
+            "PRICE_OPENAI_EXPERT_CACHED_INPUT", 0.25
         )
         expert_output_price = _env_float(
-            "PRICE_OPENAI_EXPERT_OUTPUT", 1.20
+            "PRICE_OPENAI_EXPERT_OUTPUT", 15.00
         )
 
         combined_pipeline_enabled = _env_bool(
@@ -574,6 +580,21 @@ class HybridAIConfig:
             ),
             systematic_coverage_review_enabled=_env_bool(
                 "VPROF_SYSTEMATIC_COVERAGE_REVIEW", True
+            ),
+            selective_ai_review_enabled=_env_bool(
+                "VPROF_SELECTIVE_AI_REVIEW", True
+            ),
+            bachelors_clean_sample_rate=_env_float(
+                "VPROF_BACHELORS_CLEAN_SAMPLE_RATE", 0.05, 0.0, 1.0
+            ),
+            research_masters_clean_sample_rate=_env_float(
+                "VPROF_RESEARCH_MASTERS_CLEAN_SAMPLE_RATE", 0.10, 0.0, 1.0
+            ),
+            doctoral_clean_sample_rate=_env_float(
+                "VPROF_DOCTORAL_CLEAN_SAMPLE_RATE", 0.15, 0.0, 1.0
+            ),
+            quantitative_framework_audit_enabled=_env_bool(
+                "VPROF_QUANTITATIVE_FRAMEWORK_AUDIT", True
             ),
             coverage_prose_paragraphs_per_unit=_env_int(
                 "VPROF_COVERAGE_PARAGRAPHS_PER_UNIT", 8
@@ -756,15 +777,15 @@ class HybridAIConfig:
             openai_final_synthesis_fallback_model=final_synthesis_fallback_model,
             openai_phd_final_synthesis_model=phd_final_synthesis_model,
             openai_phd_final_synthesis_reasoning_effort=phd_final_synthesis_reasoning_effort,
-            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 0.20),
-            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.02),
-            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 1.20),
-            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 0.20),
-            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.02),
-            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 1.20),
-            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 0.20),
-            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.02),
-            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 1.20),
+            openai_cleaning_input_price=_env_float("PRICE_OPENAI_CLEANING_INPUT", 1.00),
+            openai_cleaning_cached_input_price=_env_float("PRICE_OPENAI_CLEANING_CACHED_INPUT", 0.10),
+            openai_cleaning_output_price=_env_float("PRICE_OPENAI_CLEANING_OUTPUT", 6.00),
+            openai_section_input_price=_env_float("PRICE_OPENAI_SECTION_INPUT", 1.00),
+            openai_section_cached_input_price=_env_float("PRICE_OPENAI_SECTION_CACHED_INPUT", 0.10),
+            openai_section_output_price=_env_float("PRICE_OPENAI_SECTION_OUTPUT", 6.00),
+            openai_final_input_price=_env_float("PRICE_OPENAI_FINAL_INPUT", 2.50),
+            openai_final_cached_input_price=_env_float("PRICE_OPENAI_FINAL_CACHED_INPUT", 0.25),
+            openai_final_output_price=_env_float("PRICE_OPENAI_FINAL_OUTPUT", 15.00),
 
             deepseek_pro_input_price=_env_float(
                 "PRICE_DEEPSEEK_PRO_INPUT", 0.435
@@ -794,13 +815,13 @@ class HybridAIConfig:
             openai_expert_cached_input_price=expert_cached_price,
             openai_expert_output_price=expert_output_price,
             openai_fast_input_price=_env_float(
-                "PRICE_OPENAI_FAST_INPUT", 0.20
+                "PRICE_OPENAI_FAST_INPUT", 1.00
             ),
             openai_fast_cached_input_price=_env_float(
-                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.02
+                "PRICE_OPENAI_FAST_CACHED_INPUT", 0.10
             ),
             openai_fast_output_price=_env_float(
-                "PRICE_OPENAI_FAST_OUTPUT", 1.20
+                "PRICE_OPENAI_FAST_OUTPUT", 6.00
             ),
 
             deepseek_extract_model=deepseek_fast_model,
@@ -898,9 +919,9 @@ class HybridAIConfig:
         value = (model or "").strip().lower()
         if value.startswith("gpt-5.6-luna"):
             return (
-                _env_float("PRICE_OPENAI_LUNA_INPUT", 0.20),
-                _env_float("PRICE_OPENAI_LUNA_CACHED_INPUT", 0.02),
-                _env_float("PRICE_OPENAI_LUNA_OUTPUT", 1.20),
+                _env_float("PRICE_OPENAI_LUNA_INPUT", 1.00),
+                _env_float("PRICE_OPENAI_LUNA_CACHED_INPUT", 0.10),
+                _env_float("PRICE_OPENAI_LUNA_OUTPUT", 6.00),
             )
         if value.startswith("gpt-5.6-sol") or value == "gpt-5.6":
             return (
@@ -910,9 +931,9 @@ class HybridAIConfig:
             )
         if value.startswith("gpt-5.6-terra"):
             return (
-                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.00),
-                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.20),
-                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 12.00),
+                _env_float("PRICE_OPENAI_TERRA_INPUT", 2.50),
+                _env_float("PRICE_OPENAI_TERRA_CACHED_INPUT", 0.25),
+                _env_float("PRICE_OPENAI_TERRA_OUTPUT", 15.00),
             )
         if value == self.openai_fast_model.lower():
             return (

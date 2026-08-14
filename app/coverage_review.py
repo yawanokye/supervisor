@@ -1,10 +1,123 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from .supervisory_review_algorithm import coverage_statuses_for_review
+
+
+MANDATORY_AI_SECTION_TERMS = (
+    "statement of the problem", "problem statement", "research gap",
+    "purpose of the study", "research objective", "specific objective",
+    "research question", "research hypothesis", "hypothesis development",
+    "theoretical framework", "conceptual framework", "conceptual model",
+    "research framework", "methodology", "research method", "research design",
+    "population", "sampling", "sample size", "instrument", "measurement",
+    "validity", "reliability", "data analysis", "model specification",
+    "diagnostic", "assumption", "result", "finding", "regression", "anova",
+    "structural equation", "sem", "mediation", "moderation", "discussion",
+    "conclusion", "contribution", "recommendation",
+)
+
+RISK_TEXT_TERMS = (
+    "effect", "impact", "influence", "cause", "causal", "predict",
+    "significant", "p value", "confidence interval", "coefficient",
+    "odds ratio", "effect size", "standard error", "t statistic", "f statistic",
+    "chi square", "r squared", "adjusted r", "bootstrap", "interaction",
+    "mediator", "moderator", "latent variable", "common method bias",
+    "missing data", "outlier", "multicollinearity", "heteroskedasticity",
+    "normality", "endogeneity", "robustness", "limitation", "ethics",
+)
+
+
+def _degree_clean_sample_rate(academic_level: Any) -> float:
+    value = _clean(academic_level).lower()
+    if "phd" in value or "doctor" in value:
+        return 0.15
+    if "mphil" in value or "research master" in value:
+        return 0.10
+    return 0.05
+
+
+def _unit_risk_reasons(unit: Dict[str, Any]) -> List[str]:
+    if unit.get("conceptual_framework_audit"):
+        return ["mandatory_conceptual_framework_audit"]
+    if unit.get("alignment_audit") or unit.get("revision_audit"):
+        return ["cross_section_or_revision_audit"]
+    reasons: List[str] = []
+    if unit.get("coverage_unit_kind") == "table":
+        reasons.append("table_or_statistical_evidence")
+    blob = _clean(" ".join([
+        _clean(unit.get("heading")),
+        " ".join(_clean(value) for value in unit.get("section_path") or []),
+        " ".join(_clean(row.get("text")) for row in unit.get("paragraphs") or []),
+    ])).lower()
+    if any(term in blob for term in MANDATORY_AI_SECTION_TERMS):
+        reasons.append("academically_decisive_section")
+    if any(term in blob for term in RISK_TEXT_TERMS):
+        reasons.append("high_risk_claim_or_analysis")
+    if any(row.get("contains_drawing") for row in unit.get("paragraphs") or []):
+        reasons.append("figure_or_diagram")
+    return list(dict.fromkeys(reasons))
+
+
+def select_ai_review_units(
+    units: Sequence[Dict[str, Any]],
+    *,
+    academic_level: Any = "",
+    clean_sample_rate: float | None = None,
+    deterministic_seed: str = "vprofessor",
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """Select model-reviewed units after deterministic local preflight.
+
+    Academic and analytical risk always wins. Low-risk prose is locally marked
+    as checked and a deterministic sample is still sent to the model as a
+    quality-control guard. This reduces routine API calls without weakening the
+    release ledger or skipping the study's decisive research logic.
+    """
+    rate = (
+        _degree_clean_sample_rate(academic_level)
+        if clean_sample_rate is None
+        else max(0.0, min(1.0, float(clean_sample_rate)))
+    )
+    selected: List[Dict[str, Any]] = []
+    local_pass: List[Dict[str, Any]] = []
+    reason_counts: Counter[str] = Counter()
+    for index, original in enumerate(units):
+        unit = dict(original)
+        reasons = _unit_risk_reasons(unit)
+        sampled = False
+        if not reasons:
+            identity = "|".join([
+                deterministic_seed,
+                str(unit.get("section_key") or index),
+                _clean(unit.get("heading")),
+                " ".join(unit.get("target_paragraph_ids") or []),
+            ])
+            bucket = int(hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12], 16)
+            sampled = (bucket / float(0xFFFFFFFFFFFF)) < rate
+            if sampled:
+                reasons = ["clean_passage_quality_sample"]
+        unit["ai_review_reasons"] = reasons
+        unit["locally_preflighted"] = not bool(reasons)
+        if reasons:
+            selected.append(unit)
+            reason_counts.update(reasons)
+        else:
+            local_pass.append(unit)
+
+    return selected, local_pass, {
+        "total_units": len(units),
+        "ai_review_units": len(selected),
+        "local_preflight_units": len(local_pass),
+        "clean_sample_rate": rate,
+        "reason_counts": dict(reason_counts),
+        "estimated_ai_unit_reduction_percent": round(
+            100.0 * len(local_pass) / max(1, len(units)), 1
+        ),
+    }
 
 
 def _clean(value: Any) -> str:

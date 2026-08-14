@@ -14,7 +14,7 @@ import re
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional, Type
+from typing import Any, Optional, Sequence, Type
 
 from pydantic import BaseModel
 
@@ -709,6 +709,7 @@ class CostAwareAIProvider:
         max_output_tokens: Optional[int],
         request_timeout_seconds: Optional[int],
         request_max_retries: Optional[int],
+        image_data_urls: Optional[Sequence[str]] = None,
     ) -> ProviderResult:
         provider = self.openai if target.provider is ProviderName.OPENAI else self.deepseek
         if provider is None:
@@ -725,6 +726,7 @@ class CostAwareAIProvider:
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
                 thinking_enabled=target.thinking_enabled,
+                image_data_urls=image_data_urls,
             )
         except Exception as exc:
             if self._should_trip_circuit(exc):
@@ -843,6 +845,7 @@ class CostAwareAIProvider:
         stage: str | ReviewStage = ReviewStage.STANDARD_REVIEW,
         review_depth: str = "standard",
         allow_escalation: Optional[bool] = None,
+        image_data_urls: Optional[Sequence[str]] = None,
     ) -> ProviderResult:
         plan = self.plan(
             stage=stage,
@@ -861,6 +864,7 @@ class CostAwareAIProvider:
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
+                image_data_urls=image_data_urls,
             )
         except Exception as primary_error:
             # A strict comment-audit response that reaches its output cap must
@@ -892,6 +896,7 @@ class CostAwareAIProvider:
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
+                image_data_urls=image_data_urls,
             )
 
         should_escalate = (
@@ -921,6 +926,7 @@ class CostAwareAIProvider:
                 max_output_tokens=max_output_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 request_max_retries=request_max_retries,
+                image_data_urls=image_data_urls,
             )
         except Exception as escalation_error:
             logger.warning(

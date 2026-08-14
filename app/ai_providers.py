@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -448,6 +448,7 @@ class DeepSeekProvider:
         request_timeout_seconds: Optional[int] = None,
         request_max_retries: Optional[int] = None,
         thinking_enabled: Optional[bool] = None,
+        image_data_urls: Optional[Sequence[str]] = None,
     ) -> ProviderResult:
         contract = _json_contract(schema_model)
         reinforced_system = (
@@ -630,6 +631,7 @@ class OpenAIProvider:
         request_timeout_seconds: Optional[int] = None,
         request_max_retries: Optional[int] = None,
         thinking_enabled: Optional[bool] = None,
+        image_data_urls: Optional[Sequence[str]] = None,
     ) -> ProviderResult:
         schema = _make_openai_strict_schema(schema_model.model_json_schema())
         effort = (
@@ -640,9 +642,22 @@ class OpenAIProvider:
         if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
             effort = "xhigh"
 
+        user_content: Any = user_prompt
+        valid_images = [
+            str(value) for value in image_data_urls or []
+            if str(value).startswith("data:image/")
+        ][:3]
+        if valid_images:
+            user_content = [
+                {"type": "input_text", "text": user_prompt},
+                *[
+                    {"type": "input_image", "image_url": value, "detail": "high"}
+                    for value in valid_images
+                ],
+            ]
         base_input = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": user_content},
         ]
         base_body: Dict[str, Any] = {
             "model": model,
@@ -706,13 +721,17 @@ class OpenAIProvider:
                         "match the required schema. Return one complete JSON object "
                         "that follows the supplied schema exactly."
                     )
-                body["input"] = [
-                    base_input[0],
-                    {
-                        "role": "user",
-                        "content": user_prompt + "\n\n" + retry_instruction,
-                    },
-                ]
+                retry_text = user_prompt + "\n\n" + retry_instruction
+                retry_content: Any = retry_text
+                if valid_images:
+                    retry_content = [
+                        {"type": "input_text", "text": retry_text},
+                        *[
+                            {"type": "input_image", "image_url": value, "detail": "high"}
+                            for value in valid_images
+                        ],
+                    ]
+                body["input"] = [base_input[0], {"role": "user", "content": retry_content}]
             try:
                 headers = {
                     "Authorization": f"Bearer {self.config.openai_api_key}",

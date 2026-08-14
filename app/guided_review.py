@@ -37,6 +37,21 @@ def should_use_guided_review(
     )
 
 
+def guided_start_index(units: Sequence[int], requested_chapter: int = 0) -> int:
+    """Return the selected starting position in a detected guided sequence."""
+    clean_units = [int(value) for value in units if int(value) > 0]
+    if not clean_units:
+        return 0
+    requested = int(requested_chapter or 0)
+    if not requested:
+        return 0
+    if requested not in clean_units:
+        raise ValueError(
+            f"Chapter {requested} was not detected in the uploaded document."
+        )
+    return clean_units.index(requested)
+
+
 def parse_json_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return list(value)
@@ -91,6 +106,18 @@ def remember_chapter_review(
     output = dict(mapping)
     output[str(int(chapter))] = str(review_id)
     return output
+
+
+def latest_completed_guided_review_id(
+    mapping: Mapping[str, str], *, units: Sequence[int], current_index: int
+) -> str:
+    """Find the newest completed chapter artifact before the current turn."""
+    upper = max(0, min(int(current_index or 0), len(units)))
+    for chapter in reversed(list(units[:upper])):
+        review_id = str(mapping.get(str(int(chapter))) or "").strip()
+        if review_id:
+            return review_id
+    return ""
 
 
 def review_id_is_guided_child(value: Any, review_id: str) -> bool:

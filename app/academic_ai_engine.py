@@ -38,8 +38,10 @@ from .coverage_review import (
     build_coverage_ledger,
     build_coverage_units,
     coverage_packets,
+    select_ai_review_units,
     split_coverage_units_to_single_targets,
 )
+from .conceptual_framework_review import build_quantitative_framework_audit
 from .review_enrichment import enrich_finding_row
 from .student_friendly_review import make_issue_student_friendly, make_finding_student_friendly
 from .supervisory_review_algorithm import algorithm_contract
@@ -715,6 +717,8 @@ def _section_requires_expert_model(
     section: Dict[str, Any], academic_level: Any
 ) -> bool:
     """Reserve Terra for academically decisive research-level sections."""
+    if section.get("conceptual_framework_audit"):
+        return True
     if not _is_research_intensive_level(academic_level):
         return False
     parts = [
@@ -778,6 +782,13 @@ def _payload(paragraph: Dict[str, Any]) -> Dict[str, Any]:
         "table_number": clean_text(paragraph.get("table_number", "")),
         "table_title": clean_text(paragraph.get("table_title", "")),
         "table_caption": clean_text(paragraph.get("table_caption", "")),
+        "contains_drawing": bool(paragraph.get("contains_drawing")),
+        "drawing_count": int(paragraph.get("drawing_count") or 0),
+        "drawing_descriptions": [
+            clean_text(value)
+            for value in paragraph.get("drawing_descriptions") or []
+            if clean_text(value)
+        ][:8],
     }
 
 
@@ -2053,6 +2064,17 @@ async def enrich_review_with_academic_ai(
     if whole_audit:
         sections.append({"heading": "Whole-chapter coherence and consistency audit", "chapter_number": None, "section_path": [], "part": 1, "paragraphs": whole_audit})
 
+    framework_audit = None
+    if config.quantitative_framework_audit_enabled:
+        framework_audit = build_quantitative_framework_audit(
+            current,
+            context,
+            research_approach=(review.get("summary") or {}).get("research_approach"),
+            max_chars=max(config.max_map_input_chars, 36000),
+        )
+        if framework_audit:
+            sections.append(framework_audit)
+
     optional_chapters = list(
         (review.get("summary") or {}).get("optional_chapters_detected") or []
     )
@@ -2131,6 +2153,31 @@ async def enrich_review_with_academic_ai(
     for index, section in enumerate(sections):
         section["section_key"] = _section_key(section, index)
 
+    local_preflight_sections: List[Dict[str, Any]] = []
+    selective_review_stats = {
+        "total_units": len(sections),
+        "ai_review_units": len(sections),
+        "local_preflight_units": 0,
+        "clean_sample_rate": 1.0,
+        "reason_counts": {},
+        "estimated_ai_unit_reduction_percent": 0.0,
+    }
+    ai_sections = list(sections)
+    if config.systematic_coverage_review_enabled and config.selective_ai_review_enabled:
+        degree_key = _degree_key(academic_level)
+        if degree_key in {"phd", "professional_doctorate"}:
+            clean_sample_rate = config.doctoral_clean_sample_rate
+        elif degree_key == "research_masters":
+            clean_sample_rate = config.research_masters_clean_sample_rate
+        else:
+            clean_sample_rate = config.bachelors_clean_sample_rate
+        ai_sections, local_preflight_sections, selective_review_stats = select_ai_review_units(
+            sections,
+            academic_level=academic_level,
+            clean_sample_rate=clean_sample_rate,
+            deterministic_seed=str((review.get("summary") or {}).get("filename") or "vprofessor"),
+        )
+
     provider = router
     primary_tokens = _degree_primary_output_tokens(academic_level, depth, config)
     if depth == "light":
@@ -2178,7 +2225,7 @@ async def enrich_review_with_academic_ai(
                 config.deepseek_coverage_request_max_chars,
             )
         section_batches = coverage_packets(
-            sections,
+            ai_sections,
             max_units_per_request=units_per_request,
             high_risk_units_per_request=high_risk_units_per_request,
             max_chars_per_request=request_max_chars,
@@ -2188,7 +2235,16 @@ async def enrich_review_with_academic_ai(
             sections, config.chapter_packet_max_chars
         )
 
-    await _notify(progress_callback, 35, "Reviewing every paragraph and table in systematic coverage units")
+    await _notify(
+        progress_callback,
+        35,
+        (
+            f"Reviewing {len(ai_sections)} risk-selected academic unit(s); "
+            f"{len(local_preflight_sections)} low-risk unit(s) passed local checks"
+            if config.selective_ai_review_enabled
+            else "Reviewing every paragraph and table in systematic coverage units"
+        ),
+    )
 
     completed_primary_batches = 0
     progress_lock = asyncio.Lock()
@@ -2205,6 +2261,19 @@ async def enrich_review_with_academic_ai(
     ) -> ProviderResult:
         nonlocal completed_primary_batches
         compact_mode = bool(deepseek_primary)
+        image_data_urls: List[str] = []
+        if any(section.get("conceptual_framework_audit") for section in batch):
+            for section in batch:
+                for paragraph in section.get("paragraphs") or []:
+                    for value in paragraph.get("drawing_image_data_urls") or []:
+                        if value not in image_data_urls:
+                            image_data_urls.append(value)
+                        if len(image_data_urls) >= 3:
+                            break
+                    if len(image_data_urls) >= 3:
+                        break
+                if len(image_data_urls) >= 3:
+                    break
         user_prompt = _batch_prompt(
             review,
             batch,
@@ -2236,6 +2305,10 @@ async def enrich_review_with_academic_ai(
             "system_prompt": primary_system_prompt,
             "user_prompt": user_prompt,
             "section_keys": section_keys,
+            "image_hashes": [
+                hashlib.sha256(value.encode("utf-8")).hexdigest()
+                for value in image_data_urls
+            ],
         })
         stage_key = f"academic-primary-{input_hash[:20]}"
         result: Optional[ProviderResult] = None
@@ -2277,6 +2350,7 @@ async def enrich_review_with_academic_ai(
                 # accuracy audit. Escalating the entire first pass here caused
                 # duplicate OpenAI work and unpredictable cost.
                 allow_escalation=(depth == "advanced"),
+                image_data_urls=image_data_urls,
             )
             if checkpoint_manager is not None:
                 checkpoint_manager.save_provider_result(
@@ -2321,7 +2395,29 @@ async def enrich_review_with_academic_ai(
     )
 
     usage_records: List[AIUsageRecord] = []
-    section_reviews: List[Dict[str, Any]] = []
+    section_reviews: List[Dict[str, Any]] = [
+        {
+            "section_key": str(section.get("section_key") or ""),
+            "heading": clean_text(section.get("heading", "Untitled section")),
+            "chapter_number": section.get("chapter_number"),
+            "section_path": list(section.get("section_path") or []),
+            "part": section.get("part", 1),
+            "paragraph_count": len(section.get("paragraphs") or []),
+            "target_paragraph_count": len(section.get("target_paragraph_ids") or []),
+            "expected_target_paragraph_ids": list(section.get("target_paragraph_ids") or []),
+            "assessed_paragraph_ids": list(section.get("target_paragraph_ids") or []),
+            "coverage_complete": True,
+            "coverage_assessment_inferred": False,
+            "local_preflight_pass": True,
+            "section_score": 100.0,
+            "section_assessment": "",
+            "coverage_warning": "",
+            "strengths": [],
+            "issues": [],
+            "source_section": section,
+        }
+        for section in local_preflight_sections
+    ]
     failed_batches: List[int] = []
 
     def consume_batch(batch: Sequence[Dict[str, Any]], result: ProviderResult) -> None:
@@ -2600,7 +2696,7 @@ async def enrich_review_with_academic_ai(
     if (
         missing_sections
         and failed_batches
-        and not section_reviews
+        and not any(not row.get("local_preflight_pass") for row in section_reviews)
         and depth in {"light", "standard"}
         and not truncation_only
     ):
@@ -3700,6 +3796,10 @@ async def enrich_review_with_academic_ai(
         "unresolved_sections_blocking": bool(unresolved_sections_blocking),
         "coverage_release_blocking": bool(coverage_blocking),
         "systematic_coverage_review": bool(config.systematic_coverage_review_enabled),
+        "selective_ai_review": bool(config.selective_ai_review_enabled),
+        "ai_review_units": int(selective_review_stats.get("ai_review_units") or 0),
+        "local_preflight_units": int(selective_review_stats.get("local_preflight_units") or 0),
+        "quantitative_framework_audit_applied": bool(framework_audit),
         "coverage_units_total": int(coverage_ledger.get("unit_count") or 0),
         "coverage_units_completed": int(coverage_ledger.get("completed_units") or 0),
         "coverage_targets_total": int(coverage_ledger.get("target_count") or 0),
@@ -3765,7 +3865,15 @@ async def enrich_review_with_academic_ai(
         "paid_comment_audit_candidates": sum(1 for section in audit_sections for _ in (section.get("issues") or [])) if all_primary else 0,
         "evidence_gated_without_second_paid_audit": sum(1 for section in deferred_audit_sections for _ in (section.get("issues") or [])) if all_primary else 0,
         "primary_batch_count": len(section_batches),
-        "primary_packet_mode": "systematic_paragraph_and_table_units" if config.systematic_coverage_review_enabled else "chapter_level_parallel",
+        "primary_packet_mode": (
+            "risk_selected_systematic_units"
+            if config.systematic_coverage_review_enabled and config.selective_ai_review_enabled
+            else "systematic_paragraph_and_table_units"
+            if config.systematic_coverage_review_enabled
+            else "chapter_level_parallel"
+        ),
+        "selective_review": selective_review_stats,
+        "quantitative_framework_audit_applied": bool(framework_audit),
         "chapter_packet_max_chars": config.chapter_packet_max_chars,
         "coverage_request_max_chars": config.coverage_request_max_chars,
         "coverage_units_per_request": config.coverage_units_per_request,

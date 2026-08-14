@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import re
 from typing import Any, Dict, Iterable, Iterator, List, Optional
@@ -1003,6 +1004,81 @@ def docx_revision_metadata(block: Any) -> Dict[str, Any]:
     }
 
 
+def docx_drawing_metadata(
+    block: Any, *, include_image_data: bool = False
+) -> Dict[str, Any]:
+    """Expose enough drawing evidence for framework and figure audits.
+
+    Word diagrams may be editable shapes, SmartArt or pasted images. Visible
+    shape text is already recovered by :func:`docx_visible_text`; this helper
+    records the drawing count and accessible title/description so the academic
+    engine can distinguish an actual diagram from a narrative mention. It does
+    not pretend that inaccessible image pixels or arrowheads were read.
+    """
+    if qn is None:
+        return {
+            "contains_drawing": False,
+            "drawing_count": 0,
+            "drawing_descriptions": [],
+            "drawing_image_data_urls": [],
+        }
+    element = getattr(block, "_p", None)
+    if element is None:
+        element = getattr(block, "_tc", None)
+    if element is None:
+        element = getattr(block, "_element", None)
+    if element is None:
+        return {
+            "contains_drawing": False,
+            "drawing_count": 0,
+            "drawing_descriptions": [],
+            "drawing_image_data_urls": [],
+        }
+
+    drawing_count = sum(1 for node in element.iter() if node.tag == qn("w:drawing"))
+    descriptions: List[str] = []
+    for node in element.iter():
+        if not (
+            str(node.tag).endswith("}docPr")
+            or str(node.tag).endswith("}cNvPr")
+        ):
+            continue
+        for attribute in ("descr", "title", "name"):
+            value = clean_text(node.get(attribute))
+            if value and not re.match(
+                r"^(?:(?:picture|image|graphic)\s*\d*|_x[0-9a-f]+_t\d+)$",
+                value,
+                flags=re.I,
+            ):
+                descriptions.append(value)
+    image_data_urls: List[str] = []
+    if include_image_data:
+        related_parts = getattr(getattr(block, "part", None), "related_parts", {}) or {}
+        relationship_ids: List[str] = []
+        for node in element.iter():
+            for attribute in (qn("r:embed"), qn("r:id")):
+                relationship_id = node.get(attribute)
+                if relationship_id:
+                    relationship_ids.append(relationship_id)
+        for relationship_id in dict.fromkeys(relationship_ids):
+            part = related_parts.get(relationship_id)
+            content_type = str(getattr(part, "content_type", "") or "")
+            blob = bytes(getattr(part, "blob", b"") or b"")
+            if not content_type.startswith("image/") or not blob or len(blob) > 2_500_000:
+                continue
+            image_data_urls.append(
+                f"data:{content_type};base64,{base64.b64encode(blob).decode('ascii')}"
+            )
+            if len(image_data_urls) >= 3:
+                break
+    return {
+        "contains_drawing": drawing_count > 0,
+        "drawing_count": drawing_count,
+        "drawing_descriptions": list(dict.fromkeys(descriptions))[:8],
+        "drawing_image_data_urls": image_data_urls,
+    }
+
+
 def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     if Document is None:
         raise RuntimeError("python-docx is not installed.")
@@ -1072,7 +1148,21 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             pending_caption_distance = 0
             continue
 
+        drawing_metadata = docx_drawing_metadata(
+            block,
+            include_image_data=any(
+                term in normalised(current_heading or "")
+                for term in ("conceptual framework", "conceptual model", "research framework", "analytical framework")
+            ),
+        )
         text = docx_visible_text(block)
+        if not text and drawing_metadata["contains_drawing"]:
+            descriptions = drawing_metadata.get("drawing_descriptions") or []
+            text = (
+                "Embedded figure or diagram: " + "; ".join(descriptions)
+                if descriptions
+                else "Embedded figure or diagram"
+            )
         if not text:
             continue
         paragraph_no += 1
@@ -1181,13 +1271,18 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
             "document_zone": current_zone,
             "is_reference_entry": current_zone == "references",
             "style": style_name,
-            "source_kind": "table_caption" if caption else "paragraph",
+            "source_kind": (
+                "table_caption" if caption
+                else "figure" if drawing_metadata["contains_drawing"]
+                else "paragraph"
+            ),
             "table_index": None,
             "table_row": None,
             "table_number": caption.get("table_number") if caption else None,
             "table_title": caption.get("table_title") if caption else None,
             "table_caption": caption.get("table_caption") if caption else None,
             **docx_revision_metadata(block),
+            **drawing_metadata,
         })
     return out
 
