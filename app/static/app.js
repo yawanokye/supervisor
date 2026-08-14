@@ -37,6 +37,8 @@ const lightReviewNote = document.getElementById("lightReviewNote");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const loadingMessage = document.getElementById("loadingMessage");
+const loadingTitle = document.getElementById("loadingTitle");
+const guidedStage = document.getElementById("guidedStage");
 const stopReviewButton = document.getElementById("stopReviewButton");
 const continueChapterButton = document.getElementById("continueChapterButton");
 const scopeStructureHelp = document.getElementById("scopeStructureHelp");
@@ -811,6 +813,18 @@ async function readJsonSafely(response) {
 }
 
 function updateProgress(job) {
+  if (job.guided_mode && Number(job.guided_total_units || 0) > 1) {
+    const position = Number(job.guided_current_index || 0) + 1;
+    const total = Number(job.guided_total_units || 0);
+    const chapter = job.guided_current_chapter || job.guided_units?.[position - 1] || position;
+    loadingTitle.textContent = `Reviewing Chapter ${chapter}`;
+    guidedStage.textContent = `Chapter ${position} of ${total} · Only this chapter is being reviewed now`;
+    guidedStage.classList.remove("hidden");
+  } else {
+    loadingTitle.textContent = "Reviewing the document";
+    guidedStage.textContent = "";
+    guidedStage.classList.add("hidden");
+  }
   return setProgress(
     job.progress || 2,
     job.message || "Reviewing the document"
@@ -1077,8 +1091,10 @@ async function waitForReview(pollUrl, options = {}) {
       }
 
       if (Date.now() - started > 30 * 60 * 1000) {
-        loadingMessage.textContent =
-          "The review is still processing. You may leave this page and return later. The portal will reconnect to the active review automatically.";
+        const chapterPrefix = job.guided_mode
+          ? `Chapter ${job.guided_current_chapter || Number(job.guided_current_index || 0) + 1} is still processing. `
+          : "The review is still processing. ";
+        loadingMessage.textContent = `${chapterPrefix}You may leave this page and return later. The portal will reconnect automatically.`;
       }
     } catch (error) {
       if (error && error.terminal) {
