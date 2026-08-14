@@ -3,6 +3,8 @@ from pathlib import Path
 
 from app.guided_review import (
     guided_chapter_units,
+    guided_start_index,
+    latest_completed_guided_review_id,
     merge_guided_reviews,
     scoped_guided_payload,
     should_use_guided_review,
@@ -41,6 +43,17 @@ def test_guided_payload_reviews_one_chapter_and_retains_plan():
     assert scoped["guided_current_chapter"] == 2
     assert scoped["guided_is_last"] is False
     assert scoped["original_review_scope"] == "full_thesis"
+
+
+def test_supervisor_can_choose_the_guided_start_chapter():
+    units = [1, 2, 3, 4, 5]
+    assert guided_start_index(units, 0) == 0
+    assert guided_start_index(units, 3) == 2
+    assert latest_completed_guided_review_id(
+        {"3": "review-three", "4": "review-four"},
+        units=units,
+        current_index=4,
+    ) == "review-four"
 
 
 def test_guided_final_review_merges_chapter_findings():
@@ -131,8 +144,13 @@ def test_every_multichapter_supervisory_upload_is_guided_and_visible():
     assert 'id="loadingTitle"' in page
     assert 'id="guidedStage"' in page
     assert "Only this chapter is being reviewed now" in javascript
+    assert 'name="guided_start_chapter"' in page
+    assert "scanGuidedChapterPlan" in javascript
+    assert "Each completed annotated chapter will become the working copy" in javascript
     assert "reviewing coverage packet" in source
     assert "checking the next group of paragraphs and tables" in source
+    assert "latest_completed_guided_review_id" in source
+    assert "native_export_source" in source
 
 
 def test_database_migration_carries_guided_state():

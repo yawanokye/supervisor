@@ -97,6 +97,17 @@ def test_native_and_inline_exports_represent_every_final_finding_number():
     assert inline_audit["passed"] is True
 
 
+def test_native_annotations_accumulate_when_the_previous_copy_is_reused():
+    source = _source_with_previous_comment()
+    review = _review(source)
+    first = build_annotated_docx(source, review, comment_author="V-Professor")
+    second = build_annotated_docx(first, review, comment_author="V-Professor")
+    audit = native_annotation_audit(second, review, comment_author="V-Professor")
+    assert audit["previous_comment_count"] >= 2
+    assert audit["current_comment_count"] >= 1
+    assert audit["passed"] is True
+
+
 def test_absolute_claim_fallback_is_not_silently_dropped_from_either_annotation():
     doc = Document()
     doc.add_heading("CHAPTER ONE", level=1)
