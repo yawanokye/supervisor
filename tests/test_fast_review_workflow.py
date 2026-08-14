@@ -36,7 +36,7 @@ def test_fast_defaults(monkeypatch):
     assert config.openai_section_analysis_reasoning_effort == "medium"
     assert config.openai_chapter_reasoning_effort == "medium"
     assert config.openai_expert_reasoning_effort == "high"
-    assert config.openai_final_audit_reasoning_effort == "xhigh"
+    assert config.openai_final_audit_reasoning_effort == "high"
 
 
 def test_legacy_batch_helper_remains_available():

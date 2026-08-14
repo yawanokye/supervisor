@@ -55,10 +55,11 @@ def test_balanced_defaults_enable_cost_aware_routing(monkeypatch):
     assert config.openai_section_analysis_reasoning_effort == "medium"
     assert config.openai_chapter_reasoning_effort == "medium"
     assert config.openai_expert_reasoning_effort == "high"
-    assert config.openai_final_audit_reasoning_effort == "xhigh"
+    assert config.openai_final_audit_reasoning_effort == "high"
     assert config.openai_external_domain_reasoning_effort == "high"
     assert config.openai_external_adjudicator_reasoning_effort == "xhigh"
-    assert config.openai_prices_for_model("gpt-5.6-luna") == (0.20, 0.02, 1.20)
+    assert config.openai_prices_for_model("gpt-5.6-luna") == (1.00, 0.10, 6.00)
+    assert config.openai_prices_for_model("gpt-5.6-terra") == (2.50, 0.25, 15.00)
     status = config.public_status()
     assert status["review_depths"] == ["light", "standard", "advanced"]
     assert "provider" not in status

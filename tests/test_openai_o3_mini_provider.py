@@ -116,6 +116,43 @@ def test_openai_provider_accepts_xhigh_reasoning(monkeypatch):
     assert captured["payload"]["reasoning"] == {"effort": "xhigh"}
 
 
+def test_openai_provider_sends_framework_diagram_as_vision_input(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+    config = HybridAIConfig.from_env()
+    captured: dict = {}
+
+    async def fake_post_json_with_retry(**kwargs):
+        captured.update(kwargs)
+        return ({
+            "id": "resp-vision",
+            "status": "completed",
+            "output": [{"type": "message", "content": [{
+                "type": "output_text",
+                "text": '{"judgement":"supported","evidence_ids":["P1"]}',
+            }]}],
+            "usage": {"input_tokens": 4, "output_tokens": 3},
+        }, "request-vision")
+
+    monkeypatch.setattr("app.ai_providers._post_json_with_retry", fake_post_json_with_retry)
+    asyncio.run(OpenAIProvider(config).complete_json(
+        model="gpt-5.6-terra",
+        system_prompt="Audit the framework.",
+        user_prompt="Reconcile the diagram with the objectives.",
+        schema_model=SamplePayload,
+        purpose="framework_vision_test",
+        reasoning_effort="high",
+        image_data_urls=["data:image/png;base64,AAAA"],
+    ))
+
+    content = captured["payload"]["input"][1]["content"]
+    assert content[0] == {
+        "type": "input_text",
+        "text": "Reconcile the diagram with the objectives.",
+    }
+    assert content[1]["type"] == "input_image"
+    assert content[1]["detail"] == "high"
+
+
 def test_high_effort_request_uses_background_mode_and_polling(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
     monkeypatch.setenv("OPENAI_BACKGROUND_MODE", "true")
