@@ -22,6 +22,10 @@ const previousChaptersField = document.getElementById("previousChaptersField");
 const previousUploadTitle = document.getElementById("previousUploadTitle");
 const previousUploadHelp = document.getElementById("previousUploadHelp");
 const mainUploadTitle = document.getElementById("mainUploadTitle");
+const detectedChapterCard = document.getElementById("detectedChapterCard");
+const chapterDetectionStatus = document.getElementById("chapterDetectionStatus");
+const guidedStartChapterSelect = document.getElementById("guidedStartChapterSelect");
+const guidedStartChapterNote = document.getElementById("guidedStartChapterNote");
 const statusFilter = document.getElementById("statusFilter");
 const showAllButton = document.getElementById("showAllButton");
 
@@ -74,6 +78,9 @@ const sectionScanStatus = document.getElementById("sectionScanStatus");
 
 let highestDisplayedProgress = 2;
 let detectedSectionOptions = [];
+let detectedGuidedUnits = [];
+let detectedGuidedTitles = {};
+let chapterDetectionRequest = 0;
 
 function setProgress(value, message = "", { reset = false } = {}) {
   const incoming = Math.max(
@@ -142,7 +149,11 @@ academicLevelSelect.addEventListener("change", () => {
   updateUploadWorkflow();
 });
 form.querySelectorAll('input[name="review_depth"]').forEach(input => input.addEventListener("change", updateDepthGuidance));
-form.querySelectorAll('input[name="workflow_type"]').forEach(input => input.addEventListener("change", () => { updateDepthGuidance(); updateUploadWorkflow(); }));
+form.querySelectorAll('input[name="workflow_type"]').forEach(input => input.addEventListener("change", () => {
+  updateDepthGuidance();
+  updateUploadWorkflow();
+  if (fileInput.files?.[0]) scanGuidedChapterPlan();
+}));
 updateDepthGuidance();
 
 function selectedWorkflow() {
@@ -259,6 +270,112 @@ async function scanDocumentOutline() {
   }
 }
 
+function updateGuidedStartNote() {
+  if (!detectedGuidedUnits.length) {
+    guidedStartChapterNote.textContent = "";
+    return;
+  }
+  const selected = Number(guidedStartChapterSelect.value || detectedGuidedUnits[0]);
+  const startPosition = Math.max(0, detectedGuidedUnits.indexOf(selected));
+  const later = detectedGuidedUnits.slice(startPosition);
+  const earlier = detectedGuidedUnits.slice(0, startPosition);
+  guidedStartChapterNote.textContent = earlier.length
+    ? `The review will begin with Chapter ${selected} and continue through ${later.map(value => `Chapter ${value}`).join(", ")}. ${earlier.map(value => `Chapter ${value}`).join(", ")} will remain alignment context and will not receive new annotations in this run.`
+    : `The review will begin with Chapter ${selected}. Each completed annotated chapter will become the working copy for the next chapter.`;
+}
+
+function resetDetectedChapterPlan(message = "Upload a document to detect its chapters.") {
+  detectedGuidedUnits = [];
+  detectedGuidedTitles = {};
+  guidedStartChapterSelect.innerHTML = '<option value="0">Detect chapters first</option>';
+  guidedStartChapterSelect.disabled = true;
+  guidedStartChapterSelect.required = false;
+  chapterDetectionStatus.textContent = message;
+  guidedStartChapterNote.textContent = "";
+  detectedChapterCard.classList.add("hidden");
+}
+
+function renderDetectedChapterPlan(outline) {
+  detectedGuidedUnits = (outline.guided_chapters || [])
+    .map(value => Number(value))
+    .filter(value => Number.isInteger(value) && value > 0);
+  const selectedRangeEnd = Number(combinedChapterEnd.value || 0);
+  if (selectedScope() === "chapter_range" && selectedRangeEnd) {
+    detectedGuidedUnits = detectedGuidedUnits.filter(value => value <= selectedRangeEnd);
+  }
+  detectedGuidedTitles = {};
+  (outline.chapters || []).forEach(chapter => {
+    const number = Number(chapter.chapter_number || 0);
+    if (number) detectedGuidedTitles[number] = chapter.chapter_title || chapter.title || "";
+  });
+
+  if (detectedGuidedUnits.length <= 1) {
+    const onlyChapter = detectedGuidedUnits[0];
+    if (onlyChapter && !chapterSelect.value) chapterSelect.value = String(onlyChapter);
+    resetDetectedChapterPlan(
+      onlyChapter
+        ? `One genuine chapter was detected, Chapter ${onlyChapter}.`
+        : "No reliable multi-chapter structure was detected. Use the chapter selection above."
+    );
+    updateUploadWorkflow();
+    return;
+  }
+
+  const preferred = Number(guidedStartChapterSelect.value || chapterSelect.value || detectedGuidedUnits[0]);
+  guidedStartChapterSelect.innerHTML = "";
+  detectedGuidedUnits.forEach(number => {
+    const option = document.createElement("option");
+    option.value = String(number);
+    const title = String(detectedGuidedTitles[number] || "").trim();
+    option.textContent = title
+      ? `Chapter ${number}: ${title.replace(/^chapter\s+\w+\s*[:\-–]?\s*/i, "")}`
+      : `Chapter ${number}`;
+    guidedStartChapterSelect.appendChild(option);
+  });
+  guidedStartChapterSelect.value = String(
+    detectedGuidedUnits.includes(preferred) ? preferred : detectedGuidedUnits[0]
+  );
+  guidedStartChapterSelect.disabled = false;
+  guidedStartChapterSelect.required = true;
+  chapterSelect.value = guidedStartChapterSelect.value;
+  chapterDetectionStatus.textContent = `${detectedGuidedUnits.length} genuine chapters detected. Table of contents and preliminary pages were excluded.`;
+  detectedChapterCard.classList.remove("hidden");
+  updateGuidedStartNote();
+  updateUploadWorkflow();
+}
+
+async function scanGuidedChapterPlan() {
+  const file = fileInput.files?.[0];
+  const requestNumber = ++chapterDetectionRequest;
+  if (!file || selectedWorkflow() === "external_assessment") {
+    resetDetectedChapterPlan();
+    return;
+  }
+
+  detectedChapterCard.classList.remove("hidden");
+  chapterDetectionStatus.textContent = "Reading the uploaded document and identifying genuine chapter headings…";
+  guidedStartChapterNote.textContent = "";
+  guidedStartChapterSelect.disabled = true;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("selected_chapter", "0");
+    body.append("csrf_token", form.querySelector('input[name="csrf_token"]')?.value || "");
+    const response = await fetch("/api/review/outline", {
+      method: "POST",
+      body,
+      headers: { "Accept": "application/json" },
+    });
+    const outline = await readJsonSafely(response);
+    if (requestNumber !== chapterDetectionRequest) return;
+    renderDetectedChapterPlan(outline);
+  } catch (error) {
+    if (requestNumber !== chapterDetectionRequest) return;
+    resetDetectedChapterPlan(error.message || "The chapter structure could not be detected.");
+    showFormError(error.message || "The chapter structure could not be detected.", detectedChapterCard);
+  }
+}
+
 function updatePhdChapterOptions() {
   const isPhd = academicLevelSelect.value === "PhD";
   [...phdChapterOptions, ...phdRangeOptions].forEach(option => {
@@ -328,27 +445,32 @@ function updateUploadWorkflow() {
     }
   }
 
-  chapterField.classList.toggle("hidden", external || fullThesis || combined);
-  chapterSelect.required = !external && !fullThesis && !combined;
+  const detectedGuidedReview = !external && detectedGuidedUnits.length > 1;
+  chapterField.classList.toggle("hidden", external || fullThesis || combined || detectedGuidedReview);
+  chapterSelect.required = !external && !fullThesis && !combined && !detectedGuidedReview;
   chapterSelect.disabled = external || fullThesis || combined;
 
-  combinedChapterField.classList.toggle("hidden", external || !combined);
-  combinedChapterEnd.required = combined;
+  detectedChapterCard.classList.toggle("hidden", !detectedGuidedReview);
+  guidedStartChapterSelect.disabled = !detectedGuidedReview;
+  guidedStartChapterSelect.required = detectedGuidedReview;
+
+  combinedChapterField.classList.toggle("hidden", external || !combined || detectedGuidedReview);
+  combinedChapterEnd.required = combined && !detectedGuidedReview;
   if (external) combinedChapterEnd.required = false;
-  combinedChapterEnd.disabled = external || !combined;
+  combinedChapterEnd.disabled = external || !combined || detectedGuidedReview;
 
   documentTypeField.classList.toggle(
     "hidden",
-    external || fullThesis || combined || chapter !== 1
+    external || fullThesis || combined || detectedGuidedReview || chapter !== 1
   );
   previousChaptersField.classList.toggle(
     "hidden",
-    external || fullThesis || combined || chapter < 2
+    external || fullThesis || combined || detectedGuidedReview || chapter < 2
   );
   previousFilesInput.required = false;
   previousFilesInput.disabled = external || fullThesis || combined || chapter < 2;
 
-  const sectionScopeAvailable = !external && !fullThesis && !combined && chapter >= 1;
+  const sectionScopeAvailable = !external && !fullThesis && !combined && !detectedGuidedReview && chapter >= 1;
   sectionScopeCard.classList.toggle("hidden", !sectionScopeAvailable);
   form.querySelectorAll('input[name="section_scope_mode"]').forEach(input => {
     input.disabled = !sectionScopeAvailable;
@@ -419,9 +541,16 @@ function setFileNames(input, target, emptyText) {
 fileInput.addEventListener("change", () => {
   fileName.textContent = fileInput.files[0]?.name || "No file selected";
   resetSectionSelection("The file changed. Scan the chapter headings again before selecting sections.");
+  scanGuidedChapterPlan();
   if (selectedSectionScopeMode() === "selected_sections" && fileInput.files[0] && chapterSelect.value) {
     scanDocumentOutline();
   }
+});
+
+guidedStartChapterSelect.addEventListener("change", () => {
+  chapterSelect.value = guidedStartChapterSelect.value;
+  updateGuidedStartNote();
+  updateUploadWorkflow();
 });
 
 previousFilesInput.addEventListener("change", () => {
@@ -1161,11 +1290,11 @@ form.addEventListener("submit", async event => {
   const stage = selectedStage();
   const chapter = Number(chapterSelect.value || 0);
   const rangeEnd = Number(combinedChapterEnd.value || 0);
-  if (scope === "chapter" && !chapter) {
+  if (scope === "chapter" && !chapter && detectedGuidedUnits.length <= 1) {
     chapterSelect.focus();
     return;
   }
-  if (scope === "chapter_range" && !rangeEnd) {
+  if (scope === "chapter_range" && !rangeEnd && detectedGuidedUnits.length <= 1) {
     combinedChapterEnd.focus();
     return;
   }
