@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.2 cumulative annotations and post-upload chapter choice
+
+- Detect chapters automatically as soon as the supervisor uploads a document.
+- Let the supervisor choose which detected chapter starts the guided sequence.
+- Reuse the latest cumulative native Word-comment document as the next chapter's working copy.
+- Rebuild the final complete annotated thesis from the original upload and merged chapter findings to prevent duplicate comments.
+- Explain when earlier chapters are alignment context only because the supervisor chose a later starting chapter.
+
 ## 2.9.1 combined-chapter guided review fix
 
 - Apply guided chapter detection to every multi-chapter supervisory upload, including Combined chapters and uploads submitted while the form remains on Single chapter.
