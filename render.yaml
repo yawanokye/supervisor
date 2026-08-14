@@ -168,17 +168,17 @@ services:
       - key: OPENAI_EXTERNAL_ADJUDICATOR_MODEL
         value: gpt-5.6-terra
       - key: PRICE_OPENAI_LUNA_INPUT
-        value: "0.20"
+        value: "1.00"
       - key: PRICE_OPENAI_LUNA_CACHED_INPUT
-        value: "0.02"
+        value: "0.10"
       - key: PRICE_OPENAI_LUNA_OUTPUT
-        value: "1.20"
+        value: "6.00"
       - key: PRICE_OPENAI_TERRA_INPUT
-        value: "2.00"
+        value: "2.50"
       - key: PRICE_OPENAI_TERRA_CACHED_INPUT
-        value: "0.20"
+        value: "0.25"
       - key: PRICE_OPENAI_TERRA_OUTPUT
-        value: "12.00"
+        value: "15.00"
       - key: OPENAI_CLEANING_REASONING_EFFORT
         value: low
       - key: OPENAI_SECTION_ANALYSIS_REASONING_EFFORT
@@ -188,7 +188,7 @@ services:
       - key: OPENAI_EXPERT_REASONING_EFFORT
         value: high
       - key: OPENAI_FINAL_AUDIT_REASONING_EFFORT
-        value: xhigh
+        value: high
       - key: OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
         value: medium
       - key: OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT
@@ -320,6 +320,16 @@ services:
       - key: VPROF_COMMENT_DEPTH_FLOOR_ENABLED
         value: false
       - key: VPROF_SYSTEMATIC_COVERAGE_REVIEW
+        value: true
+      - key: VPROF_SELECTIVE_AI_REVIEW
+        value: true
+      - key: VPROF_BACHELORS_CLEAN_SAMPLE_RATE
+        value: 0.05
+      - key: VPROF_RESEARCH_MASTERS_CLEAN_SAMPLE_RATE
+        value: 0.10
+      - key: VPROF_DOCTORAL_CLEAN_SAMPLE_RATE
+        value: 0.15
+      - key: VPROF_QUANTITATIVE_FRAMEWORK_AUDIT
         value: true
       - key: VPROF_STUDENT_FRIENDLY_COMMENTS
         value: true

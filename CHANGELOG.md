@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.10.0 selective AI review and quantitative framework assurance
+
+- Added deterministic local preflight and risk-selected API coverage to reduce routine model calls without weakening the coverage ledger.
+- Kept all academically decisive sections, tables, statistical claims, figures and cross-section audits in the model-reviewed route.
+- Added degree-calibrated clean-passage quality sampling: 5% for Bachelor’s and non-research Master’s, 10% for Research Master’s/MPhil, and 15% for doctoral work.
+- Added a mandatory Terra-routed conceptual-framework audit for every detected quantitative study containing a framework.
+- Reconciles objectives, research questions, hypotheses, theories, construct roles, diagram paths, measurements, analysis models and results.
+- Records accessible Word drawing evidence and requires explicit manual visual verification when diagram pixels or arrowheads are not recoverable.
+- Preserves appropriate regression-class, generalized linear, multilevel, panel, time-series, SEM, PLS-SEM, mediation and moderation routes for effect estimation.
+- Updated GPT-5.6 Luna and Terra cost-accounting defaults to the current official prices and reserves routine `xhigh` effort for the hardest doctoral or adjudication work.
+
 ## 2.9.2 cumulative annotations and post-upload chapter choice
 
 - Detect chapters automatically as soon as the supervisor uploads a document.

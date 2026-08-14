@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.9.2
+# V-Professor Supervisory Review 2.10.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -10,7 +10,14 @@ The app rebuilds the study context from the current submission, uses earlier cha
 
 ## Final professional review controls
 
-Version 2.9.2 includes the following release controls:
+Version 2.10.0 includes the following release controls:
+
+- deterministic local preflight handles routine structure, navigation, low-risk prose and bookkeeping before paid model review;
+- Luna reviews risk-selected high-volume passages while Terra handles decisive research logic and final expert judgement;
+- all results tables and statistically sensitive passages remain model-reviewed;
+- every detected quantitative conceptual framework receives a mandatory expert alignment audit against the objectives, research questions, hypotheses, theory, variable roles, diagram, model specification and results;
+- effect estimation may use any justified regression-class, generalized linear, multilevel, panel, time-series, SEM, PLS-SEM, mediation or moderation model rather than being restricted to OLS;
+- low-risk clean-passage quality samples are 5% for Bachelor’s and non-research Master’s work, 10% for Research Master’s/MPhil, and 15% for doctoral work;
 
 - the uploaded document is scanned immediately and a detected-chapter picker lets the supervisor choose where the guided review starts;
 - every completed native Word-comment copy becomes the annotation base for the next chapter;
@@ -71,7 +78,7 @@ OPENAI_CLEANING_REASONING_EFFORT=low
 OPENAI_SECTION_ANALYSIS_REASONING_EFFORT=medium
 OPENAI_CHAPTER_REASONING_EFFORT=medium
 OPENAI_EXPERT_REASONING_EFFORT=high
-OPENAI_FINAL_AUDIT_REASONING_EFFORT=xhigh
+OPENAI_FINAL_AUDIT_REASONING_EFFORT=high
 OPENAI_NON_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=medium
 OPENAI_RESEARCH_MASTERS_AUDIT_REASONING_EFFORT=high
 OPENAI_PROFESSIONAL_DOCTORATE_AUDIT_REASONING_EFFORT=high
@@ -85,6 +92,11 @@ OPENAI_BACKGROUND_TIMEOUT_SECONDS=3600
 OPENAI_PROMPT_CACHE_ENABLED=true
 VPROF_FALLBACK_PROVIDER=none
 VPROF_PROVIDER_FAILOVER=false
+VPROF_SELECTIVE_AI_REVIEW=true
+VPROF_BACHELORS_CLEAN_SAMPLE_RATE=0.05
+VPROF_RESEARCH_MASTERS_CLEAN_SAMPLE_RATE=0.10
+VPROF_DOCTORAL_CLEAN_SAMPLE_RATE=0.15
+VPROF_QUANTITATIVE_FRAMEWORK_AUDIT=true
 ```
 
 ### DeepSeek Pro
@@ -139,10 +151,10 @@ Both services must use the same `DATABASE_URL`, provider selection and provider 
 
 The production defaults are tuned for 120 to 200-page work:
 
-- two thesis jobs per worker;
+- one thesis job per worker by default, with controlled packet concurrency;
 - three concurrent AI calls per thesis;
 - 24,000-character coverage requests with packet-level checkpoints;
-- Luna at low or medium effort for cleaning and high-volume coverage;
+- Luna at low or medium effort for cleaning and risk-selected high-volume coverage;
 - Terra at high effort for decisive methods, results and synthesis work;
 - Terra at `xhigh` for final PhD and external adjudication;
 - OpenAI background mode for `high`, `xhigh` and `max` requests;
