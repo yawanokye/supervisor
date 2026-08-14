@@ -425,6 +425,7 @@ def _partition_submission_for_review(
     filename: str,
     academic_level: str = "",
     combined_chapter_end: Optional[int] = None,
+    guided_sequence: bool = False,
 ) -> Dict[str, Any]:
     profile = detect_document_chapter_profile(paragraphs)
     detected = list(profile["detected_chapters"])
@@ -626,10 +627,23 @@ def _partition_submission_for_review(
     assigned_selected = [row for row in paragraphs if row.get("chapter_number") == selected_chapter]
     if assigned_selected:
         review_paragraphs = assigned_selected
-        embedded_context = [
-            dict(row) for row in paragraphs
-            if isinstance(row.get("chapter_number"), int) and row.get("chapter_number") != selected_chapter
-        ]
+        if guided_sequence:
+            # A guided supervisor turn sees only already-reviewed chapters and
+            # the shared reference list. Later chapters must not influence an
+            # earlier chapter's diagnosis.
+            embedded_context = [
+                dict(row) for row in paragraphs
+                if (
+                    isinstance(row.get("chapter_number"), int)
+                    and int(row.get("chapter_number")) < int(selected_chapter)
+                )
+                or row.get("is_reference_entry") is True
+            ]
+        else:
+            embedded_context = [
+                dict(row) for row in paragraphs
+                if isinstance(row.get("chapter_number"), int) and row.get("chapter_number") != selected_chapter
+            ]
     else:
         review_paragraphs = paragraphs
         embedded_context = []
@@ -675,6 +689,7 @@ def analyse(
     supervisor_comments_text: str = "",
     original_document: Optional[Dict[str, Any]] = None,
     institutional_profile: str = "generic",
+    guided_sequence: bool = False,
 ) -> Dict[str, Any]:
     uploaded_paragraphs = _tag_paragraphs(
         parse_document(file_bytes, filename),
@@ -703,6 +718,7 @@ def analyse(
         combined_chapter_end=(
             combined_chapter_end if combined_scope else None
         ),
+        guided_sequence=guided_sequence,
     )
     chapter_paragraphs = list(partition["review_paragraphs"])
     current_paragraphs, selected_section_scope = apply_selected_section_scope(
@@ -1057,6 +1073,7 @@ def analyse(
                 and not combined_scope
                 and len(uploaded_chapters) > 1
             ),
+            "guided_sequence": bool(guided_sequence),
             "combined_chapters_reviewed_together": combined_scope,
             "thesis_structure_mode": partition["structure_mode"],
             "thesis_structure_label": partition["structure_label"],
@@ -1146,4 +1163,3 @@ def analyse(
             "supervisor_comments": supervisor_comments,
         },
     }
-

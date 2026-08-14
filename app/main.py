@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -45,6 +46,17 @@ from .checkpointing import (
     stable_hash,
 )
 from .document_parser import clean_text, parse_document
+from .guided_review import (
+    guided_chapter_units,
+    merge_guided_reviews,
+    parse_json_list,
+    parse_review_id_map,
+    remember_chapter_review,
+    review_id_is_guided_child,
+    scoped_guided_payload,
+    should_use_guided_review,
+)
+from .human_comment_budget import apply_human_comment_budget
 from .external_assessment import (
     ExternalAssessmentValidationError,
     enrich_with_external_assessment,
@@ -87,7 +99,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.9.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -560,9 +572,7 @@ async def review_detail(review_id: str, request: Request, db: Session = Depends(
     user = _current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    record = db.query(ReviewRecord).filter(ReviewRecord.review_id == review_id).first()
-    if not record or (user.role != "admin" and record.lecturer_id != user.id):
-        raise HTTPException(status_code=404, detail="Review not found.")
+    record = _authorised_review_record(db, user, review_id)
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
     return templates.TemplateResponse(request, "review_detail.html", _template_context(request, user=user, record=record, review=review))
 
@@ -1131,8 +1141,13 @@ def _stage_last_activity(db: Session, record: ReviewRecord) -> Optional[datetime
         )
         .first()
     )
-    value = checkpoint.updated_at if checkpoint else (record.started_at or record.created_at)
-    return _normalise_db_datetime(value)
+    values = [
+        _normalise_db_datetime(checkpoint.updated_at) if checkpoint else None,
+        _normalise_db_datetime(record.last_heartbeat_at),
+        _normalise_db_datetime(record.started_at or record.created_at),
+    ]
+    values = [value for value in values if value is not None]
+    return max(values) if values else None
 
 
 def _is_stalled_record(db: Session, record: ReviewRecord) -> bool:
@@ -1147,6 +1162,7 @@ def _is_stalled_record(db: Session, record: ReviewRecord) -> bool:
 def _auto_resume_allowed_for(record: ReviewRecord) -> bool:
     return bool(
         AUTO_RESUME_JOBS
+        and record.status != "awaiting_continue"
         and record.payload_available
         and record.recoverable
         and int(record.resume_count or 0) < MAX_AUTO_RESUMES
@@ -1537,6 +1553,77 @@ async def _run_review_job(
     if not _claim_job(job_id, resumed=resumed):
         return
 
+    guided_units: List[int] = []
+    guided_current_index = 0
+    guided_mode = False
+    with SessionLocal() as guided_db:
+        guided_record = (
+            guided_db.query(ReviewRecord)
+            .filter(ReviewRecord.job_id == job_id)
+            .first()
+        )
+        if guided_record and guided_record.guided_mode:
+            guided_units = [
+                int(value) for value in parse_json_list(guided_record.guided_units_json)
+                if str(value).isdigit() and int(value) > 0
+            ]
+            guided_current_index = max(0, int(guided_record.guided_current_index or 0))
+            guided_mode = bool(guided_units)
+    # Upgrade retained jobs created by an earlier build. On the next worker
+    # start or manual recovery, a multi-chapter supervisory upload is converted
+    # to the guided sequence without requiring another upload.
+    if not guided_mode and payload.get("workflow_type") == "supervisory_review":
+        try:
+            detected_units = guided_chapter_units(
+                await asyncio.to_thread(
+                    parse_document,
+                    payload.get("data") or b"",
+                    str(payload.get("filename") or "uploaded-document"),
+                )
+            )
+        except Exception:
+            detected_units = []
+            logger.exception("Could not upgrade the retained review to guided chapter mode")
+        if len(detected_units) > 1:
+            guided_units = detected_units
+            guided_current_index = 0
+            guided_mode = True
+            with SessionLocal() as guided_db:
+                guided_record = (
+                    guided_db.query(ReviewRecord)
+                    .filter(ReviewRecord.job_id == job_id)
+                    .first()
+                )
+                if guided_record:
+                    guided_record.guided_mode = True
+                    guided_record.guided_current_index = 0
+                    guided_record.guided_total_units = len(guided_units)
+                    guided_record.guided_units_json = json.dumps(guided_units)
+                    guided_record.guided_review_ids_json = guided_record.guided_review_ids_json or "{}"
+                    guided_record.review_scope = "full_thesis"
+                    guided_record.selected_chapter = None
+                    guided_db.commit()
+    if guided_mode:
+        payload = scoped_guided_payload(
+            payload,
+            units=guided_units,
+            current_index=guided_current_index,
+        )
+    guided_chapter = int(payload.get("guided_current_chapter") or 0)
+    guided_position = guided_current_index + 1
+
+    def visible_stage_message(message: str) -> str:
+        if not guided_mode:
+            return message
+        lowered = clean_text(message).lower()
+        if lowered.startswith("reviewing coverage packet"):
+            message = "checking the next group of paragraphs and tables"
+        elif "systematic coverage units" in lowered:
+            message = "checking every paragraph and table in this chapter"
+        return (
+            f"Chapter {guided_chapter} of {len(guided_units)}: {message}"
+        )
+
     RUNNING_JOB_IDS.add(job_id)
     heartbeat_task = asyncio.create_task(_heartbeat_loop(job_id))
     document_hash = str(payload.get("document_hash") or "")
@@ -1557,7 +1644,12 @@ async def _run_review_job(
             "review_depth": payload.get("review_depth"),
         })
     )
-    checkpoints = CheckpointManager(job_id, document_hash)
+    checkpoint_job_id = (
+        f"{job_id}-chapter-{payload.get('guided_current_chapter')}"
+        if guided_mode
+        else job_id
+    )
+    checkpoints = CheckpointManager(checkpoint_job_id, document_hash)
     current_stage = "pipeline-start"
 
     try:
@@ -1570,9 +1662,9 @@ async def _run_review_job(
                 if resumed else 8
             ),
             message=(
-                "Resuming the review from its last saved checkpoint"
+                visible_stage_message("resuming from the last saved checkpoint")
                 if resumed
-                else "Reading and organising the study files"
+                else visible_stage_message("reading and organising this chapter")
             ),
             current_stage=current_stage,
             recoverable=True,
@@ -1661,6 +1753,7 @@ async def _run_review_job(
                     ],
                     original_document=payload["original_document"],
                     institutional_profile=payload.get("institutional_profile", "generic"),
+                    guided_sequence=guided_mode,
                 )
                 runtime_context = review.pop("_runtime_context", {})
                 checkpoints.save(
@@ -1698,9 +1791,14 @@ async def _run_review_job(
                 _job_update(
                     job_id,
                     progress=display_value,
-                    message=message,
+                    message=visible_stage_message(message),
                     current_stage=current_stage,
                     checkpoint_count=checkpoints.completed_count(),
+                    guided_mode=guided_mode,
+                    guided_units=guided_units,
+                    guided_current_index=guided_current_index,
+                    guided_current_chapter=guided_chapter or None,
+                    guided_total_units=len(guided_units),
                 )
 
             academic_hash = stable_hash({
@@ -1822,6 +1920,8 @@ async def _run_review_job(
                     review, runtime_context, document_hash=document_hash
                 )
                 review = attach_canonical_findings(review)
+                review.setdefault("summary", {})["review_depth"] = payload["review_depth"]
+                review = apply_human_comment_budget(review)
                 review = attach_supervisory_readiness(review)
 
             usage_snapshot = dict(review.get("ai_review") or {})
@@ -1858,6 +1958,11 @@ async def _run_review_job(
                 "checkpoint_count": checkpoints.completed_count(),
                 "resumed_job": resumed,
                 "partial_report_generated": False,
+                "guided_review": guided_mode,
+                "guided_current_index": guided_current_index,
+                "guided_total_units": len(guided_units),
+                "guided_current_chapter": payload.get("guided_current_chapter"),
+                "guided_is_last": bool(payload.get("guided_is_last")),
             })
             checkpoints.save(
                 "pipeline-final",
@@ -1865,6 +1970,53 @@ async def _run_review_job(
                 input_hash=final_hash,
                 progress=97,
                 message="Final review data assembled",
+            )
+
+        chapter_review_id = review.get("review_id")
+        if guided_mode and payload.get("guided_is_last"):
+            # Preserve the final chapter as its own downloadable report before
+            # assembling the complete-thesis result.
+            if chapter_review_id:
+                REVIEW_CACHE[chapter_review_id] = review
+                await asyncio.to_thread(save_review_json, chapter_review_id, review)
+            with SessionLocal() as guided_db:
+                guided_record = (
+                    guided_db.query(ReviewRecord)
+                    .filter(ReviewRecord.job_id == job_id)
+                    .first()
+                )
+                guided_ids = parse_review_id_map(
+                    guided_record.guided_review_ids_json if guided_record else None
+                )
+            previous_reviews: List[Dict[str, Any]] = []
+            for chapter in guided_units[:guided_current_index]:
+                previous_id = guided_ids.get(str(chapter))
+                previous = (
+                    REVIEW_CACHE.get(previous_id)
+                    or (load_review_json(previous_id) if previous_id else None)
+                )
+                if previous:
+                    previous_reviews.append(previous)
+            review = merge_guided_reviews(
+                [*previous_reviews, review],
+                filename=str(payload.get("filename") or ""),
+            )
+            review = attach_canonical_findings(review)
+            review.setdefault("summary", {})["review_depth"] = payload["review_depth"]
+            review = apply_human_comment_budget(review)
+            review = attach_supervisory_readiness(review)
+            merged_actionable = [
+                row for row in (review.get("canonical_findings") or [])
+                if row.get("status") in {
+                    "partly_meets_requirement",
+                    "does_not_meet_requirement",
+                    "manual_review_required",
+                }
+                and row.get("annotation_eligible") is not False
+            ]
+            review.setdefault("summary", {})["annotated_document_available"] = bool(
+                str(payload.get("filename") or "").lower().endswith(".docx")
+                and merged_actionable
             )
 
         if reviewer_name:
@@ -1958,6 +2110,63 @@ async def _run_review_job(
             review,
         )
 
+        if guided_mode and not payload.get("guided_is_last"):
+            current_chapter = int(payload.get("guided_current_chapter") or guided_units[guided_current_index])
+            next_chapter = int(guided_units[guided_current_index + 1])
+            review.setdefault("summary", {}).update({
+                "guided_next_chapter": next_chapter,
+                "guided_continue_required": True,
+            })
+            REVIEW_CACHE[review["review_id"]] = review
+            await asyncio.to_thread(save_review_json, review["review_id"], review)
+            with SessionLocal() as db:
+                record = (
+                    db.query(ReviewRecord)
+                    .filter(ReviewRecord.job_id == job_id)
+                    .first()
+                )
+                if record:
+                    mapping = remember_chapter_review(
+                        parse_review_id_map(record.guided_review_ids_json),
+                        chapter=current_chapter,
+                        review_id=review["review_id"],
+                    )
+                    record.guided_review_ids_json = json.dumps(mapping)
+                    record.guided_tokens_used = int(record.guided_tokens_used or 0) + usage_token_total(usage_snapshot)
+                    record.tokens_used = int(record.guided_tokens_used or 0)
+                    record.review_id = review["review_id"]
+                    record.status = "awaiting_continue"
+                    record.progress = 100
+                    record.message = f"Chapter {current_chapter} review complete. Continue to Chapter {next_chapter}."
+                    record.current_stage = "awaiting-user"
+                    record.checkpoint_count = checkpoints.completed_count()
+                    record.recoverable = True
+                    record.overall_score = float((review.get("summary") or {}).get("overall_score") or 0)
+                    record.readiness_label = (review.get("summary") or {}).get("readiness_label")
+                    record.annotated_available = bool((review.get("summary") or {}).get("annotated_document_available"))
+                    record.completed_at = None
+                    record.lease_owner = None
+                    record.lease_expires_at = None
+                    db.commit()
+            _job_update(
+                job_id,
+                status="awaiting_continue",
+                progress=100,
+                message=f"Chapter {current_chapter} review complete. Continue to Chapter {next_chapter}.",
+                current_stage="awaiting-user",
+                checkpoint_count=checkpoints.completed_count(),
+                recoverable=True,
+                review_id=review["review_id"],
+                result_url=f'/api/review/{review["review_id"]}',
+                continue_url=f"/api/review/jobs/{job_id}/continue",
+                guided_mode=True,
+                guided_current_index=guided_current_index,
+                guided_total_units=len(guided_units),
+                guided_current_chapter=current_chapter,
+                guided_next_chapter=next_chapter,
+            )
+            return
+
         with SessionLocal() as db:
             record = (
                 db.query(ReviewRecord)
@@ -1966,6 +2175,16 @@ async def _run_review_job(
             )
             if record:
                 summary = review.get("summary") or {}
+                if guided_mode:
+                    current_chapter = int(payload.get("guided_current_chapter") or guided_units[guided_current_index])
+                    mapping = remember_chapter_review(
+                        parse_review_id_map(record.guided_review_ids_json),
+                        chapter=current_chapter,
+                        review_id=str(chapter_review_id or review["review_id"]),
+                    )
+                    record.guided_review_ids_json = json.dumps(mapping)
+                    record.guided_tokens_used = int(record.guided_tokens_used or 0) + usage_token_total(usage_snapshot)
+                    record.tokens_used = int(record.guided_tokens_used or 0)
                 record.review_id = review["review_id"]
                 record.status = "completed"
                 record.progress = 100
@@ -1998,7 +2217,11 @@ async def _run_review_job(
                         db,
                         record=record,
                         user=accounting_user,
-                        actual_tokens=usage_token_total(effective_usage),
+                        actual_tokens=(
+                            int(record.guided_tokens_used or 0)
+                            if guided_mode
+                            else usage_token_total(effective_usage)
+                        ),
                     )
                 db.commit()
 
@@ -2173,6 +2396,8 @@ async def review_outline(
                 for row in paragraphs
             ]
         outline = build_document_outline(paragraphs)
+        outline["guided_chapters"] = guided_chapter_units(paragraphs)
+        outline["contains_multiple_chapters"] = len(outline["guided_chapters"]) > 1
     except Exception as exc:
         logger.exception("Could not scan the document outline")
         raise HTTPException(
@@ -2291,7 +2516,7 @@ async def create_review(
         )
     phd_structure = clean_text(academic_level).lower() in {"phd", "dphil"} or "doctor of philosophy" in clean_text(academic_level).lower()
     maximum_chapter = 20 if phd_structure else 5
-    if review_scope == "chapter_range" and not (2 <= combined_chapter_end <= maximum_chapter):
+    if review_scope == "chapter_range" and combined_chapter_end and not (2 <= combined_chapter_end <= maximum_chapter):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -2300,7 +2525,7 @@ async def create_review(
                 else "Choose Chapters 1–2, 1–3, 1–4 or 1–5."
             ),
         )
-    if review_scope == "chapter" and not (1 <= selected_chapter <= maximum_chapter):
+    if review_scope == "chapter" and selected_chapter and not (1 <= selected_chapter <= maximum_chapter):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -2313,6 +2538,63 @@ async def create_review(
         raise HTTPException(status_code=400, detail="Choose Generic degree-appropriate or UCC structure guidance.")
     filename = file.filename or "uploaded-document"
     data = await _read_upload(file, "The chapter or thesis file")
+    submitted_review_scope = review_scope
+
+    # The file determines the workflow. If a supervisory upload contains more
+    # than one genuine chapter, always review it as a guided sequence even when
+    # the form was left on Single chapter or Combined chapters.
+    guided_units: List[int] = []
+    guided_mode = False
+    if workflow_type == "supervisory_review":
+        try:
+            structural_rows = await asyncio.to_thread(parse_document, data, filename)
+            guided_units = guided_chapter_units(structural_rows)
+        except Exception as exc:
+            logger.exception("Could not build the guided thesis chapter plan")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The chapter structure could not be read reliably. Use clear chapter headings "
+                    "and upload a valid DOCX or text-based PDF."
+                ),
+            ) from exc
+        guided_mode = should_use_guided_review(
+            workflow_type=workflow_type,
+            review_scope=review_scope,
+            units=guided_units,
+        )
+        if guided_mode:
+            review_scope = "full_thesis"
+            selected_chapter = 0
+            combined_chapter_end = 0
+            document_type = "full_thesis"
+            section_scope_mode = "whole_chapter"
+            selected_sections = []
+
+    if not guided_mode and review_scope == "chapter" and not (1 <= selected_chapter <= maximum_chapter):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "For a PhD chapter review, choose a chapter number between 1 and 20."
+                if phd_structure
+                else "Choose Chapter 1, 2, 3, 4 or 5."
+            ),
+        )
+    if not guided_mode and review_scope == "chapter_range" and not (2 <= combined_chapter_end <= maximum_chapter):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "For a PhD combined review, choose an ending chapter between 2 and 20."
+                if phd_structure
+                else "Choose Chapters 1–2, 1–3, 1–4 or 1–5."
+            ),
+        )
+
+    initial_message = (
+        f"Detected {len(guided_units)} chapters. Chapter {guided_units[0]} of {len(guided_units)} queued for review."
+        if guided_mode
+        else "Review queued and safely saved"
+    )
 
     context_uploads = [
         item for item in (previous_files or [])
@@ -2430,6 +2712,10 @@ async def create_review(
         "estimated_pages": estimated_pages,
         "token_estimate": token_plan.reserved_tokens,
         "token_reserved": token_reserved,
+        "guided_mode": guided_mode,
+        "guided_units": guided_units,
+        "guided_current_index": 0,
+        "original_review_scope": submitted_review_scope,
     }
     try:
         manifest = save_job_payload(job_id, payload)
@@ -2469,7 +2755,7 @@ async def create_review(
         ),
         status="queued",
         progress=2,
-        message="Review queued and safely saved",
+        message=initial_message,
         document_hash=manifest["document_hash"],
         current_stage="queued",
         checkpoint_count=0,
@@ -2479,6 +2765,12 @@ async def create_review(
         token_estimate=token_plan.reserved_tokens,
         token_reserved=(token_plan.reserved_tokens if token_reserved else 0),
         token_accounting_status=("reserved" if token_reserved else "unmetered"),
+        guided_mode=guided_mode,
+        guided_current_index=0,
+        guided_total_units=(len(guided_units) if guided_mode else 0),
+        guided_units_json=(json.dumps(guided_units) if guided_mode else None),
+        guided_review_ids_json=("{}" if guided_mode else None),
+        guided_tokens_used=0,
     )
     db.add(record)
     db.commit()
@@ -2488,25 +2780,33 @@ async def create_review(
         "user_id": user.id,
         "status": "queued",
         "progress": 2,
-        "message": "Review queued and safely saved",
+        "message": initial_message,
         "current_stage": "queued",
         "checkpoint_count": 0,
         "recoverable": True,
         "created_at": time.time(),
         "updated_at": time.time(),
         "resume_url": f"/api/review/jobs/{job_id}/resume",
+        "guided_mode": guided_mode,
+        "guided_current_index": 0,
+        "guided_total_units": len(guided_units) if guided_mode else 0,
+        "guided_units": guided_units,
     }
     _schedule_review_job(job_id, payload, resumed=False)
     return {
         "job_id": job_id,
         "status": "queued",
         "progress": 2,
-        "message": "Review queued and safely saved",
+        "message": initial_message,
         "poll_url": f"/api/review/jobs/{job_id}",
         "resume_url": f"/api/review/jobs/{job_id}/resume",
         "stop_url": f"/api/review/jobs/{job_id}/stop",
         "estimated_pages": estimated_pages,
         "reserved_tokens": token_plan.reserved_tokens if token_reserved else 0,
+        "guided_mode": guided_mode,
+        "guided_current_index": 0,
+        "guided_total_units": len(guided_units) if guided_mode else 0,
+        "guided_units": guided_units,
     }
 
 
@@ -2676,6 +2976,61 @@ async def recover_stalled_review_job(
     }
 
 
+@app.post("/api/review/jobs/{job_id}/continue", status_code=202)
+async def continue_guided_review_job(
+    job_id: str,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Start the next saved chapter only after the supervisor requests it."""
+    _verify_csrf(request, csrf_token)
+    user = _current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+    record = db.query(ReviewRecord).filter(ReviewRecord.job_id == job_id).first()
+    if not record or (user.role != "admin" and record.lecturer_id != user.id):
+        raise HTTPException(status_code=404, detail="Review job not found.")
+    if not record.guided_mode:
+        raise HTTPException(status_code=409, detail="This review is not a guided chapter review.")
+    if record.status != "awaiting_continue":
+        raise HTTPException(status_code=409, detail="The current chapter must finish before the next chapter can start.")
+    units = [
+        int(value) for value in parse_json_list(record.guided_units_json)
+        if str(value).isdigit() and int(value) > 0
+    ]
+    next_index = int(record.guided_current_index or 0) + 1
+    if next_index >= len(units):
+        raise HTTPException(status_code=409, detail="Every detected chapter has already been reviewed.")
+    next_chapter = units[next_index]
+    record.guided_current_index = next_index
+    record.status = "queued"
+    record.progress = 2
+    record.message = f"Chapter {next_chapter} queued for review"
+    record.current_stage = f"chapter-{next_chapter}-queued"
+    record.error = None
+    record.recoverable = True
+    record.completed_at = None
+    db.commit()
+    JOB_CACHE.pop(job_id, None)
+    scheduled = _schedule_review_job(job_id, resumed=False)
+    response = {
+        "job_id": job_id,
+        "status": "queued" if scheduled else record.status,
+        "progress": 2,
+        "message": record.message,
+        "poll_url": f"/api/review/jobs/{job_id}",
+        "guided_mode": True,
+        "guided_current_index": next_index,
+        "guided_total_units": len(units),
+        "guided_current_chapter": next_chapter,
+    }
+    if "text/html" in request.headers.get("accept", ""):
+        _set_flash(request, f"Chapter {next_chapter} has been queued for review.", "success")
+        return RedirectResponse("/portal", status_code=303)
+    return response
+
+
 @app.post("/api/review/jobs/{job_id}/resume", status_code=202)
 async def resume_review_job(
     job_id: str,
@@ -2696,6 +3051,16 @@ async def resume_review_job(
         user.role != "admin" and record.lecturer_id != user.id
     ):
         raise HTTPException(status_code=404, detail="Review job not found.")
+    if record.status == "awaiting_continue" and record.guided_mode:
+        return {
+            "job_id": job_id,
+            "status": "awaiting_continue",
+            "progress": 100,
+            "message": record.message,
+            "review_id": record.review_id,
+            "result_url": f"/api/review/{record.review_id}" if record.review_id else None,
+            "continue_url": f"/api/review/jobs/{job_id}/continue",
+        }
     if record.status == "completed":
         completed_review = (
             REVIEW_CACHE.get(record.review_id)
@@ -2855,6 +3220,20 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
         })
         timing = _review_time_estimate(record)
         response.update(timing)
+        if record.guided_mode:
+            units = [int(value) for value in parse_json_list(record.guided_units_json) if str(value).isdigit()]
+            current_index = max(0, int(record.guided_current_index or 0))
+            response.update({
+                "guided_mode": True,
+                "guided_units": units,
+                "guided_current_index": current_index,
+                "guided_total_units": len(units),
+                "guided_current_chapter": units[current_index] if units and current_index < len(units) else None,
+                "guided_completed_units": len(parse_review_id_map(record.guided_review_ids_json)),
+            })
+            if record.status == "awaiting_continue":
+                response["continue_url"] = f"/api/review/jobs/{job_id}/continue"
+                response["result_url"] = f"/api/review/{record.review_id}" if record.review_id else None
         if response.get("status") == "completed" and response.get("review_id"):
             response.setdefault(
                 "result_url",
@@ -2897,6 +3276,20 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
     }
     timing = _review_time_estimate(record)
     response.update(timing)
+    if record.guided_mode:
+        units = [int(value) for value in parse_json_list(record.guided_units_json) if str(value).isdigit()]
+        current_index = max(0, int(record.guided_current_index or 0))
+        response.update({
+            "guided_mode": True,
+            "guided_units": units,
+            "guided_current_index": current_index,
+            "guided_total_units": len(units),
+            "guided_current_chapter": units[current_index] if units and current_index < len(units) else None,
+            "guided_completed_units": len(parse_review_id_map(record.guided_review_ids_json)),
+        })
+        if record.status == "awaiting_continue":
+            response["continue_url"] = f"/api/review/jobs/{job_id}/continue"
+            response["result_url"] = f"/api/review/{record.review_id}" if record.review_id else None
     if record.status == "completed" and record.review_id:
         response["result_url"] = f"/api/review/{record.review_id}"
     elif (
@@ -2914,9 +3307,7 @@ async def get_review(review_id: str, request: Request, db: Session = Depends(get
     user = _current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in to continue.")
-    record = db.query(ReviewRecord).filter(ReviewRecord.review_id == review_id).first()
-    if not record or (user.role != "admin" and record.lecturer_id != user.id):
-        raise HTTPException(status_code=404, detail="Review not found.")
+    record = _authorised_review_record(db, user, review_id)
     review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review result not found or expired.")
@@ -2928,6 +3319,14 @@ async def get_review(review_id: str, request: Request, db: Session = Depends(get
 
 def _authorised_review_record(db: Session, user: User, review_id: str) -> ReviewRecord:
     record = db.query(ReviewRecord).filter(ReviewRecord.review_id == review_id).first()
+    if not record:
+        candidates = db.query(ReviewRecord).filter(ReviewRecord.guided_mode.is_(True))
+        if user.role != "admin":
+            candidates = candidates.filter(ReviewRecord.lecturer_id == user.id)
+        for candidate in candidates.all():
+            if review_id_is_guided_child(candidate.guided_review_ids_json, review_id):
+                record = candidate
+                break
     if not record or (user.role != "admin" and record.lecturer_id != user.id):
         raise HTTPException(status_code=404, detail="Review not found.")
     return record

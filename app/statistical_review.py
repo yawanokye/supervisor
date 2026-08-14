@@ -864,16 +864,38 @@ def audit_analysis_appropriateness(paragraphs: Sequence[Dict[str, Any]]) -> List
     objectives = [row for row in paragraphs if any(term in normalised(source_section(row)) for term in ("objective", "research question", "hypoth"))]
     results_anchor = _first_row(paragraphs, r"results|findings|analysis")
 
-    if any(term in text for term in ("cross sectional", "cross-sectional")) and any(term in text for term in ("causal effect", "causes", "caused", "determine the effect", "impact of")):
-        anchor = next((row for row in objectives if any(term in normalised(row.get("text", "")) for term in ("effect", "impact", "cause"))), results_anchor)
+    regression_class_model = any(term in text for term in (
+        "regression", "ordinary least squares", " ols ", "logistic regression",
+        "probit", "poisson", "negative binomial", "multilevel model",
+        "hierarchical model", "fixed effects", "random effects", "panel model",
+        "structural equation", " sem ", "pls sem", "smartpls", "path model",
+        "mediation", "moderation", "marginal effect",
+    ))
+    explicit_causal_claim = any(term in text for term in (
+        "causal effect", "causes", "caused", "causing", "led to", "leads to",
+        "resulted in", "results in", "produced the change", "because of the intervention",
+    ))
+    if any(term in text for term in ("cross sectional", "cross-sectional")) and explicit_causal_claim:
+        anchor = next(
+            (row for row in objectives if any(term in normalised(row.get("text", "")) for term in ("effect", "impact", "cause"))),
+            results_anchor or (paragraphs[0] if paragraphs else None),
+        )
         if anchor:
             warnings.append(_warning(
                 "causal_language_exceeds_design",
-                "The study uses causal language even though the stated cross-sectional design can ordinarily establish association or prediction rather than causation.",
+                "The study makes an explicit causal claim even though the stated cross-sectional design does not by itself establish causation.",
                 anchor,
                 verification="inappropriate analysis or interpretation",
-                action="Use associational or predictive wording unless the study includes and justifies a credible causal identification strategy.",
-                example="Write ‘is associated with’ or ‘significantly predicts’ instead of ‘causes’ or ‘has an effect on’ for an ordinary cross-sectional survey.",
+                action=(
+                    "Report the result as an estimated, direct, indirect, total, marginal or conditional effect within the fitted model, and reserve ‘causes’, ‘led to’ or equivalent causal language for a justified causal identification strategy."
+                    if regression_class_model
+                    else "Use associational wording unless the study estimates an appropriate regression-class model or justifies a credible causal identification strategy."
+                ),
+                example=(
+                    "‘X had a positive estimated effect on Y in the regression model’ is acceptable when it matches the coefficient. ‘X caused Y’ requires stronger identification."
+                    if regression_class_model
+                    else "Write ‘is associated with’ when the reported statistic is only a correlation."
+                ),
             ))
 
     # Objectives about levels or extent require descriptive evidence.

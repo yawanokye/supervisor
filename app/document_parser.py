@@ -886,6 +886,35 @@ def _heading_level(text: str, style_name: str = "") -> int:
 BACK_MATTER_HEADINGS = {"references", "reference list", "bibliography", "appendix", "appendices"}
 REFERENCE_HEADINGS = {"references", "reference list", "bibliography"}
 APPENDIX_HEADINGS = {"appendix", "appendices"}
+TOC_HEADINGS = {"table of contents", "contents"}
+LIST_OF_TABLES_HEADINGS = {"list of tables"}
+LIST_OF_FIGURES_HEADINGS = {"list of figures", "list of illustrations"}
+ACRONYM_HEADINGS = {"acronyms", "list of acronyms", "abbreviations", "list of abbreviations"}
+
+
+def _document_zone(
+    current: str,
+    low_text: str,
+    *,
+    heading: bool,
+    chapter: Optional[int],
+) -> str:
+    """Track the semantic document zone independently of Word heading styles."""
+    if chapter is not None:
+        return "main_work"
+    if low_text in REFERENCE_HEADINGS:
+        return "references"
+    if low_text in APPENDIX_HEADINGS:
+        return "appendices"
+    if heading and low_text in TOC_HEADINGS:
+        return "table_of_contents"
+    if heading and low_text in LIST_OF_TABLES_HEADINGS:
+        return "list_of_tables"
+    if heading and low_text in LIST_OF_FIGURES_HEADINGS:
+        return "list_of_figures"
+    if heading and low_text in ACRONYM_HEADINGS:
+        return "acronyms"
+    return current
 
 
 def _section_path(stack: Dict[int, str]) -> List[str]:
@@ -990,6 +1019,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
     in_references = False
     in_keywords = False
     in_appendix = False
+    current_zone = "preliminary_pages"
 
     for block in _iter_docx_blocks(doc):
         if Table is not None and isinstance(block, Table):
@@ -1029,6 +1059,8 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                     "section_number": None,
                     "section_number_chapter": None,
                     "chapter_detection_basis": "inherited" if current_chapter else "unassigned",
+                    "document_zone": current_zone,
+                    "is_reference_entry": current_zone == "references",
                     "is_toc_entry": False,
                     "style": "Table",
                     "source_kind": "table_row",
@@ -1051,7 +1083,15 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
         raw_heading = is_heading(text, style_name)
         toc_entry = is_probable_toc_entry(text, style_name)
         low_text = normalised(text)
-        raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+        inside_navigation = (
+            current_zone in {"table_of_contents", "list_of_tables", "list_of_figures"}
+            and not bool(re.search(r"\bheading\s*1\b", style_name, flags=re.I))
+        )
+        raw_marker = (
+            explicit_chapter_marker(text)
+            if raw_heading and not toc_entry and not inside_navigation
+            else None
+        )
         if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
             in_references = True
             in_keywords = False
@@ -1078,16 +1118,22 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 style_name=style_name,
                 current_chapter=current_chapter,
             )
-            if heading and not toc_entry and not in_appendix
+            if heading and not toc_entry and not in_appendix and not inside_navigation
             else None
         )
         section_number = (
-            section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
+            section_number_from_heading(text) if heading and not toc_entry and not in_appendix and not inside_navigation else None
         )
         section_chapter = (
             chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
         )
         chapter = marker or title_chapter or section_chapter
+        current_zone = _document_zone(
+            current_zone,
+            low_text,
+            heading=bool(raw_heading and not toc_entry),
+            chapter=chapter,
+        )
         if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
             current_chapter = None
             heading_stack = {}
@@ -1132,6 +1178,8 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 else "unassigned"
             ),
             "is_toc_entry": toc_entry,
+            "document_zone": current_zone,
+            "is_reference_entry": current_zone == "references",
             "style": style_name,
             "source_kind": "table_caption" if caption else "paragraph",
             "table_index": None,
@@ -1153,6 +1201,10 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
     current_chapter = None
     heading_stack: Dict[int, str] = {}
     global_paragraph = 0
+    in_references = False
+    in_keywords = False
+    in_appendix = False
+    current_zone = "preliminary_pages"
     for page_index in range(len(doc)):
         page = doc[page_index]
         blocks = sorted(page.get_text("blocks"), key=lambda block: (round(block[1], 1), round(block[0], 1)))
@@ -1170,7 +1222,14 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                 raw_heading = is_heading(text)
                 toc_entry = is_probable_toc_entry(text)
                 low_text = normalised(text)
-                raw_marker = explicit_chapter_marker(text) if raw_heading and not toc_entry else None
+                inside_navigation = current_zone in {
+                    "table_of_contents", "list_of_tables", "list_of_figures"
+                }
+                raw_marker = (
+                    explicit_chapter_marker(text)
+                    if raw_heading and not toc_entry and not inside_navigation
+                    else None
+                )
                 if raw_heading and not toc_entry and low_text in REFERENCE_HEADINGS:
                     in_references = True
                     in_keywords = False
@@ -1196,16 +1255,22 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                         text,
                         current_chapter=current_chapter,
                     )
-                    if heading and not toc_entry and not in_appendix
+                    if heading and not toc_entry and not in_appendix and not inside_navigation
                     else None
                 )
                 section_number = (
-                    section_number_from_heading(text) if heading and not toc_entry and not in_appendix else None
+                    section_number_from_heading(text) if heading and not toc_entry and not in_appendix and not inside_navigation else None
                 )
                 section_chapter = (
                     chapter_from_section_number(text) if heading and not toc_entry and not in_appendix else None
                 )
                 chapter = marker or title_chapter or section_chapter
+                current_zone = _document_zone(
+                    current_zone,
+                    low_text,
+                    heading=bool(raw_heading and not toc_entry),
+                    chapter=chapter,
+                )
                 if heading and not toc_entry and low_text in BACK_MATTER_HEADINGS:
                     current_chapter = None
                     heading_stack = {}
@@ -1240,6 +1305,8 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                         else "unassigned"
                     ),
                     "is_toc_entry": toc_entry,
+                    "document_zone": current_zone,
+                    "is_reference_entry": current_zone == "references",
                     "style": "",
                     "source_kind": "table_caption" if caption else "pdf_block",
                     "table_index": None,
