@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.9.1 combined-chapter guided review fix
+
+- Apply guided chapter detection to every multi-chapter supervisory upload, including Combined chapters and uploads submitted while the form remains on Single chapter.
+- Automatically migrate resumable multi-chapter jobs created by the previous build.
+- Show `Reviewing Chapter N` and `Chapter X of Y` during processing.
+- Replace internal “coverage packet” progress terminology with plain supervisor-facing language.
+
 ## 2.9.0 guided human supervisory review
 
 - Reviews a complete thesis one chapter at a time and pauses after each chapter for an explicit user Continue action.

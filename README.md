@@ -1,4 +1,4 @@
-# V-Professor Supervisory Review 2.9.0
+# V-Professor Supervisory Review 2.9.1
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
 
@@ -10,7 +10,12 @@ The app rebuilds the study context from the current submission, uses earlier cha
 
 ## Final professional review controls
 
-Version 2.9.0 includes the following release controls:
+Version 2.9.1 includes the following release controls:
+
+- every supervisory upload containing multiple detected chapters now enters the guided chapter sequence, including uploads submitted as Combined chapters;
+- the live review screen names the current chapter and states that only that chapter is being reviewed;
+- retained multi-chapter jobs from earlier builds are upgraded to guided mode when resumed; and
+- internal coverage-packet wording is replaced by clear supervisor-facing progress messages.
 
 - complete theses are reviewed one chapter at a time, with an explicit supervisor-controlled Continue action between chapters;
 - each completed chapter report and annotated chapter remains available before the next chapter starts;
