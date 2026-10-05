@@ -149,6 +149,10 @@ def natural_supervisor_comment(
     facing rendering is flattened into fluent prose. This prevents Word comments
     from reading like database fields while preserving the corrective action.
     """
+    from .supervisory_voice import usable_narrative
+    narrative = usable_narrative(row)
+    if narrative and not compact:
+        return narrative
     issue = _clean(row.get("item") or row.get("issue_title"))
     assessment = _clean(row.get("assessment") or row.get("comment"))
     action = _direct_action(row.get("required_action"))
@@ -180,7 +184,7 @@ def natural_supervisor_comment(
     sentences: List[str] = []
     sentences.extend(_unique_sentences(opening_parts, limit=2))
     if action:
-        sentences.extend(_unique_sentences(_sentences(action)[:1], limit=1))
+        sentences.extend(_unique_sentences(_sentences(action)[:2], limit=2))
 
     if not compact and include_reason and reason and len(sentences) < 3:
         # Consequences are retained only when the diagnostic and action have not
@@ -201,7 +205,13 @@ def natural_supervisor_comment(
         if example:
             sentences.extend(_unique_sentences(["For example, " + example], limit=1))
 
-    return " ".join(_unique_sentences(sentences, limit=3))
+    result = _unique_sentences(sentences, limit=5)
+    # Action-first is useful for a straightforward editorial or reporting repair.
+    if str(row.get("category") or "") in {"academic_writing", "reference_integrity", "tables_figures_and_presentation"} and action:
+        action_sentences = _unique_sentences(_sentences(action)[:2], limit=2)
+        if result and not re.match(r"^(?:this|these|it|that)\b",result[0],re.I):
+            result = _unique_sentences(action_sentences + result,limit=5)
+    return " ".join(result)
 
 
 def natural_group_item(value: Any) -> str:

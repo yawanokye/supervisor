@@ -46,6 +46,11 @@ from .checkpointing import (
     stable_hash,
 )
 from .document_parser import clean_text, parse_document
+from .source_cache import parse_document_cached
+from .results_ledger import run_final_consistency_audit
+from .comment_prose_quality import polish_selected_comments
+from .supplementary_usage import append_usage
+from .provider_cancellation import cancel_retained_background_responses
 from .guided_review import (
     guided_start_index,
     guided_chapter_units,
@@ -101,7 +106,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.10.0"
+APP_VERSION = "2.11.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -1555,6 +1560,14 @@ async def _run_review_job(
     if not _claim_job(job_id, resumed=resumed):
         return
 
+    source_checkpoints = CheckpointManager(job_id, str(payload.get("document_hash") or stable_hash(payload.get("filename"))))
+    parsed_source = None
+    async def source_rows():
+        nonlocal parsed_source
+        if parsed_source is None:
+            parsed_source = await parse_document_cached(payload.get("data") or b"", str(payload.get("filename") or "uploaded-document"), source_checkpoints)
+        return parsed_source
+
     guided_units: List[int] = []
     guided_current_index = 0
     guided_mode = False
@@ -1577,11 +1590,7 @@ async def _run_review_job(
     if not guided_mode and payload.get("workflow_type") == "supervisory_review":
         try:
             detected_units = guided_chapter_units(
-                await asyncio.to_thread(
-                    parse_document,
-                    payload.get("data") or b"",
-                    str(payload.get("filename") or "uploaded-document"),
-                )
+                await source_rows()
             )
         except Exception:
             detected_units = []
@@ -1724,7 +1733,7 @@ async def _run_review_job(
         )
 
         final_hash = stable_hash({
-            "pipeline": "review-pipeline-v2.7.0-final-current-submission-isolated-reconciled",
+            "pipeline": "review-pipeline-v2.11.0-final-current-submission-isolated-reconciled",
             "payload_hash": payload_hash,
             "workflow_type": payload.get("workflow_type"),
             "assessment_metadata": payload.get("assessment_metadata") or {},
@@ -1753,7 +1762,7 @@ async def _run_review_job(
             )
         else:
             analysis_hash = stable_hash({
-                "pipeline": "document-analysis-v2.7.0-final-generic-whole-section-contradiction-gated",
+                "pipeline": "document-analysis-v2.11.0-final-generic-whole-section-contradiction-gated",
                 "payload_hash": payload_hash,
             })
             current_stage = "document-analysis"
@@ -1805,6 +1814,7 @@ async def _run_review_job(
                     original_document=payload["original_document"],
                     institutional_profile=payload.get("institutional_profile", "generic"),
                     guided_sequence=guided_mode,
+                    parsed_paragraphs=await source_rows(),
                 )
                 runtime_context = review.pop("_runtime_context", {})
                 checkpoints.save(
@@ -1853,7 +1863,7 @@ async def _run_review_job(
                 )
 
             academic_hash = stable_hash({
-                "pipeline": "academic-review-complete-v2.7.0-final-isolated-natural-reconciled-ledger",
+                "pipeline": "academic-review-complete-v2.11.0-final-isolated-natural-reconciled-ledger",
                 "analysis_hash": analysis_hash,
                 "review_depth": payload["review_depth"],
                 "chapter_model": config.openai_chapter_model,
@@ -1907,7 +1917,7 @@ async def _run_review_job(
 
             if payload.get("workflow_type") == "external_assessment":
                 external_hash = stable_hash({
-                    "pipeline": "external-assessment-complete-v1.9.6-three-examiners-one-adjudicator",
+                    "pipeline": "external-assessment-complete-v2.11.0-three-examiners-one-adjudicator",
                     "academic_hash": academic_hash,
                     "assessment_metadata": payload.get(
                         "assessment_metadata"
@@ -1973,6 +1983,7 @@ async def _run_review_job(
                 review = attach_canonical_findings(review)
                 review.setdefault("summary", {})["review_depth"] = payload["review_depth"]
                 review = apply_human_comment_budget(review)
+                review = await polish_selected_comments(review, checkpoints, config)
                 review = attach_supervisory_readiness(review)
 
             usage_snapshot = dict(review.get("ai_review") or {})
@@ -2057,10 +2068,24 @@ async def _run_review_job(
             review = merge_guided_reviews(
                 [*previous_reviews, review],
                 filename=str(payload.get("filename") or ""),
+                expected_chapters=guided_units,
             )
+            config = HybridAIConfig.from_env()
+            if config.enabled and (config.openai_configured or config.deepseek_configured):
+                completed = set(review.get("summary", {}).get("guided_chapters_completed") or [])
+                audit_rows = [r for r in await source_rows() if r.get("chapter_number") in completed or not r.get("chapter_number")]
+                review = await run_final_consistency_audit(review, audit_rows, source_checkpoints, config)
+            else:
+                review.setdefault("summary", {})["final_consistency_audit_status"] = "not run: AI disabled or unconfigured"
             review = attach_canonical_findings(review)
             review.setdefault("summary", {})["review_depth"] = payload["review_depth"]
             review = apply_human_comment_budget(review)
+            review = await polish_selected_comments(review, source_checkpoints, config)
+            append_usage(usage_snapshot, (review.get("final_consistency_audit") or {}).get("usage") or {})
+            for record_usage in (review.get("comment_quality_audit") or {}).get("usage_records",[]):
+                append_usage(usage_snapshot, record_usage)
+            review.pop("ai_review", None)
+            AI_USAGE_CACHE[review["review_id"]] = usage_snapshot
             review = attach_supervisory_readiness(review)
             merged_actionable = [
                 row for row in (review.get("canonical_findings") or [])
@@ -2153,7 +2178,7 @@ async def _run_review_job(
                     "native_docx_comment_count": int(native_audit.get("current_comment_count") or 0),
                     "source_docx_comment_count": int(native_audit.get("previous_comment_count") or 0),
                     "inline_annotation_count": int(inline_audit.get("note_count") or 0),
-                    "expected_annotation_finding_count": len(expected_numbers),
+                    "expected_annotation_finding_count": len(expected_annotation_finding_numbers(review)),
                     "represented_native_finding_numbers": native_audit.get("represented_finding_numbers") or [],
                     "represented_inline_finding_numbers": inline_audit.get("represented_finding_numbers") or [],
                     "native_comment_reconciliation_passed": True,
@@ -2964,6 +2989,9 @@ async def stop_review_job(
     record.lease_expires_at = None
     db.commit()
 
+    cancellation = await cancel_retained_background_responses(job_id, HybridAIConfig.from_env())
+    if cancellation["failed"]:
+        logger.warning("Could not cancel %s retained background response(s) for stopped job %s", cancellation["failed"], job_id)
     # Remove the job from automatic execution before cancelling its task.
     SCHEDULED_JOB_IDS.discard(job_id)
     RUNNING_JOB_IDS.discard(job_id)

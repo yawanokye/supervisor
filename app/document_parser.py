@@ -1064,7 +1064,7 @@ def docx_drawing_metadata(
             part = related_parts.get(relationship_id)
             content_type = str(getattr(part, "content_type", "") or "")
             blob = bytes(getattr(part, "blob", b"") or b"")
-            if not content_type.startswith("image/") or not blob or len(blob) > 2_500_000:
+            if content_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"} or not blob or len(blob) > 2_500_000:
                 continue
             image_data_urls.append(
                 f"data:{content_type};base64,{base64.b64encode(blob).decode('ascii')}"
@@ -1117,12 +1117,16 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
                 out[-1]["table_index"] = table_index
             current_path = _section_path(heading_stack)
             for row_index, row in enumerate(block.rows, start=1):
-                values = [docx_visible_text(cell) for cell in row.cells if docx_visible_text(cell)]
-                if not values:
+                values = [docx_visible_text(cell) for cell in row.cells]
+                if not any(values):
                     continue
                 paragraph_no += 1
                 out.append({
                     "text": " | ".join(values),
+                    "table_cells": values,
+                    "table_cell_spans": [{"column": n, "grid_span": int(cell._tc.grid_span), "merged_with_previous": n > 0 and cell._tc is row.cells[n-1]._tc} for n, cell in enumerate(row.cells)],
+                    "table_header_repeat": bool(row._tr.xpath("./w:trPr/w:tblHeader")),
+                    "extraction_confidence": "high",
                     "page": None,
                     "paragraph": paragraph_no,
                     "page_paragraph": None,
@@ -1150,10 +1154,7 @@ def extract_docx(data: bytes) -> List[Dict[str, Any]]:
 
         drawing_metadata = docx_drawing_metadata(
             block,
-            include_image_data=any(
-                term in normalised(current_heading or "")
-                for term in ("conceptual framework", "conceptual model", "research framework", "analytical framework")
-            ),
+            include_image_data=True,
         )
         text = docx_visible_text(block)
         if not text and drawing_metadata["contains_drawing"]:
@@ -1403,6 +1404,7 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     "document_zone": current_zone,
                     "is_reference_entry": current_zone == "references",
                     "style": "",
+                    "bbox": list(block[:4]),
                     "source_kind": "table_caption" if caption else "pdf_block",
                     "table_index": None,
                     "table_row": None,
@@ -1410,6 +1412,53 @@ def extract_pdf(data: bytes) -> List[Dict[str, Any]]:
                     "table_title": caption.get("table_title") if caption else None,
                     "table_caption": caption.get("table_caption") if caption else None,
                 })
+    # Recover geometric tables and visible diagram evidence before assigning stable IDs.
+    pdf_table_index = 0
+    caption_to_index = {}
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        page_rows = [r for r in out if r.get('page') == page_index + 1]
+        try:
+            tables = page.find_tables().tables
+        except Exception:
+            tables = []
+        for table in tables:
+            cells = table.extract()
+            if not cells or len(cells) < 2:
+                continue
+            above = [r for r in page_rows if r.get('bbox', [0,0,0,0])[1] <= table.bbox[1]]
+            owner = above[-1] if above else (page_rows[0] if page_rows else {})
+            captions = [r for r in above if r.get('source_kind') == 'table_caption']
+            caption = captions[-1] if captions else {}
+            key = (owner.get('chapter_number'), caption.get('table_number'))
+            if key[1] and key in caption_to_index:
+                index = caption_to_index[key]
+            else:
+                pdf_table_index += 1
+                index = pdf_table_index
+                if key[1]: caption_to_index[key] = index
+            for ridx, values in enumerate(cells, 1):
+                values = [clean_text(v or '') for v in values]
+                if not any(values): continue
+                out.append({**owner, 'text': ' | '.join(values), 'table_cells': values,
+                    'source_kind': 'table_row', 'is_heading': False, 'table_index': index,
+                    'table_row': ridx, 'table_number': caption.get('table_number'),
+                    'table_title': caption.get('table_title'), 'bbox': [table.bbox[0], table.bbox[1] + ridx * .001, table.bbox[2], table.bbox[3]],
+                    'extraction_confidence': 'geometric, confirm merged headers', 'page': page_index + 1})
+            rect = fitz.Rect(table.bbox)
+            out = [r for r in out if r.get('page') != page_index+1 or r.get('source_kind') in {'table_row','table_caption'} or not (r.get('bbox') and rect.contains(fitz.Rect(r['bbox'])))]
+        framework_rows = [r for r in page_rows if re.search(r'conceptual|framework|path model|research model', str(r.get('heading') or '')+' '+r.get('text',''), re.I) and not r.get('is_toc_entry') and r.get('document_zone') not in {'table_of_contents','list_of_figures'}]
+        if framework_rows:
+            # Page pixels also capture vector arrows, which do not appear in get_images().
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.3,1.3), alpha=False)
+                data_url = 'data:image/png;base64,' + base64.b64encode(pix.tobytes('png')).decode('ascii')
+                anchor = framework_rows[-1]
+                anchor.update({'contains_drawing': True, 'drawing_count': 1, 'drawing_image_data_urls': [data_url], 'drawing_descriptions': ['Rendered framework page'], 'visual_evidence_source': 'rendered_pdf_page'})
+            except Exception:
+                pass
+    out.sort(key=lambda r: (r.get('page') or 0, (r.get('bbox') or [0,0])[1], (r.get('bbox') or [0,0])[0]))
+    for number, row in enumerate(out, 1): row['paragraph'] = number
     doc.close()
     return out
 

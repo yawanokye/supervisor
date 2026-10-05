@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -328,14 +328,15 @@ class HybridAIConfig:
             "DEEPSEEK_QUALITY_MODEL", advanced_model or "deepseek-v4-pro"
         ).strip() or "deepseek-v4-pro"
 
-        # Role-specific variables are authoritative. The old
+        # With OPENAI_MODEL_MODE=roles, role-specific variables are authoritative. The old
         # OPENAI_REVIEW_MODEL setting is intentionally ignored so a stale
         # o3-mini value cannot silently override the upgraded workflow.
+        global_model = os.getenv("OPENAI_MODEL", "").strip()
         chapter_model = os.getenv(
-            "OPENAI_CHAPTER_MODEL", "gpt-5.6-luna"
+            "OPENAI_CHAPTER_MODEL", global_model or "gpt-5.6-luna"
         ).strip()
         expert_model = os.getenv(
-            "OPENAI_EXPERT_MODEL", "gpt-5.6-terra"
+            "OPENAI_EXPERT_MODEL", global_model or "gpt-5.6-terra"
         ).strip()
         audit_model = os.getenv(
             "OPENAI_FINAL_AUDIT_MODEL", expert_model
@@ -421,7 +422,7 @@ class HybridAIConfig:
             "VPROF_COMBINED_APP_PIPELINE", False
         )
         cleaning_model = os.getenv(
-            "OPENAI_CLEANING_MODEL", "gpt-5.6-luna"
+            "OPENAI_CLEANING_MODEL", global_model or "gpt-5.6-luna"
         ).strip() or "gpt-5.6-luna"
         section_model = os.getenv(
             "OPENAI_SECTION_ANALYSIS_MODEL", chapter_model
@@ -443,7 +444,7 @@ class HybridAIConfig:
             default="xhigh",
         )
 
-        return cls(
+        configuration = cls(
             enabled=_env_bool("AI_REVIEW_ENABLED", True),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", "").strip(),
             deepseek_base_url=os.getenv(
@@ -865,6 +866,12 @@ class HybridAIConfig:
                 "AI_EXTERNAL_ASSESSMENT_REQUEST_MAX_RETRIES", 1, 0
             ),
         )
+        # A global selection deliberately switches every role, including retained role settings.
+        # Use roles mode when different volume/expert models are intentional.
+        if global_model and os.getenv("OPENAI_MODEL_MODE", "single").strip().lower() == "single":
+            configuration = replace(configuration, **{f.name: global_model for f in fields(configuration)
+                if f.name.startswith("openai_") and f.name.endswith("_model")})
+        return configuration
 
     @property
     def deepseek_configured(self) -> bool:
@@ -917,6 +924,16 @@ class HybridAIConfig:
         precedence over role prices so overrides are costed correctly.
         """
         value = (model or "").strip().lower()
+        try:
+            import json
+            prices = json.loads(os.getenv("OPENAI_MODEL_PRICES_JSON", "{}")).get(model)
+            if prices: return tuple(float(prices[k]) for k in ("input", "cached_input", "output"))
+        except (ValueError, KeyError, TypeError):
+            pass
+
+        if value.startswith("gpt-6.1-sol"):
+            return (_env_float("PRICE_OPENAI_61_SOL_INPUT", 2.0), _env_float("PRICE_OPENAI_61_SOL_CACHED_INPUT", .10), _env_float("PRICE_OPENAI_61_SOL_OUTPUT", 10.0))
+
         if value.startswith("gpt-5.6-luna"):
             return (
                 _env_float("PRICE_OPENAI_LUNA_INPUT", 1.00),

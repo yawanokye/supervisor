@@ -1,4 +1,6 @@
 from __future__ import annotations
+from contextlib import nullcontext
+from .provider_state import provider_checkpoint_context
 
 import asyncio
 import json
@@ -1227,8 +1229,8 @@ async def _complete_assessment_stage(
             additional_evidence_ids=additional_evidence_ids,
         )
         input_hash = stable_hash({
-            "pipeline": "external-assessment-v1.9.8-cost-aware-three-examiners-one-adjudicator",
-            "retry_generation": int(retry_generation or 0),
+            "pipeline": "external-assessment-v2.11.0-cost-aware-three-examiners-one-adjudicator",
+            "regeneration_generation": int(runtime_context.get("regeneration_generation") or 0),
             "stage": stage,
             "attempt_number": attempt_number,
             "concise_retry": concise_retry,
@@ -1288,24 +1290,25 @@ async def _complete_assessment_stage(
                 message=f"Preparing grounded external assessment stage: {stage}",
             )
         try:
-            result = await provider.complete_json(
-                model=model,
-                system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                schema_model=schema_model,
-                purpose=f"external_thesis_assessment_{stage}",
-                reasoning_effort=reasoning_effort,
-                max_output_tokens=max_output_tokens,
-                request_timeout_seconds=(
-                    config.external_assessment_request_timeout_seconds
-                ),
-                request_max_retries=(
-                    config.external_assessment_request_max_retries
-                ),
-                stage=ReviewStage.EXTERNAL_EXAMINATION,
-                review_depth="external",
-                allow_escalation=False,
-            )
+            with provider_checkpoint_context(checkpoint_manager, stage_key) if checkpoint_manager is not None else nullcontext():
+                result = await provider.complete_json(
+                    model=model,
+                    system_prompt=EXTERNAL_ASSESSMENT_SYSTEM_PROMPT,
+                    user_prompt=user_prompt,
+                    schema_model=schema_model,
+                    purpose=f"external_thesis_assessment_{stage}",
+                    reasoning_effort=reasoning_effort,
+                    max_output_tokens=max_output_tokens,
+                    request_timeout_seconds=(
+                        config.external_assessment_request_timeout_seconds
+                    ),
+                    request_max_retries=(
+                        config.external_assessment_request_max_retries
+                    ),
+                    stage=ReviewStage.EXTERNAL_EXAMINATION,
+                    review_depth="external",
+                    allow_escalation=False,
+                )
             stage_feedback = _validate_stage_output(
                 stage,
                 result.data,

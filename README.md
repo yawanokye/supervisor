@@ -1,6 +1,53 @@
-# V-Professor Supervisory Review 2.10.0
+# V-Professor Supervisory Review 2.11.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
+
+## Changes in 2.11.0
+
+Comments now use a passage-specific supervisory voice with varied openings and sentence rhythm. A clear reporting repair can begin with the action. A confirmed contradiction receives a direct diagnosis. A genuine uncertainty can use a focused question followed by an instruction. The system checks repetitive openings, near duplicates, unsupported numbers and loss of corrective actions. It does not manufacture faults or enforce a comment minimum. A bounded prose repair runs only on the released shortlist, and evidence, severity and corrective obligations remain unchanged.
+
+Comment placement now checks the actual source quotation and paragraph or table-row evidence, including its chapter and section. A stale paragraph number is relocated only when the evidence has one verified match. Reconciliation cannot attach a finding to an arbitrary heading, first paragraph or final paragraph. Different sentence findings retain separate ranges, and table-row findings target the quoted cell. If a location cannot be verified, the finding stays in the report with its correction and a manual location notice. Genuine missing-section findings remain in the correction notes. These controls apply to native and inline exports.
+
+Statistical checks recognise declared alpha, model family, signed statistics and reported rounding. Negative adjusted R² is permitted. Cronbach’s negative alpha is investigated rather than labelled impossible. Explicit t, F and chi-square tests can be checked against their degrees of freedom and reported p-values. Bootstrap, one-sided and adjusted tests are excluded from inappropriate recomputation. Logistic output is not forced into an OLS table template.
+
+Blank DOCX cells keep their positions. PDF tables use page geometry, and framework pages are rendered so vector arrows can be supplied to a visual model. Unsupported image formats or text-only models require manual visual verification. Scanned PDFs still require a readable text layer or a separately OCR-processed copy.
+
+Guided chapters share cached source extraction and a reference index. The final merge retains the full internal issue ledger, so a shortened comment list cannot conceal readiness blockers. A material issue in a clean-passage sample expands AI assessment across that chapter’s remaining local units. Structural preflight is reported separately from AI assessment and does not receive a perfect quality score.
+
+The final guided result receives a real bounded cross-chapter consistency audit, with a results ledger and explicit evidence coverage. Partial chapter sequences are labelled accurately. An empty response or unassessed supplied evidence cannot produce a completed audit flag. Completed requests keep stable hashes on resume. Background response IDs are saved before polling and reused after recovery. If temporary provider retention has expired and retrieval returns 404, recovery records that fact and requires a fresh submission. An explicit stop requests cancellation of retained background work.
+
+## Select an OpenAI model
+
+To switch every OpenAI role, including existing per-role settings, use:
+
+```dotenv
+OPENAI_MODEL=gpt-6.1-sol
+OPENAI_MODEL_MODE=single
+VPROF_PRIMARY_PROVIDER=openai
+VPROF_ENABLE_OPENAI=true
+```
+
+Keep your existing `OPENAI_API_KEY`. Restart both the web service and worker after changing deployment environment variables. New work uses the selected model. Completed checkpoints remain available for recovery.
+
+For efficient separate roles, leave `OPENAI_MODEL` blank and set `OPENAI_EXPERT_MODEL` and `OPENAI_FINAL_AUDIT_MODEL` to `gpt-6.1-sol`, retaining the routine chapter model. If you want a global fallback alongside explicit role settings, use `OPENAI_MODEL_MODE=roles`.
+
+Compatible OpenAI text-model IDs are accepted without editing code. The adapter selects Responses or legacy Chat Completions, adjusts reasoning effort to supported values, and handles explicit parameter incompatibility without silently changing the model. Schema validation remains required when a model needs JSON mode or plain JSON. A model still needs API access and sufficient input/output capacity. Embedding, audio and image-generation models cannot perform a text review.
+
+For an unknown model, set price estimates explicitly, for example:
+
+```dotenv
+OPENAI_MODEL_PRICES_JSON={"my-text-model":{"input":2,"cached_input":0.1,"output":10}}
+```
+
+Values are USD per million tokens. Bundled prices are estimates and can be overridden. Unknown IDs otherwise inherit role price estimates. Optional `OPENAI_MODEL_CAPABILITIES_JSON` can specify per-model `endpoint`, `reasoning`, `efforts`, `structured`, `vision` and `background` capabilities for a compatible proxy. Endpoint values are `responses` or `chat`.
+
+## Review verification
+
+Run `python -m pytest -q` with a fresh temporary `DATABASE_URL` and `REVIEW_STORAGE_DIR`. Run `python scripts/benchmark_review_quality.py` for six labelled statistical cases, or add `--review path/to/review.json` for descriptive comment metrics.
+
+The included regression suite covers model switching, parameter adaptation, durable background recovery, numerical false positives, geometric tables, natural comments in Word export, duplicate budgets and genuine final-audit coverage.
+
+The automated checks verify implementation and labelled synthetic cases. They do not measure how natural real reviews feel to a human supervisor. Use `REVIEW_QUALITY_CHECK.md` to assess representative theses before expanding production use. Statistical consistency checks do not reproduce an analysis from raw data. A reference-list match does not establish source existence or claim support.
 
 ## Current-submission isolation
 
@@ -39,14 +86,14 @@ Version 2.10.0 includes the following release controls:
 
 - native Word-comment and inline annotated DOCX files are generated, validated and persisted as one atomic delivery bundle before a review is released as complete;
 - current V-Professor comments are counted separately from comments already present in the uploaded source, so old comments can never make an empty new annotation export pass validation;
-- every final finding number must appear in both the native and inline annotated outputs, including findings whose quoted source fragments end near citation boundaries;
+- every source-verified annotation finding number must appear in both the native and inline annotated outputs; findings without a verified location remain in the report;
 - completed academic-review checkpoints are retained when document export fails, so recovery retries the annotation stage without repeating a paid provider pass;
 - older completed reviews can regenerate current annotated outputs at download time when the saved source DOCX remains available;
 - natural student-facing comments limited to focused supervisory prose rather than visible labels such as `Issue`, `Problem identified`, `Action required` or `Verification`;
 - substantive paragraph anchoring ahead of section-heading anchoring;
 - root-cause consolidation for overlapping construct, background, problem-gap and scope findings;
 - strict reconciliation between the canonical finding ledger, native Word comments and the appended correction register;
-- one Word comment box for related findings tied to the same exact paragraph, with every released finding number represented;
+- one Word comment box for related findings tied to the same verified sentence range, with every released finding number represented;
 - removal of empty source comments and status labelling where an earlier missing-section comment is visibly addressed;
 - checks for generic limitations that do not explain consequences for evidence or conclusions;
 - checks for unsupported absolute claims while preserving proportionate academic wording;

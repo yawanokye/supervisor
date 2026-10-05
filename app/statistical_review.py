@@ -6,6 +6,8 @@ import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 from .document_parser import clean_text, normalised
+from .statistical_profile import model_family, declared_alpha, study_statistical_profile, claim_clauses, rounding_tolerance
+from .statistical_math import rounded_ratio_matches, recomputed_test_p_mismatch
 from .supervisory_accuracy_guard import paragraph_id, source_section
 
 def _env_enabled(name: str, default: bool = True) -> bool:
@@ -118,50 +120,68 @@ def audit_statistical_consistency(paragraphs: Sequence[Dict[str, Any]]) -> List[
             "evidence": _evidence(row),
         })
 
+    profile = study_statistical_profile(paragraphs)
     for row in paragraphs:
-        text = clean_text(row.get("text", ""))
+        text = clean_text(row.get("text", "")).replace("−", "-")
         low = normalised(text)
         if not text:
             continue
 
         for match in re.finditer(
             r"\b(?:r[-\s]?(?:squared|2)|r²|r2|adjusted\s+r[-\s]?(?:squared|2)|adjusted\s+r²)"
-            r"\s*[=:]?\s*(-?\d+(?:\.\d+)?)",
+            r"\s*[=:]?\s*(-?(?:\d+(?:\.\d+)?|\.\d+))",
             text,
             flags=re.I,
         ):
             value = _value(match.group(1))
-            if value is not None and not 0 <= value <= 1:
+            adjusted = "adjusted" in match.group(0).lower()
+            permissible_negative = adjusted or any(x in low for x in ("out of sample", "no intercept", "without intercept", "pseudo"))
+            if value is not None and (value > 1 or (value < 0 and not permissible_negative)):
                 add("invalid_r_squared", f"The reported R² value of {value:g} falls outside the valid 0 to 1 range.", row, severity="critical")
 
-        for match in re.finditer(r"\bp\s*(?:value)?\s*([=<>])\s*(\d*\.?\d+)", text, flags=re.I):
-            operator, raw = match.groups()
-            value = _value(raw)
-            if value is None:
-                continue
-            if value < 0 or value > 1:
-                add("invalid_p_value", f"The reported p-value of {value:g} falls outside the valid 0 to 1 range.", row, severity="critical")
-                continue
-            says_not_significant = bool(re.search(r"\b(?:not|non)[ -]?significant\b", low))
-            says_significant = "significant" in low and not says_not_significant
-            if operator == "=":
-                if value < 0.05 and says_not_significant:
-                    add("p_value_interpretation_mismatch", "The non-significant interpretation conflicts with the reported p-value below .05.", row)
-                elif value >= 0.05 and says_significant:
-                    add("p_value_interpretation_mismatch", "The significant interpretation conflicts with the reported p-value of .05 or above.", row)
-            elif operator == "<" and value <= 0.05 and says_not_significant:
-                add("p_value_interpretation_mismatch", "The non-significant interpretation conflicts with the reported p-value threshold.", row)
-            elif operator == ">" and value >= 0.05 and says_significant:
-                add("p_value_interpretation_mismatch", "The significant interpretation conflicts with the reported p-value threshold.", row)
+        alpha_level = declared_alpha(text, profile['significance_threshold'])
+        for clause in claim_clauses(text):
+            matches = list(re.finditer(r"\bp\s*(?:value)?\s*([=<>])\s*(-?\d*\.?\d+)", clause, re.I))
+            for match in matches:
+                operator, raw = match.groups()
+                value = _value(raw)
+                if value is None:
+                    continue
+                if value < 0 or value > 1:
+                    add('invalid_p_value', f'The reported p-value of {value:g} falls outside 0 to 1.', row, severity='critical')
+                    continue
+                if operator == '=' and value == 0:
+                    add('p_zero_reporting', 'Report p < .001 rather than p = .000, using the original output precision.', row, severity='minor', verification='reporting omission')
+                # Do not attach a paragraph-wide decision to several different estimates.
+                if len(matches) != 1:
+                    continue
+                not_sig = bool(re.search(r"\b(?:not|non)[ -]?(?:statistically )?significant\b", clause, re.I))
+                sig = bool(re.search(r"\b(?:statistically )?significant\b", clause, re.I)) and not not_sig
+                contradictory = (
+                    (operator == '=' and value < alpha_level and not_sig)
+                    or (operator == '=' and value > alpha_level and sig)
+                    or (operator == '<' and value <= alpha_level and not_sig)
+                    or (operator == '>' and value >= alpha_level and sig)
+                )
+                if contradictory:
+                    add('p_value_interpretation_mismatch', f'The interpretation conflicts with this result at the stated significance threshold of {alpha_level:g}.', row)
+
+        if not profile["robust_or_bootstrap"]:
+            for clause in claim_clauses(text):
+                mismatch = recomputed_test_p_mismatch(clause)
+                if mismatch:
+                    add("test_statistic_p_mismatch", mismatch, row, severity="major", verification="rounded statistic and p-value recomputed")
 
         for match in re.finditer(r"(?<!\d)(-?\d+(?:\.\d+)?)\s*%", text):
             value = _value(match.group(1))
-            if value is not None and not 0 <= value <= 100:
+            if value is not None and not 0 <= value <= 100 and not re.search(r"\b(?:growth|change|increase|decrease|return|improvement)\b", low):
                 add("invalid_percentage", f"The reported percentage of {value:g}% falls outside the valid 0% to 100% range.", row, severity="critical")
 
-        alpha = _named_value(text, (r"cronbach(?:'s)?\s+alpha", r"alpha", r"α"))
-        if alpha is not None and not 0 <= alpha <= 1:
-            add("invalid_reliability", f"The reported reliability coefficient of {alpha:g} falls outside the valid 0 to 1 range.", row, severity="critical")
+        alpha = _named_value(text, (r"cronbach(?:'s)?\s+alpha", r"alpha", r"α")) if re.search(r"cronbach|reliability|internal consistency", text, re.I) else None
+        if alpha is not None and alpha > 1:
+            add("invalid_reliability", f"The reported reliability coefficient of {alpha:g} exceeds its upper bound of 1.", row, severity="critical")
+        elif alpha is not None and alpha < 0:
+            add("negative_reliability_requires_investigation", f"Cronbach's alpha of {alpha:g} can arise from negative item covariance. Investigate reverse coding, item consistency and the reliability of the composite before interpreting it.", row, severity="major", verification="requires investigation, not an impossible value")
 
         interval = re.search(
             r"(?:confidence interval|\bci\b)(?:\s+was|\s+is)?\s*[:=]?\s*[\[(]?\s*(-?(?:\d+(?:\.\d+)?|\.\d+))\s*[,;]\s*(-?(?:\d+(?:\.\d+)?|\.\d+))",
@@ -179,14 +199,14 @@ def audit_statistical_consistency(paragraphs: Sequence[Dict[str, Any]]) -> List[
         t_value = _named_value(text, (r"t(?:\s*value)?" ,))
         if b is not None and se is not None and se > 0 and t_value is not None:
             expected_t = b / se
-            if not _close(abs(t_value), abs(expected_t), relative=0.06, absolute=0.12):
+            if not _close(abs(t_value) if profile["model_family"] == "pls_sem" else t_value, abs(expected_t) if profile["model_family"] == "pls_sem" else expected_t, relative=0.06, absolute=0.12):
                 add(
                     "coefficient_se_t_mismatch",
                     f"The reported coefficient, standard error and t-statistic do not reconcile: B/SE is approximately {expected_t:.3f}, not {t_value:.3f}.",
                     row,
                     severity="critical",
                 )
-        if b is not None and lower is not None and upper is not None and not (lower - 1e-9 <= b <= upper + 1e-9):
+        if b is not None and lower is not None and upper is not None and not profile["robust_or_bootstrap"] and not (lower - 1e-9 <= b <= upper + 1e-9):
             add("coefficient_ci_mismatch", "The reported coefficient does not fall within its stated confidence interval.", row, severity="critical")
 
         coefficient = re.search(r"\b(?:beta|β|coefficient|estimate|b)\s*[=:]\s*(-?(?:\d+(?:\.\d+)?|\.\d+))", text, flags=re.I)
@@ -210,11 +230,11 @@ def audit_statistical_consistency(paragraphs: Sequence[Dict[str, Any]]) -> List[
             expected_f = t_value * t_value
             if not _close(f_value, expected_f, relative=0.06, absolute=0.25):
                 add("simple_regression_f_t_mismatch", f"For a one-predictor test, F should approximately equal t². The reported values imply t² ≈ {expected_f:.3f}, not F = {f_value:.3f}.", row, severity="critical")
-        if f_value is not None and r2 is not None and df1 and df2 and 0 <= r2 < 1:
+        if not profile["robust_or_bootstrap"] and profile["model_family"] in {"ols", "unspecified"} and f_value is not None and r2 is not None and df1 and df2 and 0 <= r2 < 1:
             expected_f = (r2 / df1) / ((1 - r2) / df2)
             if not _close(f_value, expected_f, relative=0.08, absolute=0.35):
                 add("r2_f_df_mismatch", f"The reported R², F and degrees of freedom do not reconcile. These values imply F ≈ {expected_f:.3f}, not {f_value:.3f}.", row, severity="critical")
-        elif f_value is not None and r2 is not None and n and df1 and n > df1 + 1 and 0 <= r2 < 1:
+        elif not profile["robust_or_bootstrap"] and profile["model_family"] in {"ols", "unspecified"} and f_value is not None and r2 is not None and n and df1 and n > df1 + 1 and 0 <= r2 < 1:
             expected_f = (r2 / df1) / ((1 - r2) / (n - df1 - 1))
             if not _close(f_value, expected_f, relative=0.08, absolute=0.35):
                 add("r2_f_n_mismatch", f"The reported R², F, sample size and predictor count do not reconcile. They imply F ≈ {expected_f:.3f}, not {f_value:.3f}.", row, severity="critical")
@@ -320,7 +340,7 @@ def audit_analysis_adequacy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dict[s
 
 
 def _cells(row: Dict[str, Any]) -> List[str]:
-    return [clean_text(cell) for cell in clean_text(row.get("text", "")).split("|")]
+    return [clean_text(cell) for cell in row.get("table_cells", clean_text(row.get("text", "")).split("|"))]
 
 
 def _table_groups(paragraphs: Sequence[Dict[str, Any]]) -> Dict[Any, List[Dict[str, Any]]]:
@@ -476,7 +496,8 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
                         "descriptive_overall_mean_mismatch",
                         f"{label} reports an overall mean of {overall_value:.2f}, but the displayed item means average approximately {calculated:.2f}.",
                         overall_row,
-                        severity="critical",
+                        severity="moderate",
+                        verification="requires verification of weighting and item denominators",
                         action="Check whether the overall score was calculated from respondent-level composite scores or from the displayed item means. State the calculation method and correct either the table or the interpretation.",
                         example=f"If the overall score is the simple mean of the displayed items, report approximately {calculated:.2f}; if it comes from a different composite procedure, explain that procedure below the table.",
                     ))
@@ -496,7 +517,10 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
 
         # A regression table should contain enough information for the model to be
         # assessed, not relabel correlation coefficients as beta values.
-        if "regression" in title_norm:
+        table_family = model_family(title_norm)
+        profile = study_statistical_profile(paragraphs)
+        if table_family == "unspecified": table_family = profile["model_family"]
+        if "regression" in title_norm and table_family in {"ols", "unspecified"}:
             required = {
                 "b": _column_index(headers, "b", "coefficient"),
                 "se": _column_index(headers, "se b", "standard error", "se"),
@@ -528,7 +552,7 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
                 b = _number_in_cell(cells[b_idx]); se = _number_in_cell(cells[se_idx]); t = _number_in_cell(cells[t_idx])
                 if b is not None and se is not None and se > 0 and t is not None:
                     expected = b / se
-                    if not _close(abs(expected), abs(t), relative=0.05, absolute=0.10):
+                    if not rounded_ratio_matches(cells[b_idx], cells[se_idx], cells[t_idx], absolute_statistic=table_family == "pls_sem") and not _close(abs(expected) if table_family == "pls_sem" else expected, abs(t) if table_family == "pls_sem" else t, relative=0.05, absolute=0.10):
                         add(_warning(
                             "table_coefficient_se_t_mismatch",
                             f"In {label}, the coefficient, standard error and t-statistic for ‘{cells[0]}’ do not reconcile: B/SE is approximately {expected:.2f}, not {t:.2f}.",
@@ -541,7 +565,7 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
                     nums = re.findall(r"-?(?:\d+(?:\.\d+)?|\.\d+)", cells[ci_idx].replace("−", "-"))
                     if len(nums) >= 2:
                         lo, hi = float(nums[0]), float(nums[1])
-                        if lo > hi or not (lo - 1e-9 <= b <= hi + 1e-9):
+                        if lo > hi or (not profile["robust_or_bootstrap"] and not (lo - 1e-9 <= b <= hi + 1e-9)):
                             add(_warning(
                                 "table_coefficient_ci_mismatch",
                                 f"In {label}, the coefficient for ‘{cells[0]}’ does not fall within the reported confidence interval.",
@@ -552,7 +576,7 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
                             ))
 
         # Model-summary consistency from wide regression tables.
-        if header_row and n:
+        if header_row and n and table_family in {"ols", "unspecified"} and not profile["robust_or_bootstrap"]:
             r2_idx = _column_index(headers, "r²", "r2", "r squared")
             f_idx = _column_index(headers, "f", "f statistic")
             if r2_idx is not None and f_idx is not None:
@@ -620,45 +644,29 @@ def audit_table_level_accuracy(paragraphs: Sequence[Dict[str, Any]]) -> List[Dic
                     interaction_rows[-1],
                     verification="reporting omission",
                     action="Probe the interaction and report how the predictor–outcome relationship changes at meaningful values of the moderator. Add an interaction plot and the relevant confidence intervals.",
-                    example="Report the effect of the predictor at low, mean and high perceived support, with a confidence interval and a plot showing the direction of the interaction.",
+                    example="Report the effect of the predictor at meaningful values of the moderator, with a confidence interval and a plot showing the direction of the interaction.",
                 ))
-            # Three-way moderation must preserve model hierarchy.
-            if any("between" in title_norm and "and" in title_norm and "interaction" in title_norm for _ in [0]) or any("ci aee" in normalised(r.get("text", "")) for r in rows):
-                terms = [normalised(_cells(r)[0]) for r in rows if _cells(r)]
-                has_xy = any("ci aee" in term for term in terms)
-                has_xz = any("ci pas" in term for term in terms)
-                has_yz = any("aee pas" in term for term in terms)
-                has_xyz = any(all(x in term for x in ("ci", "aee", "pas")) for term in terms)
-                if has_xy and (not has_xz or not has_yz or not has_xyz):
-                    anchor = interaction_rows[-1] if interaction_rows else rows[-1]
-                    missing = []
-                    if not has_xz: missing.append("CI × PAS")
-                    if not has_yz: missing.append("AEE × PAS")
-                    if not has_xyz: missing.append("CI × AEE × PAS")
-                    add(_warning(
-                        "three_way_moderation_hierarchy_incomplete",
-                        f"{label} does not report the complete hierarchical specification required for a three-way interaction. Missing or unclear terms: {', '.join(missing)}.",
-                        anchor,
-                        severity="critical",
-                        verification="inappropriate analysis or interpretation",
-                        action="Refit or re-report the model with all three main effects, all three two-way interactions and the three-way interaction. Use standard interaction labels and report the model-change statistics.",
-                        example="The coefficient table should include CI, AEE, PAS, CI×AEE, CI×PAS, AEE×PAS and CI×AEE×PAS before interpreting moderated moderation.",
-                    ))
-                if any("pas ci aee interaction" in term or "pas ci aee" in term for term in terms):
-                    anchor = next(r for r in rows if "PAS" in clean_text(r.get("text", "")) and "interaction" in clean_text(r.get("text", "")))
-                    add(_warning(
-                        "nonstandard_three_way_term_label",
-                        f"{label} uses a non-standard expression for the three-way interaction, making the model difficult to verify.",
-                        anchor,
-                        verification="reporting omission",
-                        action="Label the three-way term explicitly and consistently as the product of the three variables, and use the same label in the methods, table, interpretation and hypothesis decision.",
-                        example="Use ‘Classroom Incivility × Academic Entitlement × Perceived Academic Support’ rather than ‘PAS × (CI + AEE interaction)’. ",
-                    ))
+            # Verify interaction order from this study, never from sample-specific variable names.
+            terms = [clean_text(_cells(r)[0]) for r in rows if r is not header_row and _cells(r)]
+            products = [re.split(r"\s*[×*]\s*", term) for term in terms if '×' in term or '*' in term]
+            triples = [parts for parts in products if len(parts) == 3]
+            # Nested labels explicitly identifying an interaction, e.g. W × (X + Z interaction).
+            for term in terms:
+                nested = re.fullmatch(r"\s*([^×*]+)\s*[×*]\s*\(\s*([^+]+)\s*\+\s*(.+?)\s+interaction\s*\)\s*", term, re.I)
+                if nested: triples.append([v.strip() for v in nested.groups()])
+            if triples or re.search(r"three[ -]way|moderated moderation", title_norm + ' ' + all_text):
+                if triples:
+                    import itertools
+                    variables = [normalised(v) for v in triples[0]]
+                    reported = {tuple(sorted(normalised(v) for v in parts)) for parts in products}
+                    missing = [pair for pair in itertools.combinations(variables, 2) if tuple(sorted(pair)) not in reported]
+                    if missing:
+                        add(_warning('three_way_moderation_hierarchy_incomplete', f'{label} omits constituent two-way terms for its explicitly reported three-way interaction: ' + ', '.join(' × '.join(pair) for pair in missing), rows[-1], severity='major', verification='likely inconsistency', action='Verify the complete hierarchical model against the original output, including main effects and all constituent two-way interactions.'))
 
         # Incremental F test for a single added interaction in a wide
         # moderation table. The full-model denominator degrees of freedom are
         # inferred from N and the number of reported non-constant terms.
-        if header_row and n and any(term in title_norm + " " + all_text for term in ("moderating", "moderation", "interaction term")):
+        if header_row and n and table_family in {"ols", "unspecified"} and not profile["robust_or_bootstrap"] and any(term in title_norm + " " + all_text for term in ("moderating", "moderation", "interaction term")):
             r2_idx = _column_index(headers, "r2", "r squared")
             dr2_idx = _column_index(headers, "delta r2", "change in r squared", "r2 change")
             fchange_idx = _column_index(headers, "f change", "fchange")
@@ -1055,24 +1063,6 @@ def audit_measurement_structure(paragraphs: Sequence[Dict[str, Any]]) -> List[Di
         else:
             table_numbers[key] = (title, first)
 
-    # A frequency/severity scale should report both dimensions when both are used.
-    methods_text = normalised(" ".join(clean_text(row.get("text", "")) for row in paragraphs if row.get("chapter_number") == 3))
-    result_table_text = normalised(" ".join(
-        clean_text(row.get("table_title", "")) + " " + clean_text(row.get("text", ""))
-        for row in paragraphs if row.get("chapter_number") == 4 and row.get("source_kind") == "table_row"
-    ))
-    if "frequency subscale" in methods_text and "severity subscale" in methods_text and result_table_text:
-        if "classroom incivility" in result_table_text and "severity" not in result_table_text:
-            row = next((item for item in paragraphs if item.get("chapter_number") == 4 and item.get("source_kind") == "table_row" and "classroom incivility" in normalised(item.get("text", "") + " " + item.get("table_title", ""))), None)
-            if row:
-                add(
-                    "measurement_dimension_not_reported",
-                    "The methods chapter defines separate frequency and severity subscales, but the results tables report the frequency dimension without a corresponding severity result.",
-                    row,
-                    verification="reporting omission",
-                    action="Report both dimensions and state clearly which score enters each regression or other inferential model. If severity was not analysed, explain and justify that decision before interpreting an overall construct score.",
-                )
-
     return warnings
 
 
@@ -1109,7 +1099,7 @@ def statistical_warnings_to_issues(statistical_review: Dict[str, Any], academic_
             "section": evidence.get("section_reference") or evidence.get("heading") or "Results and analysis",
             "issue_title": message,
             "severity": warning.get("severity") or "major",
-            "confidence": 0.99 if verification == "verified inconsistency" else 0.93,
+            "confidence": 0.98 if verification == "verified inconsistency" else 0.80,
             "evidence_paragraph_ids": [pid],
             "problematic_quote": clean_text(evidence.get("text"))[:420],
             "assessment": message,
@@ -1156,6 +1146,7 @@ def build_statistical_review(paragraphs: Sequence[Dict[str, Any]], *, chapter_nu
         warnings = [item for item in warnings if item.get("kind") != "moderation_probe_missing"]
     return {
         "chapter_numbers": list(chapter_numbers),
+        "study_profile": study_statistical_profile(paragraphs),
         "diagnostic_inventory": inventory,
         "consistency_warnings": warnings,
         "warning_count": len(warnings),

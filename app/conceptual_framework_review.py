@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from typing import Any, Dict, List, Mapping, Sequence
 
 
@@ -22,7 +24,7 @@ QUANTITATIVE_SIGNALS = (
 
 FRAMEWORK_SIGNALS = (
     "conceptual framework", "conceptual model", "research framework",
-    "analytical framework", "proposed model", "hypothesised model",
+    "analytical framework", "research model", "study model", "proposed model", "hypothesised model",
     "hypothesized model", "path model",
 )
 
@@ -45,8 +47,10 @@ def is_quantitative_study(
     approach = _norm(research_approach)
     if "quantitative" in approach or "mixed" in approach:
         return True
-    text = " ".join(_norm(row.get("text")) for row in paragraphs)
-    signals = sum(1 for term in QUANTITATIVE_SIGNALS if term in text)
+    if "qualitative" in approach and "mixed" not in approach:
+        return False
+    text = " ".join(_norm(row.get("text")) for row in paragraphs if not row.get("is_reference_entry") and not row.get("is_toc_entry"))
+    signals = sum(1 for term in QUANTITATIVE_SIGNALS if re.search(r"\b"+re.escape(term)+r"\b", text))
     has_hypothesis = bool(re.search(r"\b(?:h0|h1|hypothes(?:is|es))\b", text))
     return signals >= 2 or (signals >= 1 and has_hypothesis)
 
@@ -110,14 +114,33 @@ def build_quantitative_framework_audit(
 
     selected: List[Dict[str, Any]] = []
     selected_roles: Dict[int, List[str]] = {}
+    limit = max(8000, int(max_chars))
+    roles_present = {role for _, _, _, roles in candidates for role in roles}
+    role_budget = max(900, limit // max(1, len(roles_present)))
     used_chars = 0
-    for _, order, row, roles in sorted(candidates, key=lambda item: (item[0], item[1])):
-        size = len(_clean(row.get("text"))) + 220
-        if selected and used_chars + size > max(8000, int(max_chars)):
-            continue
-        selected.append(row)
-        selected_roles[id(row)] = roles
-        used_chars += size
+    selected_ids = set()
+    truncated_components = set()
+    # Reserve a quota for each component before filling with framework detail.
+    for role in ('objective', 'question', 'hypothesis', 'diagram', 'measurement', 'theory', 'framework'):
+        used_role = 0
+        for _, _, row, roles in sorted(candidates, key=lambda item: (item[0], item[1])):
+            if role not in roles or id(row) in selected_ids:
+                continue
+            size = len(_clean(row.get('text'))) + 220
+            if used_role + size > role_budget and used_role:
+                truncated_components.add(role)
+                continue
+            if used_chars + size > limit and selected:
+                truncated_components.add(role)
+                continue
+            selected.append(row); selected_ids.add(id(row)); selected_roles[id(row)] = roles
+            used_role += size; used_chars += size
+    for _, _, row, roles in sorted(candidates, key=lambda item: (item[0], item[1])):
+        if id(row) in selected_ids: continue
+        size = len(_clean(row.get('text'))) + 220
+        if used_chars + size <= limit:
+            selected.append(row); selected_ids.add(id(row)); selected_roles[id(row)] = roles; used_chars += size
+    missing_components = sorted(roles_present - {role for roles in selected_roles.values() for role in roles})
 
     selected.sort(key=lambda row: (
         0 if id(row) in current_ids else 1,
@@ -143,12 +166,18 @@ def build_quantitative_framework_audit(
         "alignment_audit": True,
         "conceptual_framework_audit": True,
         "extra_context": {
+            "evidence_hash": hashlib.sha256(json.dumps([(row.get("text"), selected_roles.get(id(row))) for row in selected], sort_keys=True).encode()).hexdigest(),
+            "missing_evidence_components": missing_components,
+            "truncated_evidence_components": sorted(truncated_components),
+            "evidence_complete": not missing_components and not truncated_components,
+            "evidence_coverage_rule": "Verify only supplied evidence. Identify missing or truncated components and request the exact source rather than asserting full alignment.",
             "quantitative_study_confirmed": True,
             "framework_found_in_current_review_scope": current_framework,
             "framework_found_in_alignment_context": any(id(row) not in current_ids for row in framework_rows),
             "diagram_or_figure_reference_found": bool(diagram_rows),
             "embedded_drawing_count": visible_drawing_count,
             "diagram_images_supplied_to_expert": visual_image_count,
+            "visual_evidence_complete": bool(visual_image_count) if diagram_rows else False,
             "audited_components": sorted({
                 role for roles in selected_roles.values() for role in roles
             }),

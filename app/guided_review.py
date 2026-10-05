@@ -125,11 +125,11 @@ def review_id_is_guided_child(value: Any, review_id: str) -> bool:
 
 
 def _signature(row: Mapping[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(row.get("finding_id") or "").strip().lower(),
-        str(row.get("issue_title") or row.get("item") or "").strip().lower(),
-        str(row.get("exact_source_text") or row.get("problematic_quote") or "").strip().lower()[:220],
-    )
+    quote = str(row.get('exact_source_text') or row.get('problematic_quote') or '').strip().lower()[:220]
+    title = str(row.get('root_cause_family') or row.get('issue_title') or row.get('item') or '').strip().lower()
+    action = str(row.get('required_action') or '').strip().lower()
+    return (title, quote, action)
+
 
 
 def _merge_rows(reviews: Iterable[Mapping[str, Any]], key: str) -> List[Dict[str, Any]]:
@@ -148,7 +148,7 @@ def _merge_rows(reviews: Iterable[Mapping[str, Any]], key: str) -> List[Dict[str
 
 
 def merge_guided_reviews(
-    reviews: Sequence[Mapping[str, Any]], *, filename: str = ""
+    reviews: Sequence[Mapping[str, Any]], *, filename: str = "", expected_chapters: Sequence[int] = ()
 ) -> Dict[str, Any]:
     """Assemble the released whole-thesis result from completed chapter turns.
 
@@ -189,16 +189,23 @@ def merge_guided_reviews(
     )
     merged["statistical_review"] = stats
 
+    merged["internal_issue_ledger"] = {"findings": _merge_rows([{"ledger": (r.get("internal_issue_ledger") or {}).get("findings") or r.get("canonical_findings") or []} for r in reviews], "ledger")}
     summary = merged.setdefault("summary", {})
+    completed = {(r.get("summary") or {}).get("selected_chapter") for r in reviews}
+    expected = set(expected_chapters) or set(completed)
+    complete_scope = completed == expected and (bool(expected_chapters) or completed.issuperset({1,2,3,4,5}))
     scores = [float((item.get("summary") or {}).get("overall_score") or 0) for item in reviews]
     summary.update({
         "filename": filename or summary.get("filename"),
         "review_scope": "full_thesis",
         "document_type": "full_thesis",
-        "document_label": "Complete thesis",
+        "document_label": "Complete thesis" if complete_scope else "Reviewed chapters " + ", ".join(str(c) for c in sorted(completed) if c is not None),
+        "guided_unreviewed_chapters": sorted(expected-completed),
+        "reviewed_scope_complete": complete_scope,
         "selected_chapter": None,
         "guided_review": True,
-        "guided_final_consistency_audit": True,
+        "guided_final_consistency_audit": False,
+        "final_consistency_audit_status": "pending",
         "guided_chapters_completed": [
             (item.get("summary") or {}).get("selected_chapter") for item in reviews
         ],

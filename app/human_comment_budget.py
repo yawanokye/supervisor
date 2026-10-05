@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from difflib import SequenceMatcher
+from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Sequence
 
 
@@ -46,6 +48,7 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
         int(row.get("finding_number") or 99999),
     ))
 
+    ledger_rows = deepcopy(rows)
     selected: List[Dict[str, Any]] = []
     deferred: List[Dict[str, Any]] = []
     root_counts: Counter[str] = Counter()
@@ -55,7 +58,14 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
         root = _root_signature(row)
         category = _clean(row.get("category") or "Other")
         repeated = bool(root and root_counts[root] >= (2 if severity in {"critical", "major"} else 1))
-        category_crowded = category_counts[category] >= max(3, limit // 4)
+        equivalent = any(
+            _clean(row.get("required_action")).lower() == _clean(old.get("required_action")).lower()
+            and bool(_clean(row.get("required_action")))
+            and SequenceMatcher(None,root,_root_signature(old)).ratio() >= .85
+            for old in selected
+        )
+        repeated = repeated or equivalent
+        category_crowded = category_counts[category] >= max(3, limit // 4) and severity not in {"critical", "major"}
         must_keep = severity == "critical"
         if must_keep or (len(selected) < limit and not repeated and not category_crowded):
             selected.append(row)
@@ -65,13 +75,6 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
         else:
             deferred.append(row)
 
-    # Fill unused capacity after the diversity and repetition pass.
-    for row in list(deferred):
-        if len(selected) >= limit:
-            break
-        selected.append(row)
-        deferred.remove(row)
-
     selected.sort(key=lambda row: int(row.get("finding_number") or 99999))
     number_by_id: Dict[str, int] = {}
     for number, row in enumerate(selected, start=1):
@@ -80,6 +83,11 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
         if finding_id:
             number_by_id[finding_id] = number
     review["canonical_findings"] = selected
+    prior = ((review.get("internal_issue_ledger") or {}).get("findings") or [])
+    keyed = {(_clean(r.get("finding_id")), _root_signature(r), _clean(r.get("required_action"))): r for r in [*prior,*ledger_rows]}
+    review["internal_issue_ledger"] = {"findings": list(keyed.values()), "count": len(keyed)}
+    from .supervisory_voice import comment_variation_audit
+    review["comment_quality_audit"] = comment_variation_audit(selected)
 
     for key in ("academic_findings", "alignment_results", "revision_results"):
         for row in review.get(key) or []:
@@ -92,6 +100,7 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
     grouped = Counter(_clean(row.get("category") or "Other") for row in deferred)
     review["deferred_issue_ledger"] = {
         "count": len(deferred),
+        "findings": deferred,
         "grouped_counts": dict(grouped),
         "note": (
             "Repeated and lower-priority instances were grouped rather than inserted as separate margin comments. "

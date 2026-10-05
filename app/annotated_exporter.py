@@ -15,7 +15,7 @@ from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from docx.table import Table
 
-from .document_parser import clean_text, normalised, docx_visible_text
+from .document_parser import clean_text, normalised, docx_visible_text, is_heading, explicit_chapter_marker, chapter_from_section_number, canonical_chapter_title_number, is_probable_toc_entry, BACK_MATTER_HEADINGS
 from .comment_quality import (
     comment_max_chars,
     public_text,
@@ -27,11 +27,12 @@ from .review_rules import STATUS_MANUAL, STATUS_MISSING, STATUS_PARTIAL
 from .review_enrichment import context_specific_example
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
+from .annotation_placement import resolve_verified_location, validate_review_placements
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 from .finding_order import priority_order_key
 
-ANNOTATION_EXPORT_VERSION = "2.8.0-quality-gated-native"
-PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.8.0-quality-gated-native"
+ANNOTATION_EXPORT_VERSION = "2.11.0-verified-placement-native"
+PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.11.0-verified-placement-native"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 COMMENT_RED = RGBColor(0xC0, 0x00, 0x00)
@@ -692,7 +693,12 @@ def _expand_to_safe_text_span(text: str, start: int, end: int) -> Tuple[int, int
     first = next((span for span in spans if span[0] <= start < span[1]), None)
     last = next((span for span in spans if span[0] < end <= span[1]), None)
     if first and last:
-        return (first[0], last[1])
+        start, end = first[0], last[1]
+        while start < end and text[start].isspace():
+            start += 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+        return (start, end)
 
     while start > 0 and text[start - 1].isalnum() and text[start:start + 1].isalnum():
         start -= 1
@@ -1521,6 +1527,7 @@ def _source_locator_map(document):
     table_index = 0
     pending_caption: Optional[Dict[str, Any]] = None
     active_chapter: Optional[int] = None
+    active_heading = ""
     chapter_words = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -1545,8 +1552,8 @@ def _source_locator_map(document):
                     **table_info,
                 })
             for row_index, row in enumerate(block.rows, start=1):
-                values = [docx_visible_text(cell) for cell in row.cells if docx_visible_text(cell)]
-                if not values:
+                values = [docx_visible_text(cell) for cell in row.cells]
+                if not any(values):
                     continue
                 paragraph_no += 1
                 cell_paragraphs = []
@@ -1557,6 +1564,9 @@ def _source_locator_map(document):
                     )
                 output[paragraph_no] = {
                     "kind": "table_row",
+                    "text": " | ".join(values),
+                    "table_cells": values,
+                    "heading": active_heading,
                     "chapter_number": active_chapter,
                     "table_index": table_index,
                     "table_row": row_index,
@@ -1570,16 +1580,22 @@ def _source_locator_map(document):
         text = docx_visible_text(block)
         if not text:
             continue
-        chapter_match = re.fullmatch(
-            r"chapter\s+(one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)",
-            normalised(text),
-        )
-        if chapter_match:
-            token = chapter_match.group(1)
-            active_chapter = int(token) if token.isdigit() else chapter_words[token]
+        style_name = str(getattr(getattr(block, "style", None), "name", ""))
+        heading = is_heading(text, style_name)
+        if heading and not is_probable_toc_entry(text, style_name):
+            active_heading = text
+            if normalised(text) in BACK_MATTER_HEADINGS:
+                active_chapter = None
+            else:
+                chapter = explicit_chapter_marker(text) or chapter_from_section_number(text) or canonical_chapter_title_number(
+                    text, style_name=style_name, current_chapter=active_chapter
+                )
+                if chapter is not None:
+                    active_chapter = chapter
         paragraph_no += 1
         output[paragraph_no] = {
             "kind": "paragraph",
+            "heading": active_heading,
             "chapter_number": active_chapter,
             "paragraph": block,
         }
@@ -1762,32 +1778,34 @@ def _comment_on_table_row(
     *,
     author: str,
     initials: str,
+    quote: str = "",
 ) -> bool:
     """Anchor a finding to the reported table row rather than the table title."""
     if row_index <= 0 or row_index > len(table.rows):
         return False
     row = table.rows[row_index - 1]
-    for cell in row.cells:
-        for paragraph in cell.paragraphs:
-            runs = _visible_runs(paragraph)
-            if not runs:
+    paragraphs = [p for cell in row.cells for p in cell.paragraphs]
+    paragraphs.sort(key=lambda p: 0 if quote and quote.casefold() in _visible_paragraph_text(p).casefold() else 1)
+    for paragraph in paragraphs:
+        runs = _visible_runs(paragraph)
+        if not runs:
+            continue
+        prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))]
+        added = False
+        reference_numbers: List[int] = []
+        original_length = len(_visible_paragraph_text(paragraph))
+        for comment in prepared:
+            if not comment:
                 continue
-            prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [_format_comment_group(comments, anchor_context=_visible_paragraph_text(paragraph))]
-            added = False
-            reference_numbers: List[int] = []
-            original_length = len(_visible_paragraph_text(paragraph))
-            for comment in prepared:
-                if not comment:
-                    continue
-                reference_numbers.extend(_group_reference_numbers_from_comment(comment))
-                if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
-                    added = True
-            if added:
-                if _native_group_location_markers_enabled() and reference_numbers:
-                    _normalise_red_reference_markers_after_span(
-                        paragraph, 0, original_length, reference_numbers
-                    )
-                return True
+            reference_numbers.extend(_group_reference_numbers_from_comment(comment))
+            if _add_native_comment(document, runs, _visible_numbered_comment(comment), author=author, initials=initials):
+                added = True
+        if added:
+            if _native_group_location_markers_enabled() and reference_numbers:
+                _normalise_red_reference_markers_after_span(
+                    paragraph, 0, original_length, reference_numbers
+                )
+            return True
     return False
 
 def _first_native_anchor(document) -> Optional[Paragraph]:
@@ -1835,13 +1853,7 @@ def _first_academic_anchor(document):
 def _attach_document_level_comments(
     document, comments: List[str], *, author: str, initials: str
 ) -> None:
-    """Keep unplaced findings in the Review pane without changing body text.
-
-    Public comments must not expose provider recovery, fallback, retry or
-    manual-confirmation messages. Unplaced comments are therefore exported as
-    polished whole-chapter guidance without the mechanical "Document-level
-    review note" prefix.
-    """
+    """Reject any remaining unverified passage-specific placement."""
     cleaned: List[str] = []
     for value in comments:
         reference_number = _comment_reference_number(value)
@@ -1871,17 +1883,7 @@ def _attach_document_level_comments(
     unique = list(dict.fromkeys(cleaned))
     if not unique:
         return
-    anchor = _first_academic_anchor(document) or _first_native_anchor(document)
-    if anchor is None:
-        raise RuntimeError(
-            "The source document has no text that can anchor native Word comments."
-        )
-    batches = [[comment] for comment in unique] if _export_one_comment_per_finding() else [unique[start:start + 4] for start in range(0, len(unique), 4)]
-    for batch in batches:
-        if not _comment_on_paragraph(
-            document, anchor, batch, author=author, initials=initials
-        ):
-            raise RuntimeError("A native Word comment could not be anchored.")
+    raise RuntimeError("A passage-specific comment has no verified source location. Keep it in the report for manual location review.")
 
 
 def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1897,8 +1899,8 @@ def _preferred_evidence(row: Dict[str, Any], evidence: Sequence[Dict[str, Any]])
         item_table = normalised(item.get("table_number", ""))
         text = clean_text(item.get("text", ""))
         return (
-            0 if target_table and item_table == target_table else 1,
             0 if quote and quote in text else 1,
+            0 if target_table and item_table == target_table else 1,
             0 if target_section and item_section == target_section else 1,
             1 if item.get("is_heading") else 0,
             int(item.get("paragraph") or 0),
@@ -2288,15 +2290,10 @@ def _better_evidence_paragraph_number(
     source_map: Dict[int, Dict[str, Any]],
     paragraph_number: int,
 ) -> int:
-    if paragraph_number <= 0:
-        return _insertion_anchor_for_unanchored_row(row, source_map)
-    locator = source_map.get(paragraph_number) or {}
-    if _paragraph_looks_like_heading(locator):
-        replacement = _insertion_anchor_for_unanchored_row(row, source_map)
-        if replacement and replacement != paragraph_number:
-            return replacement
-        return _next_substantive_paragraph_number(source_map, paragraph_number)
-    return paragraph_number
+    verified = row.get("_verified_paragraph_number")
+    if verified is not None:
+        return int(verified)
+    return resolve_verified_location(row, source_map)
 
 
 def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[int, int]:
@@ -2306,21 +2303,18 @@ def _row_span_for_paragraph(row: Dict[str, Any], paragraph_text: str) -> Tuple[i
         exact_end = int(row.get("exact_anchor_end"))
     except (TypeError, ValueError):
         exact_start = exact_end = -1
-    if 0 <= exact_start < exact_end <= len(paragraph_text):
+    if exact_text and 0 <= exact_start < exact_end <= len(paragraph_text):
         candidate = clean_text(paragraph_text[exact_start:exact_end])
-        if not exact_text or candidate == exact_text:
+        if candidate == exact_text:
             return _expand_to_safe_text_span(paragraph_text, exact_start, exact_end)
-    quote = clean_text(row.get("problematic_quote", ""))
+    quote = exact_text or clean_text(row.get("problematic_quote", ""))
     if quote:
         exact_start = paragraph_text.find(quote)
         if exact_start >= 0:
             return _expand_to_safe_text_span(paragraph_text, exact_start, exact_start + len(quote))
-    terms = [
-        row.get("issue_title", ""), row.get("item", ""), row.get("required_action", ""),
-        row.get("comment", ""), row.get("assessment", ""), row.get("section", ""),
-        row.get("section_reference", ""),
-    ]
-    return _best_span(paragraph_text, terms, quote)
+    # With verified full-paragraph evidence but no exact quote, keep a paragraph-wide range.
+    return (0, len(paragraph_text))
+
 
 
 
@@ -2525,43 +2519,15 @@ def _reconciliation_comment_body(row: Dict[str, Any], comment: str) -> str:
 
 
 def _reconciliation_anchor(document, row: Dict[str, Any]) -> Optional[Paragraph]:
-    """Find the closest safe anchor for a reconciliation-only comment."""
-    quotes = [
-        clean_text(row.get("problematic_quote")),
-        *[
-            clean_text(item.get("text"))
-            for item in (row.get("evidence") or [])
-            if item.get("document_role", "current") == "current"
-        ],
-    ]
-    for quote in quotes:
-        if not quote:
-            continue
-        normalised_quote = normalised(quote)
-        for paragraph in document.paragraphs:
-            paragraph_text = _visible_paragraph_text(paragraph)
-            if quote in paragraph_text or (normalised_quote and normalised_quote in normalised(paragraph_text)):
-                if _visible_runs(paragraph):
-                    return paragraph
-
-    headings = tuple(
-        value for value in (
-            *(row.get("headings") or []),
-            row.get("section_reference"),
-            row.get("section"),
-        )
-        if clean_text(value)
-    )
-    if headings:
-        chapter_number = row.get("chapter_number")
-        try:
-            chapter_number = int(chapter_number) if chapter_number is not None else None
-        except (TypeError, ValueError):
-            chapter_number = None
-        heading = _find_heading(document, headings, chapter_number=chapter_number)
-        if heading is not None and _visible_runs(heading):
-            return heading
-    return _first_academic_anchor(document) or _first_native_anchor(document)
+    """Return the verified source anchor, never a guessed nearby paragraph."""
+    source_map, _ = _source_locator_map(document)
+    number = resolve_verified_location(row, source_map)
+    locator = source_map.get(number) or {}
+    if locator.get("paragraph") is not None:
+        return locator["paragraph"]
+    quote = clean_text(row.get("problematic_quote"))
+    candidates = locator.get("cell_paragraphs") or []
+    return next((p for p in candidates if quote and quote in _visible_paragraph_text(p)), candidates[0] if candidates else None)
 
 
 def _attach_lossless_reconciliation_comments(
@@ -2574,17 +2540,15 @@ def _attach_lossless_reconciliation_comments(
 ) -> None:
     """Attach one non-lossy fallback comment for every missing finding number.
 
-    This bypasses grouped-comment deduplication and size limits. It is used only
-    when normal exact anchoring has failed. The exporter first tries the quoted
-    passage or section heading and uses a stable academic-body anchor only as the
-    final fallback.
+    This bypasses grouped-comment size limits while requiring the same verified
+    source evidence. A nearby heading or arbitrary body paragraph is never used.
     """
     for number in missing:
         row, comment = expected[number]
         anchor = _reconciliation_anchor(document, row)
         if anchor is None:
             raise RuntimeError(
-                "The source document has no text that can anchor native Word comments."
+                "No verified source location is available for this finding. It must remain in the report for manual location review."
             )
         runs = _visible_runs(anchor)
         if not runs:
@@ -2662,9 +2626,8 @@ def _build_grouped_annotated_docx(
     That looked tidy, but it was difficult for a student to see the sentence or
     paragraph that needed revision. This builder groups related findings only
     when they share the same evidence passage, then anchors the numbered comment
-    to the exact quote, best sentence, paragraph, or table row. Missing-section
-    findings are placed on the nearest insertion point rather than on a chapter
-    heading.
+    to the verified quote, paragraph, or table row. Missing-section
+    findings remain in the correction notes because absent text cannot be quoted.
     """
     academic_level = (review.get("summary") or {}).get("academic_level")
     prepared_rows = []
@@ -2676,7 +2639,7 @@ def _build_grouped_annotated_docx(
 
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
-    by_table: Dict[Tuple[int, int], List[str]] = defaultdict(list)
+    by_table: Dict[Tuple[int, int, str], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
     numbered_rows: List[Tuple[int, Dict[str, Any], str]] = []
@@ -2730,7 +2693,7 @@ def _build_grouped_annotated_docx(
                         table_row = int(locator.get("table_row") or best.get("table_row") or 0)
                     except (TypeError, ValueError):
                         table_row = 0
-                    by_table[(table_index, table_row)].append(comment)
+                    by_table[(table_index, table_row, clean_text(row.get("problematic_quote")))].append(comment)
                     continue
             paragraph = locator.get("paragraph")
             paragraph_text = _visible_paragraph_text(paragraph) if paragraph is not None else ""
@@ -2753,24 +2716,14 @@ def _build_grouped_annotated_docx(
         paragraph = locator.get("paragraph")
         if paragraph is None:
             continue
-        # All findings tied to one paragraph share one native Word comment box.
-        # Their global finding numbers remain visible inside the grouped comment,
-        # so the report, inline version and native review pane stay reconciled.
-        spans = list(span_groups.keys())
-        comments = [comment for values in span_groups.values() for comment in values]
-        if not spans or not comments:
-            continue
-        start = min(item[0] for item in spans)
-        end = max(item[1] for item in spans)
-        start, end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
-        combined = _format_comment_group(comments, anchor_context=(_visible_paragraph_text(paragraph))[start:end])
-        if not combined:
-            continue
-        if not _mark_span_and_insert_comment(
-            document, paragraph, start, end, combined,
-            author=author, initials=initials,
-        ):
-            after_paragraph[paragraph_number].extend(comments)
+        # Group only findings tied to the same verified sentence range.
+        for (start, end), comments in sorted(span_groups.items(), reverse=True):
+            text = _visible_paragraph_text(paragraph)
+            start, end = _expand_to_safe_text_span(text, start, end)
+            combined = _format_comment_group(comments, anchor_context=text[start:end])
+            if combined and not _mark_span_and_insert_comment(document, paragraph, start, end, combined,
+                    author=author, initials=initials):
+                after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
         locator = source_map.get(paragraph_number) or {}
@@ -2783,7 +2736,7 @@ def _build_grouped_annotated_docx(
             fallback_comments.extend(comments)
 
     for table_key in sorted(by_table, reverse=True):
-        table_index, table_row = table_key
+        table_index, table_row, table_quote = table_key
         table_info = table_map.get(table_index) or {}
         table = table_info.get("table")
         comments = list(dict.fromkeys(by_table[table_key]))
@@ -2791,11 +2744,11 @@ def _build_grouped_annotated_docx(
         added = False
         if table is not None and table_row:
             added = _comment_on_table_row(
-                document, table, table_row, comments, author=author, initials=initials
+                document, table, table_row, comments, author=author, initials=initials, quote=table_quote
             )
-        if not added and table is not None:
+        if not added and not table_row and table is not None:
             added = _comment_on_table(document, table, comments, caption=caption, author=author, initials=initials)
-        if not added and caption is not None:
+        if not added and not table_row and caption is not None:
             added = _comment_on_paragraph(document, caption, comments, author=author, initials=initials)
         if not added:
             fallback_comments.extend(comments)
@@ -2841,7 +2794,7 @@ def build_annotated_docx(
     # tables, and headings remain unchanged.
     by_paragraph: Dict[int, Dict[Tuple[int, int], List[str]]] = defaultdict(lambda: defaultdict(list))
     after_paragraph: Dict[int, List[str]] = defaultdict(list)
-    by_table: Dict[int, List[str]] = defaultdict(list)
+    by_table: Dict[Tuple[int, int, str], List[str]] = defaultdict(list)
     missing_by_heading: Dict[Tuple[Optional[int], Tuple[str, ...]], List[str]] = defaultdict(list)
     fallback_comments: List[str] = []
     missing_section_rows: List[Dict[str, Any]] = []
@@ -2856,6 +2809,7 @@ def build_annotated_docx(
         {**row, "_academic_level": academic_level}
         for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
     ]
+    review_rows = validate_review_placements(review_rows, review, source_map, _is_missing_section_finding)
     if _merge_comments_by_section():
         return _build_grouped_annotated_docx(
             document,
@@ -2923,7 +2877,7 @@ def build_annotated_docx(
                 if locator.get("kind") in {"table_row", "table_caption"} or best.get("table_index"):
                     table_index = int(locator.get("table_index") or best.get("table_index") or 0)
                     if table_index:
-                        by_table[table_index].append(comment)
+                        by_table[(table_index, int(locator.get("table_row") or 0), clean_text(row.get("problematic_quote")))].append(comment)
                         continue
                 paragraph = locator.get("paragraph")
                 if paragraph is not None:
@@ -2967,46 +2921,19 @@ def build_annotated_docx(
             fallback_comments.append(comment)
 
     for paragraph_number, span_groups in by_paragraph.items():
-        locator = source_map.get(paragraph_number) or {}
-        paragraph = locator.get("paragraph")
+        paragraph = (source_map.get(paragraph_number) or {}).get("paragraph")
         if paragraph is None:
             continue
-        spans = list(span_groups.keys())
-        comments = [comment for values in span_groups.values() for comment in values]
-        if not spans or not comments:
-            continue
-        start = min(item[0] for item in spans)
-        end = max(item[1] for item in spans)
-        safe_start, safe_end = _expand_to_safe_text_span(_visible_paragraph_text(paragraph), start, end)
-        if _export_one_comment_per_finding():
-            placed_any = False
-            prepared_comments = sorted(
-                _prepare_comment_list(comments),
-                key=lambda value: _comment_reference_number(value) or 0,
-            )
-            reference_numbers: List[int] = []
-            for comment in prepared_comments:
-                reference_numbers.extend(_group_reference_numbers_from_comment(comment))
-                if _mark_span_and_insert_comment(
-                    document, paragraph, safe_start, safe_end, comment,
-                    author=author, initials=initials,
-                ):
-                    placed_any = True
-                else:
+        for (start, end), comments in sorted(span_groups.items(), reverse=True):
+            text = _visible_paragraph_text(paragraph)
+            safe_start, safe_end = _expand_to_safe_text_span(text, start, end)
+            prepared = _prepare_comment_list(comments) if _export_one_comment_per_finding() else [
+                _format_comment_group(comments, anchor_context=text[safe_start:safe_end])
+            ]
+            for comment in prepared:
+                if not _mark_span_and_insert_comment(document, paragraph, safe_start, safe_end, comment,
+                        author=author, initials=initials):
                     after_paragraph[paragraph_number].append(comment)
-            if placed_any and reference_numbers:
-                _normalise_red_reference_markers_after_span(
-                    paragraph, safe_start, safe_end, reference_numbers
-                )
-            elif comments:
-                after_paragraph[paragraph_number].extend(comments)
-            continue
-        combined = _format_comment_group(comments, anchor_context=(_visible_paragraph_text(paragraph))[safe_start:safe_end])
-        if not _mark_span_and_insert_comment(
-            document, paragraph, safe_start, safe_end, combined,
-            author=author, initials=initials,
-        ):
-            after_paragraph[paragraph_number].extend(comments)
 
     for paragraph_number, comments in after_paragraph.items():
         locator = source_map.get(paragraph_number) or {}
@@ -3020,24 +2947,23 @@ def build_annotated_docx(
         else:
             fallback_comments.extend(comments)
 
-    # Process tables in reverse order for stable comment anchoring.
-    for table_index in sorted(by_table, reverse=True):
+    # Preserve the verified row and quoted cell in every native comment style.
+    for table_key in sorted(by_table, reverse=True):
+        table_index, table_row, table_quote = table_key
         table_info = table_map.get(table_index) or {}
         table = table_info.get("table")
-        comments = list(dict.fromkeys(by_table[table_index]))
+        comments = list(dict.fromkeys(by_table[table_key]))
         caption = table_info.get("caption_paragraph")
-        if table is not None:
-            if not _comment_on_table(
-                document, table, comments, caption=caption,
-                author=author, initials=initials,
-            ):
-                fallback_comments.extend(comments)
+        added = False
+        if table is not None and table_row:
+            added = _comment_on_table_row(document, table, table_row, comments,
+                author=author, initials=initials, quote=table_quote)
+        elif table is not None:
+            added = _comment_on_table(document, table, comments, caption=caption,
+                author=author, initials=initials)
         elif caption is not None:
-            if not _comment_on_paragraph(
-                document, caption, comments, author=author, initials=initials
-            ):
-                fallback_comments.extend(comments)
-        else:
+            added = _comment_on_paragraph(document, caption, comments, author=author, initials=initials)
+        if not added:
             fallback_comments.extend(comments)
 
     # Findings about absent or underdeveloped material are placed under the

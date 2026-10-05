@@ -1,4 +1,4 @@
-# V-Professor v2.8.1 Deployment Guide
+# V-Professor v2.11.0 Deployment Guide
 
 ## Architecture
 
@@ -55,7 +55,7 @@ VPROF_ABSOLUTE_CLAIM_AUDIT=true
 VPROF_EXPORT_ANCHOR_RECONCILIATION=true
 ```
 
-Native and inline reconciliation stops completion rather than releasing a report-only result. Current V-Professor comments are counted separately from comments inherited from the uploaded source, and every canonical finding number must appear in both annotated outputs. Findings tied to the same exact paragraph may share one comment box while retaining their individual numbers.
+Native and inline reconciliation stops completion when a source-verified annotation is missing. Current V-Professor comments are counted separately from comments inherited from the uploaded source. Every source-verified annotation finding number must appear in both outputs. Findings tied to the same verified sentence range may share one comment box while retaining their individual numbers. Findings whose source location is ambiguous remain in the report with a manual location notice and the required correction.
 
 Keep `VPROF_DB_ARTIFACT_STORAGE=true` during migration. If `S3_BUCKET` is set, the app stores large uploads, checkpoints and generated files in the configured S3-compatible bucket and uses PostgreSQL only as the compatibility fallback.
 
@@ -98,6 +98,17 @@ VPROF_FALLBACK_PROVIDER=none
 ```
 
 ### OpenAI
+
+To use GPT 6.1 Sol for every OpenAI role, set these variables on both services:
+
+```env
+OPENAI_MODEL=gpt-6.1-sol
+OPENAI_MODEL_MODE=single
+```
+
+Restart the web service and worker after changing the environment. Replace the model ID with another compatible OpenAI text model to switch without editing application code. Single mode overrides existing per-role model variables. Use `OPENAI_MODEL_MODE=roles` when explicit role variables should take precedence, or leave `OPENAI_MODEL` blank to retain the defaults below.
+
+The adapter adjusts supported reasoning and output parameters while retaining the chosen model. API access and suitable context capacity are still required. Configure `OPENAI_MODEL_PRICES_JSON` for an unknown model when accurate cost estimates are needed.
 
 ```env
 VPROF_PRIMARY_PROVIDER=openai

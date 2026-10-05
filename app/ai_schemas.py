@@ -94,6 +94,7 @@ class AcademicIssue(StrictModel):
     evidence_paragraph_ids: List[str] = Field(default_factory=list)
     problematic_quote: str = ""
     assessment: str
+    supervisory_comment: str = ""
     academic_consequence: str
     required_action: str
     illustrative_guidance: str = ""
@@ -139,6 +140,7 @@ class CompactAcademicIssue(StrictModel):
     assessment: str = ""
     required_action: str = ""
     source_verification_required: bool = False
+    supervisory_comment: str = ""
 
 
 class CompactAcademicSectionReview(StrictModel):

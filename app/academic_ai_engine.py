@@ -11,6 +11,8 @@ from difflib import SequenceMatcher
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .supervisory_voice import VOICE_CONTRACT
+from .provider_state import provider_checkpoint_context
 from .ai_config import AIConfigurationError, HybridAIConfig
 from .ai_prompts import (
     ACADEMIC_REVIEW_SYSTEM_PROMPT,
@@ -976,18 +978,20 @@ def _chapter_dimensions(review: Dict[str, Any]) -> List[str]:
 
 
 def _selected_audit_paragraphs(paragraphs: Sequence[Dict[str, Any]], limit_chars: int) -> List[Dict[str, Any]]:
-    selected: List[Dict[str, Any]] = []
-    total = 0
+    from collections import defaultdict, deque
+    groups = defaultdict(deque)
     for index, paragraph in enumerate(paragraphs):
         combined = normalised((paragraph.get("heading") or "") + " " + (paragraph.get("text") or ""))
-        include = index < 4 or bool(paragraph.get("is_heading")) or any(term in combined for term in KEY_ALIGNMENT_TERMS)
-        if not include:
-            continue
-        size = len(clean_text(paragraph.get("text", ""))) + 120
-        if selected and total + size > limit_chars:
-            break
-        selected.append(paragraph)
-        total += size
+        if index < 4 or paragraph.get("is_heading") or any(term in combined for term in KEY_ALIGNMENT_TERMS):
+            groups[(paragraph.get("document_role"), paragraph.get("chapter_number"))].append(paragraph)
+    selected = []; total = 0
+    while any(groups.values()):
+        for group in groups.values():
+            if not group: continue
+            paragraph = group.popleft()
+            size = len(clean_text(paragraph.get("text", ""))) + 120
+            if total + size > limit_chars: continue
+            selected.append(paragraph); total += size
     return selected
 
 
@@ -1090,6 +1094,7 @@ def _batch_prompt(
             ),
             "internal_academic_guide_adapt_to_relevance_do_not_name_or_number": _guide_expectations(review, section.get("heading", "")),
             "paragraphs": [_payload(p) for p in section.get("paragraphs") or []],
+            "supervisory_voice": VOICE_CONTRACT,
             "coverage_unit": bool(section.get("coverage_unit")),
             "coverage_unit_kind": section.get("coverage_unit_kind", "section"),
             "coverage_unit_index": section.get("coverage_unit_index"),
@@ -1202,6 +1207,9 @@ def _batch_prompt(
             },
             **context_lock_isolation_fields(),
         },
+        "reference_index_matches": [e for e in (review.get("reference_index") or {}).get("entries", [])
+            if e["key"].split("|")[0] in normalised(json.dumps(sections,ensure_ascii=False)) and e["key"].split("|")[1] in json.dumps(sections,ensure_ascii=False)][:30],
+        "reference_match_rule": "A reference-list match does not verify source existence or claim support. Request the source text when substantive verification is needed.",
         "document_manifest_for_factual_checks": summary.get("supervisory_document_manifest") or {},
         "objective_to_conclusion_traceability_matrix": review.get("objective_alignment_matrix") or {},
         "chapter_review_dimensions": _chapter_dimensions(review),
@@ -1648,6 +1656,9 @@ def _valid_issue(
         parsed, context_lock.get("declared_academic_level", "")
     )
     parsed.update(metadata)
+    # A factual safeguard may change the diagnosis or correction. Regenerate its prose later.
+    if any(clean_text(parsed.get(k, "")) != clean_text(candidate.get(k, "")) for k in ("assessment", "required_action", "academic_consequence")):
+        parsed["supervisory_comment"] = ""
     return parsed
 
 
@@ -1796,6 +1807,7 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "confidence": round(float(issue.get("confidence") or 0), 2),
         "evidence": evidence,
         "comment": comment,
+        "supervisory_comment": clean_text(issue.get("supervisory_comment", "")),
         "required_action": clean_text(issue.get("required_action", "")),
         "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
         "guidance_type": issue.get("guidance_type", "direct_correction"),
@@ -1924,6 +1936,7 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
 
 
 def _academic_score(section_reviews: Sequence[Dict[str, Any]], issues: Sequence[Dict[str, Any]]) -> float:
+    section_reviews = [row for row in section_reviews if not row.get("local_preflight_pass")]
     weighted_total = sum(float(section.get("section_score") or 0) * max(1, int(section.get("paragraph_count") or 1)) for section in section_reviews)
     weight_sum = sum(max(1, int(section.get("paragraph_count") or 1)) for section in section_reviews)
     score = weighted_total / weight_sum if weight_sum else 0.0
@@ -2268,11 +2281,11 @@ async def enrich_review_with_academic_ai(
                     for value in paragraph.get("drawing_image_data_urls") or []:
                         if value not in image_data_urls:
                             image_data_urls.append(value)
-                        if len(image_data_urls) >= 3:
+                        if len(image_data_urls) >= int(os.getenv("AI_MAX_FRAMEWORK_IMAGES", "12")):
                             break
-                    if len(image_data_urls) >= 3:
+                    if len(image_data_urls) >= int(os.getenv("AI_MAX_FRAMEWORK_IMAGES", "12")):
                         break
-                if len(image_data_urls) >= 3:
+                if len(image_data_urls) >= int(os.getenv("AI_MAX_FRAMEWORK_IMAGES", "12")):
                     break
         user_prompt = _batch_prompt(
             review,
@@ -2290,8 +2303,8 @@ async def enrich_review_with_academic_ai(
         )
         section_keys = [str(item.get("section_key") or "") for item in batch]
         input_hash = stable_hash({
-            "pipeline": "academic-review-v2.7.0-final-isolated-generic-natural-evidence-ledger",
-            "retry_generation": int(retry_generation or 0),
+            "pipeline": "academic-review-v2.11.0-final-isolated-generic-natural-evidence-ledger",
+            "regeneration_generation": int(runtime.get("regeneration_generation") or 0),
             "model": model,
             "effort": effort,
             "routing": provider.route_signature(
@@ -2326,8 +2339,9 @@ async def enrich_review_with_academic_ai(
                     progress=35,
                     message=f"Reviewing coverage packet containing {len(batch)} unit(s)",
                 )
-            result = await provider.complete_json(
-                model=model,
+            with provider_checkpoint_context(checkpoint_manager, stage_key) if checkpoint_manager is not None else __import__("contextlib").nullcontext():
+                result = await provider.complete_json(
+                    model=model,
                 system_prompt=primary_system_prompt,
                 user_prompt=user_prompt,
                 schema_model=primary_schema,
@@ -2409,7 +2423,8 @@ async def enrich_review_with_academic_ai(
             "coverage_complete": True,
             "coverage_assessment_inferred": False,
             "local_preflight_pass": True,
-            "section_score": 100.0,
+            "section_score": 0.0,
+            "assessment_scope": "structural preflight only",
             "section_assessment": "",
             "coverage_warning": "",
             "strengths": [],
@@ -2671,6 +2686,27 @@ async def enrich_review_with_academic_ai(
             failed_batches.append(idx)
         else:
             consume_batch(batch, result)
+
+    sampled_keys = {s["section_key"] for s in ai_sections if s.get("clean_quality_sample")}
+    affected_chapters = {r.get("chapter_number") for r in section_reviews if r.get("section_key") in sampled_keys
+        and any(i.get("severity") in {"critical", "major", "moderate"} and float(i.get("confidence") or 0) >= .8 for i in r.get("issues", []))}
+    expanded = [s for s in local_preflight_sections if s.get("chapter_number") in affected_chapters]
+    if expanded:
+        expanded_keys = {s["section_key"] for s in expanded}
+        section_reviews[:] = [r for r in section_reviews if r.get("section_key") not in expanded_keys]
+        for section in expanded:
+            section["locally_preflighted"] = False
+            section["assessment_scope"] = "AI assessment after sample finding"
+            section["ai_review_reasons"] = ["sample_triggered_expansion"]
+        ai_sections.extend(expanded)
+        local_preflight_sections[:] = [s for s in local_preflight_sections if s["section_key"] not in expanded_keys]
+        expanded_batches = coverage_packets(expanded, max_chars_per_request=config.coverage_request_max_chars,
+            max_units_per_request=config.coverage_units_per_request, high_risk_units_per_request=config.coverage_high_risk_units_per_request) if config.systematic_coverage_review_enabled else _chapter_review_packets(expanded, config.chapter_packet_max_chars)
+        for batch in expanded_batches:
+            result = await primary_call(batch, *_batch_model_route(batch, academic_level, config), "sample_triggered_coverage_expansion", primary_tokens)
+            consume_batch(batch, result)
+        selective_review_stats.update({"sample_triggered_expansion_units":len(expanded), "ai_review_units":len(ai_sections),
+            "local_preflight_units":len(local_preflight_sections), "estimated_ai_unit_reduction_percent":round(100*len(local_preflight_sections)/max(1,len(sections)),1)})
 
     # Recover omissions once at chapter-packet level. The previous pipeline
     # attempted grouped, single-section and focused recovery in sequence, which
@@ -2978,8 +3014,8 @@ async def enrich_review_with_academic_ai(
         ) -> ProviderResult:
             prompt = _verification_prompt(review, batch, depth, context_lock)
             audit_hash = stable_hash({
-                "pipeline": "academic-comment-audit-v2.7.0-final-isolated-risk-selected-release-guard",
-                "retry_generation": int(retry_generation or 0),
+                "pipeline": "academic-comment-audit-v2.11.0-final-isolated-risk-selected-release-guard",
+                "regeneration_generation": int(runtime.get("regeneration_generation") or 0),
                 "batch": batch_label,
                 "retry": retry,
                 "depth": depth,
@@ -3014,31 +3050,32 @@ async def enrich_review_with_academic_ai(
                             if retry else "Verifying review comments"
                         ),
                     )
-                result = await provider.complete_json(
-                    model=audit_model,
-                    system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
-                    user_prompt=prompt,
-                    schema_model=AcademicVerificationBatch,
-                    purpose=(
-                        f"{depth}_focused_comment_accuracy_retry"
-                        if retry else f"{depth}_universal_comment_accuracy_audit"
-                    ),
-                    reasoning_effort=audit_effort,
-                    max_output_tokens=audit_tokens,
-                    request_timeout_seconds=(
-                        config.fast_request_timeout_seconds
-                        if depth in {"light", "standard"}
-                        else None
-                    ),
-                    request_max_retries=(
-                        config.fast_request_max_retries
-                        if depth in {"light", "standard"}
-                        else None
-                    ),
-                    stage=audit_stage,
-                    review_depth=depth,
-                    allow_escalation=(depth == "advanced"),
-                )
+                with provider_checkpoint_context(checkpoint_manager, stage_key) if checkpoint_manager is not None else __import__("contextlib").nullcontext():
+                    result = await provider.complete_json(
+                        model=audit_model,
+                        system_prompt=ACADEMIC_VERIFY_SYSTEM_PROMPT,
+                        user_prompt=prompt,
+                        schema_model=AcademicVerificationBatch,
+                        purpose=(
+                            f"{depth}_focused_comment_accuracy_retry"
+                            if retry else f"{depth}_universal_comment_accuracy_audit"
+                        ),
+                        reasoning_effort=audit_effort,
+                        max_output_tokens=audit_tokens,
+                        request_timeout_seconds=(
+                            config.fast_request_timeout_seconds
+                            if depth in {"light", "standard"}
+                            else None
+                        ),
+                        request_max_retries=(
+                            config.fast_request_max_retries
+                            if depth in {"light", "standard"}
+                            else None
+                        ),
+                        stage=audit_stage,
+                        review_depth=depth,
+                        allow_escalation=(depth == "advanced"),
+                    )
                 if checkpoint_manager is not None:
                     checkpoint_manager.save_provider_result(
                         stage_key,
@@ -3800,6 +3837,8 @@ async def enrich_review_with_academic_ai(
         "ai_review_units": int(selective_review_stats.get("ai_review_units") or 0),
         "local_preflight_units": int(selective_review_stats.get("local_preflight_units") or 0),
         "quantitative_framework_audit_applied": bool(framework_audit),
+        "academic_ai_coverage_targets": coverage_ledger.get("ai_assessed_target_count",0),
+        "structural_only_targets": coverage_ledger.get("local_structural_target_count",0),
         "coverage_units_total": int(coverage_ledger.get("unit_count") or 0),
         "coverage_units_completed": int(coverage_ledger.get("completed_units") or 0),
         "coverage_targets_total": int(coverage_ledger.get("target_count") or 0),
@@ -3874,6 +3913,8 @@ async def enrich_review_with_academic_ai(
         ),
         "selective_review": selective_review_stats,
         "quantitative_framework_audit_applied": bool(framework_audit),
+        "academic_ai_coverage_targets": coverage_ledger.get("ai_assessed_target_count",0),
+        "structural_only_targets": coverage_ledger.get("local_structural_target_count",0),
         "chapter_packet_max_chars": config.chapter_packet_max_chars,
         "coverage_request_max_chars": config.coverage_request_max_chars,
         "coverage_units_per_request": config.coverage_units_per_request,

@@ -15,7 +15,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 from .comment_quality import public_text, sanitise_finding_rows, sentence_safe_trim
 from .articleready_review_bridge import build_articleready_quality_audit
-from .professional_review_pipeline import build_professional_review_package
+from .professional_review_pipeline import build_professional_review_package, build_finding_ledger
 from .reviewer_language import academic_level_label, professionalise_reviewer_language
 from .supervisory_review_algorithm import build_supervisory_report_spec
 from .submission_readiness import build_supervisory_readiness
@@ -1004,6 +1004,24 @@ def _add_simple_heading(doc: Document, text: str, level: int = 1) -> None:
     doc.add_heading(_clean(text), level=level)
 
 
+def _add_manual_location_findings(doc: Document, review: Dict[str, Any]) -> None:
+    numbers = {
+        int(row.get("finding_number") or 0)
+        for row in review.get("canonical_findings") or []
+        if row.get("placement_status") == "manual_location_required"
+    }
+    if not numbers:
+        return
+    doc.add_paragraph(
+        f"{len(numbers)} finding{'s' if len(numbers) != 1 else ''} could not be linked confidently to a source location. "
+        "The corrections are listed below for manual location checking. No margin comment was attached for these findings."
+    )
+    ledger = [item for item in build_finding_ledger(review) if item.get("number") in numbers]
+    for item in ledger:
+        item["location"] = f"{item.get('section') or 'Source location'}: manual location checking required"
+    _add_professional_finding_table(doc, ledger, "Corrections requiring location checking")
+
+
 def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     """Build a supervisor/examiner report aligned with the supplied review specification.
 
@@ -1167,6 +1185,7 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
         next_number += 1
 
     _add_simple_heading(doc, f"{next_number}. Numbered comments and detailed corrections")
+    _add_manual_location_findings(doc, review)
     include_details = _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False)
     max_details = _env_int("VPROF_REPORT_MAX_DETAILED_FINDINGS", 30, 1, 200)
     bundle_ok = bool(summary.get("annotation_bundle_validation_passed"))
@@ -1187,7 +1206,7 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
         inline_count = int(summary.get("inline_annotation_count") or 0)
         if bundle_ok:
             doc.add_paragraph(
-                f"The review contains {len(ledger)} sequentially numbered findings represented across {native_count} native Word comment box{'es' if native_count != 1 else ''} and {inline_count} inline supervisor note{'s' if inline_count != 1 else ''}. "
+                f"The review contains {len(ledger)} sequentially numbered findings, with source-verified comments across {native_count} native Word comment box{'es' if native_count != 1 else ''} and {inline_count} inline supervisor note{'s' if inline_count != 1 else ''}. "
                 "The report summarises the decision, validity barriers, statistical audit and chapter correction plan without repeating every annotation word for word."
             )
         else:
@@ -1361,12 +1380,13 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     section_number += 1
 
     doc.add_heading(f"{section_number}. Numbered Comments and Detailed Corrections", level=1)
+    _add_manual_location_findings(doc, review)
     if _env_bool("VPROF_REPORT_INCLUDE_DETAILED_FINDINGS", False):
         max_details = _env_int("VPROF_REPORT_MAX_DETAILED_FINDINGS", 30, 1, 200)
         prioritised = sorted(ledger, key=lambda item: ({"critical": 0, "major": 1, "moderate": 2, "minor": 3}.get(str(item.get("severity") or "minor").lower(), 9), int(item.get("number") or 0)))
         _add_professional_finding_table(doc, prioritised[:max_details], "Selected detailed findings")
     else:
-        doc.add_paragraph(f"The reviewed work contains {len(ledger)} sequentially numbered, passage-specific comments. The detailed guidance remains beside the relevant text in the reviewed thesis, while this report concentrates on the overall judgement and priorities.")
+        doc.add_paragraph(f"The reviewed work contains {len(ledger)} sequentially numbered findings. Source-verified guidance remains beside the relevant text in the reviewed thesis. Any findings requiring location checking are listed separately, while this report concentrates on the overall judgement and priorities.")
     section_number += 1
 
     section_number = _add_methods_results_audit(doc, package.get("methods_results_discussion_audit") or {}, section_number)

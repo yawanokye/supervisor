@@ -10,3 +10,4 @@ sqlalchemy==2.0.41
 psycopg[binary]==3.2.9
 itsdangerous==2.2.0
 boto3==1.40.0
+scipy==1.17.0

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .reference_index import build_reference_index
 
 import re
 import uuid
@@ -690,9 +691,10 @@ def analyse(
     original_document: Optional[Dict[str, Any]] = None,
     institutional_profile: str = "generic",
     guided_sequence: bool = False,
+    parsed_paragraphs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     uploaded_paragraphs = _tag_paragraphs(
-        parse_document(file_bytes, filename),
+        parsed_paragraphs if parsed_paragraphs is not None else parse_document(file_bytes, filename),
         filename=filename,
         role="current",
     )
@@ -1155,6 +1157,7 @@ def analyse(
         "alignment_results": alignment_results,
         "revision_results": revision_results,
         "results": results,
+        "reference_index": build_reference_index(uploaded_paragraphs),
         "_runtime_context": {
             "current_paragraphs": current_paragraphs,
             "selected_section_scope": selected_section_scope,

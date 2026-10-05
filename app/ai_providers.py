@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import random
+import os
+from .model_compatibility import capabilities, compatible_effort, adapt_rejected_parameter
+from .provider_state import request_state
 import hashlib
 import json
 import logging
@@ -178,6 +183,7 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
                 "assessment": str(item.get("assessment") or item.get("expert_assessment") or item.get("explanation") or "").strip(),
                 "academic_consequence": str(item.get("academic_consequence") or item.get("consequence") or item.get("implication") or "").strip(),
                 "required_action": str(item.get("required_action") or item.get("action") or item.get("recommendation") or "").strip(),
+                "supervisory_comment": str(item.get("supervisory_comment") or "").strip(),
                 "illustrative_guidance": str(item.get("illustrative_guidance") or item.get("example") or item.get("illustrative_example") or "").strip(),
             })
         normalised_section = {
@@ -302,7 +308,11 @@ async def _post_json_with_retry(
                 request_id = response.headers.get("x-request-id", "")
                 if response.status_code in {408, 409, 429} or response.status_code >= 500:
                     if attempt < max_retries:
-                        await asyncio.sleep(min(8, 1.5 ** attempt))
+                        try:
+                            delay = max(0, min(30, float(response.headers.get("retry-after", "0"))))
+                        except ValueError:
+                            delay = 0
+                        await asyncio.sleep(delay or min(8, 1.5 ** attempt) + random.uniform(0,.3))
                         continue
                 if response.status_code >= 400:
                     raise AIProviderError(
@@ -322,6 +332,8 @@ async def _post_json_with_retry(
                 return value, request_id
             except (httpx.HTTPError, ValueError, AIProviderError) as exc:
                 last_error = exc
+                if isinstance(exc, AIProviderError) and re.search(r"HTTP (?:400|401|403|404|422)", str(exc)):
+                    raise
                 if attempt < max_retries:
                     await asyncio.sleep(min(8, 1.5 ** attempt))
                     continue
@@ -634,19 +646,17 @@ class OpenAIProvider:
         image_data_urls: Optional[Sequence[str]] = None,
     ) -> ProviderResult:
         schema = _make_openai_strict_schema(schema_model.model_json_schema())
-        effort = (
-            reasoning_effort
-            or self.config.openai_reasoning_effort
-            or "xhigh"
-        ).strip().lower()
-        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
-            effort = "xhigh"
+        caps = capabilities(model)
+        effort = compatible_effort(model, reasoning_effort or self.config.openai_reasoning_effort or 'medium')
 
         user_content: Any = user_prompt
         valid_images = [
             str(value) for value in image_data_urls or []
             if str(value).startswith("data:image/")
-        ][:3]
+        ][:max(1, int(os.getenv("AI_MAX_FRAMEWORK_IMAGES", "12")))]
+        if valid_images and not caps['vision']:
+            system_prompt += '\nThis model cannot inspect the supplied images. Do not claim to verify diagram arrows or legibility. Request manual visual verification when needed.'
+            valid_images = []
         if valid_images:
             user_content = [
                 {"type": "input_text", "text": user_prompt},
@@ -672,8 +682,13 @@ class OpenAIProvider:
             },
             "max_output_tokens": max_output_tokens or self.config.max_output_tokens,
             "store": False,
-            "reasoning": {"effort": effort},
+
         }
+        if effort:
+            base_body["reasoning"] = {"effort": effort}
+        if not caps["structured"]:
+            base_body["text"]["format"] = {"type": "json_object"}
+            base_input[0]["content"] += "\nReturn JSON matching this schema: " + json.dumps(schema)
         if self.config.openai_prompt_cache_enabled:
             cache_source = (
                 f"{model}\n{purpose}\n{system_prompt}\n"
@@ -685,6 +700,7 @@ class OpenAIProvider:
 
         use_background = bool(
             self.config.openai_background_mode_enabled
+            and caps["background"]
             and effort in {"high", "xhigh", "max"}
         )
         if use_background:
@@ -696,7 +712,7 @@ class OpenAIProvider:
             max_output_tokens or self.config.max_output_tokens
         )
         for attempt in range(attempts):
-            body = dict(base_body)
+            body = copy.deepcopy(base_body)
             if attempt:
                 previous_message = str(last_error or "").lower()
                 if "truncated because the output-token limit" in previous_message:
@@ -737,46 +753,67 @@ class OpenAIProvider:
                     "Authorization": f"Bearer {self.config.openai_api_key}",
                     "Content-Type": "application/json",
                 }
-                payload, request_id = await _post_json_with_retry(
-                    url=f"{self.config.openai_base_url}/responses",
-                    headers=headers,
-                    payload=body,
-                    timeout_seconds=(
-                        min(90, request_timeout_seconds)
-                        if use_background and request_timeout_seconds is not None
-                        else request_timeout_seconds
-                        if request_timeout_seconds is not None
-                        else min(90, self.config.timeout_seconds)
-                        if use_background
-                        else self.config.timeout_seconds
-                    ),
-                    max_retries=(
-                        request_max_retries
-                        if request_max_retries is not None
-                        else self.config.max_retries
-                    ),
-                )
-                if use_background and str(payload.get("status") or "").lower() not in {
-                    "completed", "failed", "cancelled", "incomplete"
-                }:
-                    payload, poll_request_id = await _poll_openai_background_response(
-                        base_url=self.config.openai_base_url,
-                        response_payload=payload,
-                        headers=headers,
-                        poll_seconds=self.config.openai_background_poll_seconds,
-                        timeout_seconds=self.config.openai_background_timeout_seconds,
-                        request_timeout_seconds=(
-                            request_timeout_seconds
-                            if request_timeout_seconds is not None
-                            else self.config.timeout_seconds
-                        ),
-                        max_retries=(
-                            request_max_retries
-                            if request_max_retries is not None
-                            else self.config.max_retries
-                        ),
-                    )
-                    request_id = poll_request_id or request_id
+                timeout = request_timeout_seconds or self.config.timeout_seconds
+                retries = self.config.max_retries if request_max_retries is None else request_max_retries
+                manager, state_key, state_hash = request_state(body)
+                saved = manager.load(state_key, expected_input_hash=state_hash) if manager else None
+                payload = (saved or {}).get('payload')
+                if payload and payload.get('status') in {'cancelled','unavailable'}:
+                    payload = None  # A manually resumed user-stopped request needs a fresh submission.
+                request_id = (saved or {}).get('request_id', '')
+                if not payload:
+                    budget_key = 'provider-call-budget'
+                    budget = manager.load(budget_key) or {} if manager else {}
+                    limit = max(0, int(os.getenv('VPROF_CHAPTER_MAX_API_CALLS', '250')))
+                    if limit and int(budget.get('submissions',0)) >= limit:
+                        raise AIProviderError('Chapter API-call budget reached. Saved work is retained. Increase VPROF_CHAPTER_MAX_API_CALLS and resume to continue.')
+                    if manager: manager.save(budget_key, {'submissions': int(budget.get('submissions',0))+1})
+                    endpoint = caps['endpoint']
+                    for compatibility_attempt in range(5):
+                        request_body = copy.deepcopy(body)
+                        if endpoint == 'chat':
+                            messages = []
+                            for item in body['input']:
+                                content = item['content']
+                                if isinstance(content,list):
+                                    content = [({'type':'text','text':v['text']} if v['type']=='input_text' else {'type':'image_url','image_url':{'url':v['image_url']}}) for v in content]
+                                messages.append({'role':item['role'],'content':content})
+                            request_body = {'model':model,'messages':messages,'max_tokens':body['max_output_tokens']}
+                            fmt = body.get('text',{}).get('format')
+                            if fmt:
+                                request_body['response_format'] = ({'type':'json_schema','json_schema':{k:v for k,v in fmt.items() if k != 'type'}} if fmt.get('type') == 'json_schema' else fmt)
+                            if 'reasoning' in body:
+                                request_body['reasoning_effort'] = body['reasoning']['effort']
+                        try:
+                            payload, request_id = await _post_json_with_retry(url=f'{self.config.openai_base_url}/'+('chat/completions' if endpoint=='chat' else 'responses'), headers=headers, payload=request_body,
+                                timeout_seconds=min(90,timeout) if body.get('background') else timeout, max_retries=retries)
+                            if endpoint == 'chat':
+                                message = ((payload.get('choices') or [{}])[0].get('message') or {}).get('content','')
+                                if (payload.get('choices') or [{}])[0].get('finish_reason') == 'length':
+                                    raise AIProviderError('OpenAI output was truncated because the output-token limit was reached.')
+                                u = payload.get('usage') or {}
+                                payload = {**payload, 'status':'completed', 'output':[{'type':'message','content':[{'type':'output_text','text':message}]}], 'usage':{'input_tokens':u.get('prompt_tokens',0),'output_tokens':u.get('completion_tokens',0),'input_tokens_details':u.get('prompt_tokens_details',{})}}
+                            break
+                        except AIProviderError as error:
+                            if compatibility_attempt >= 4: raise
+                            if endpoint == 'responses' and 'http 400' in str(error).lower() and ('not supported in the responses' in str(error).lower() or 'does not support the responses' in str(error).lower()):
+                                endpoint = 'chat'; continue
+                            if not adapt_rejected_parameter(body,str(error)): raise
+                            if body.get('text',{}).get('format',{}).get('type') != 'json_schema':
+                                if 'Return JSON matching this schema:' not in body['input'][0]['content']:
+                                    body['input'][0]['content'] += '\nReturn JSON matching this schema: '+json.dumps(schema)
+                    if manager:
+                        manager.save(state_key, {'payload':payload,'request_id':request_id}, input_hash=state_hash, message='Provider response saved before polling')
+                if body.get('background') and str(payload.get('status') or '').lower() not in {'completed','failed','cancelled','incomplete'}:
+                    try:
+                        payload, poll_id = await _poll_openai_background_response(base_url=self.config.openai_base_url,response_payload=payload,headers=headers,
+                            poll_seconds=self.config.openai_background_poll_seconds,timeout_seconds=self.config.openai_background_timeout_seconds,request_timeout_seconds=timeout,max_retries=retries)
+                    except AIProviderError as error:
+                        if manager and 'HTTP 404' in str(error):
+                            manager.save(state_key, {'payload':{**payload,'status':'unavailable'},'request_id':request_id},input_hash=state_hash,message='Retained provider response is no longer retrievable; resume requires a fresh submission')
+                        raise
+                    request_id = poll_id or request_id
+                    if manager: manager.save(state_key, {'payload':payload,'request_id':request_id},input_hash=state_hash,message='Provider terminal response saved')
                 raw = _extract_json_text(_openai_output_text(payload))
                 raw = _normalise_model_payload(raw, schema_model)
                 validated = schema_model.model_validate(raw)
@@ -800,6 +837,8 @@ class OpenAIProvider:
                 return ProviderResult(data=validated.model_dump(), usage=usage)
             except (ValidationError, AIProviderError) as exc:
                 last_error = exc
+                if isinstance(exc, AIProviderError) and re.search(r"HTTP (?:400|401|403|404|422)", str(exc)):
+                    break
                 if attempt + 1 >= attempts:
                     break
 

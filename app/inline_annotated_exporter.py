@@ -39,11 +39,12 @@ from .annotated_exporter import (
 from .comment_quality import public_text
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
+from .annotation_placement import resolve_verified_location, validate_review_placements
 from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.8.0-quality-gated-inline"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.8.0-quality-gated-inline"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.11.0-verified-placement-inline"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.11.0-verified-placement-inline"
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -223,7 +224,7 @@ def _iter_all_document_paragraphs(document: Document):
     """Yield body and table-cell paragraphs for reliable inline audits."""
     seen = set()
     for paragraph in document.paragraphs:
-        key = id(paragraph._p)
+        key = paragraph._p
         if key not in seen:
             seen.add(key)
             yield paragraph
@@ -231,7 +232,7 @@ def _iter_all_document_paragraphs(document: Document):
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
-                    key = id(paragraph._p)
+                    key = paragraph._p
                     if key not in seen:
                         seen.add(key)
                         yield paragraph
@@ -239,7 +240,7 @@ def _iter_all_document_paragraphs(document: Document):
                     for nrow in nested.rows:
                         for ncell in nrow.cells:
                             for paragraph in ncell.paragraphs:
-                                key = id(paragraph._p)
+                                key = paragraph._p
                                 if key not in seen:
                                     seen.add(key)
                                     yield paragraph
@@ -281,34 +282,12 @@ def _lossless_inline_anchor(
     row: Dict[str, Any],
     source_map: Dict[int, Dict[str, Any]],
 ) -> Optional[Paragraph]:
-    evidence = [
-        item for item in (row.get("evidence") or [])
-        if item.get("document_role", "current") == "current"
-    ]
-    evidence = _preferred_evidence(row, evidence)
-    best = evidence[0] if evidence else {}
-    try:
-        paragraph_number = int(best.get("paragraph") or 0)
-    except (TypeError, ValueError):
-        paragraph_number = 0
-    paragraph_number = _better_evidence_paragraph_number(row, source_map, paragraph_number)
-    locator = source_map.get(paragraph_number) or {}
-    paragraph = locator.get("paragraph")
-    if paragraph is not None:
-        return paragraph
-
-    wanted = normalised(row.get("section_reference") or row.get("section") or "")
-    if wanted:
-        for paragraph in document.paragraphs:
-            value = normalised(_visible_paragraph_text(paragraph))
-            if value and (value == wanted or wanted in value or value in wanted):
-                return paragraph
-
-    for paragraph in reversed(document.paragraphs):
-        value = clean_text(_visible_paragraph_text(paragraph))
-        if value and not value.startswith("SUPERVISORY REVIEW SUMMARY"):
-            return paragraph
-    return document.add_paragraph("")
+    number = resolve_verified_location(row, source_map)
+    locator = source_map.get(number) or {}
+    if locator.get("paragraph") is not None: return locator["paragraph"]
+    candidates = locator.get("cell_paragraphs") or []
+    quote = clean_text(row.get("problematic_quote"))
+    return next((p for p in candidates if quote and quote.casefold() in _visible_paragraph_text(p).casefold()), candidates[0] if candidates else None)
 
 
 def _add_lossless_inline_comment(paragraph: Paragraph, number: int, body: str) -> None:
@@ -356,7 +335,7 @@ def _ensure_inline_comment_reconciliation(
         comment = _lossless_inline_text(row, _row_comment(row))
         anchor = _lossless_inline_anchor(document, row, source_map)
         if anchor is None:
-            anchor = document.add_paragraph("")
+            raise RuntimeError("No verified source location is available for this inline finding.")
         text = _visible_paragraph_text(anchor)
         if text:
             quote = clean_text(row.get("problematic_quote") or "")
@@ -364,11 +343,7 @@ def _ensure_inline_comment_reconciliation(
                 start = text.find(quote)
                 end = start + len(quote)
             else:
-                start, end = _best_span(
-                    text,
-                    [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")],
-                    quote,
-                )
+                start, end = 0, len(text)
             start, end = _expand_to_safe_text_span(text, start, end)
             if start < end:
                 _mark_span_red(anchor, start, end, (number,))
@@ -406,6 +381,8 @@ def build_inline_annotated_docx(
         {**row, "_academic_level": academic_level}
         for row in build_canonical_finding_rows(review, force=bool(review.pop("_export_fallback_added", False)))
     ]
+
+    review_rows = validate_review_placements(review_rows, review, source_map, _is_missing_section_finding)
 
     # All findings tied to the same paragraph share one numbered inline note.
     # This mirrors the native Word comment grouping and keeps the annotated
@@ -460,8 +437,7 @@ def build_inline_annotated_docx(
             quote_start = text.find(quote)
             start, end = _expand_to_safe_text_span(text, quote_start, quote_start + len(quote))
         else:
-            terms = [row.get("issue_title", ""), row.get("item", ""), row.get("section", "")]
-            start, end = _best_span(text, terms, quote)
+            start, end = 0, len(text)
         start, end = _expand_to_safe_text_span(text, start, end)
         if start >= end:
             start, end = 0, len(text)
@@ -485,16 +461,11 @@ def build_inline_annotated_docx(
         if not comments or not spans:
             continue
         text = _visible_paragraph_text(paragraph)
-        start = min(item[0] for item in spans)
-        end = max(item[1] for item in spans)
-        start, end = _expand_to_safe_text_span(text, start, end)
-        grouped = _format_comment_group(comments, anchor_context=text[start:end])
-        _mark_span_red(
-            paragraph,
-            start,
-            end,
-            _group_reference_numbers_from_comment(grouped),
-        )
+        grouped = _format_comment_group(comments, anchor_context=text)
+        for start, end in sorted(set(spans), reverse=True):
+            start, end = _expand_to_safe_text_span(text, start, end)
+            _mark_span_red(paragraph, start, end, _group_reference_numbers_from_comment(grouped))
+
         _add_inline_comment(paragraph, comments)
 
     # Grouped presentation can be intentionally concise, but it must never

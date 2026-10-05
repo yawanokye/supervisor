@@ -131,9 +131,10 @@ def build_supervisory_readiness(review: Dict[str, Any]) -> Dict[str, Any]:
         if _is_analysis_action(row):
             analysis_actions.append(_analysis_requirement(row, int(row.get("finding_number") or index)))
 
-    critical = sum(1 for item in actions if item["severity"].lower() == "critical")
-    major = sum(1 for item in actions if item["severity"].lower() == "major")
-    moderate = sum(1 for item in actions if item["severity"].lower() == "moderate")
+    complete_rows = (review.get("internal_issue_ledger") or {}).get("findings") or rows
+    critical = sum(1 for item in complete_rows if _clean(item.get("severity")).lower() == "critical")
+    major = sum(1 for item in complete_rows if _clean(item.get("severity")).lower() == "major")
+    moderate = sum(1 for item in complete_rows if _clean(item.get("severity")).lower() == "moderate")
     if critical or major:
         status = "Not ready for supervisor approval"
         meaning = "Essential scholarly or analytical corrections remain. Complete and verify them before the work is treated as ready for approval or submission."

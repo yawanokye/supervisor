@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.11.0 accurate review and varied supervisory comments
+
+- Verified annotation locations against source text, chapter, section and table-row evidence; removed arbitrary body-paragraph placement fallbacks.
+- Kept separate sentence ranges and quoted table cells, with report corrections and explicit manual-location notices for unverified findings.
+
+- Added source-grounded supervisory narratives, variation auditing and bounded prose repair that preserves corrective actions.
+- Corrected model-family, declared-alpha, signed-statistic and rounding checks and added conservative p-value recomputation.
+- Preserved blank DOCX cells, recovered PDF table columns and rendered framework-page visual evidence.
+- Cached source extraction, indexed references and retained a full issue ledger behind the released shortlist.
+- Added sample-triggered assessment expansion and separated structural preflight from AI quality assessment.
+- Added a real final cross-chapter audit and results ledger with explicit evidence coverage and accurate partial-scope labels.
+- Added environment-controlled global OpenAI model selection, GPT 6.1 Sol support and capability adaptation for compatible text models.
+- Preserved paid checkpoints on recovery, saved background IDs before polling and added explicit-stop background cancellation.
+- Added regression tests and a human review quality checklist.
+
 ## 2.10.0 selective AI review and quantitative framework assurance
 
 - Added deterministic local preflight and risk-selected API coverage to reduce routine model calls without weakening the coverage ledger.

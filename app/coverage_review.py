@@ -54,9 +54,9 @@ def _unit_risk_reasons(unit: Dict[str, Any]) -> List[str]:
         " ".join(_clean(value) for value in unit.get("section_path") or []),
         " ".join(_clean(row.get("text")) for row in unit.get("paragraphs") or []),
     ])).lower()
-    if any(term in blob for term in MANDATORY_AI_SECTION_TERMS):
+    if any(re.search(r"\b"+re.escape(term)+r"\b", blob) for term in MANDATORY_AI_SECTION_TERMS):
         reasons.append("academically_decisive_section")
-    if any(term in blob for term in RISK_TEXT_TERMS):
+    if any(re.search(r"\b"+re.escape(term)+r"\b", blob) for term in RISK_TEXT_TERMS):
         reasons.append("high_risk_claim_or_analysis")
     if any(row.get("contains_drawing") for row in unit.get("paragraphs") or []):
         reasons.append("figure_or_diagram")
@@ -95,11 +95,14 @@ def select_ai_review_units(
                 str(unit.get("section_key") or index),
                 _clean(unit.get("heading")),
                 " ".join(unit.get("target_paragraph_ids") or []),
+                " ".join(_clean(row.get("text")) for row in unit.get("paragraphs") or []),
             ])
             bucket = int(hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12], 16)
             sampled = (bucket / float(0xFFFFFFFFFFFF)) < rate
             if sampled:
                 reasons = ["clean_passage_quality_sample"]
+        unit["clean_quality_sample"] = sampled
+        unit["assessment_scope"] = "AI assessment" if reasons else "structural preflight only"
         unit["ai_review_reasons"] = reasons
         unit["locally_preflighted"] = not bool(reasons)
         if reasons:
@@ -480,6 +483,8 @@ def build_coverage_ledger(
         "unit_coverage_percent": unit_percent,
         "target_count": total_targets,
         "assessed_target_count": assessed_targets,
+        "ai_assessed_target_count": sum(len(e.get("target_paragraph_ids") or []) for e in entries if not (review_by_key.get(e["section_key"]) or {}).get("local_preflight_pass")),
+        "local_structural_target_count": sum(len(e.get("target_paragraph_ids") or []) for e in entries if (review_by_key.get(e["section_key"]) or {}).get("local_preflight_pass")),
         "target_coverage_percent": target_percent,
         "complete": bool(unit_count) and completed_units == unit_count and assessed_targets == total_targets,
         "status_counts": dict(overall_status_counts),
