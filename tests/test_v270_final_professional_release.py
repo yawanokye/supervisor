@@ -49,7 +49,7 @@ def _finding(fid: str, paragraph: int, section: str, item: str, comment: str, ac
     }
 
 
-def test_natural_comment_is_three_sentences_without_visible_database_labels():
+def test_natural_comment_preserves_actions_without_visible_database_labels():
     row = {
         "item": "The analytical structure is inconsistent",
         "assessment": "The purpose promises one task. The objectives introduce another task. The questions use a third label.",
@@ -58,7 +58,8 @@ def test_natural_comment_is_three_sentences_without_visible_database_labels():
     }
     text = natural_supervisor_comment(row)
     sentences = re.findall(r"[^.!?]+[.!?]", text)
-    assert 1 <= len(sentences) <= 3
+    assert 1 <= len(sentences) <= 5
+    assert "Use the same terminology throughout" in text
     assert not any(label in text for label in ("Issue:", "Problem identified:", "Action required:", "Verification:"))
     assert "Choose one set of tasks" in text
 

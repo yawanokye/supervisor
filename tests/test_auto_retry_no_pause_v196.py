@@ -11,13 +11,12 @@ def test_transient_failures_queue_instead_of_pause():
     assert "retrying automatically" in transient_block.lower() or "automatically" in transient_block.lower()
 
 
-def test_fresh_generation_is_used_for_automatic_retries():
+def test_resume_preserves_paid_input_hashes():
     academic = Path("app/academic_ai_engine.py").read_text(encoding="utf-8")
     external = Path("app/external_assessment.py").read_text(encoding="utf-8")
-    main = Path("app/main.py").read_text(encoding="utf-8")
-    assert '"retry_generation": int(retry_generation or 0)' in academic
-    assert '"retry_generation": int(retry_generation or 0)' in external
-    assert "retry_generation=int(JOB_CACHE.get(job_id, {}).get(\"resume_count\") or 0)" in main
+    for source in (academic, external):
+        assert '"retry_generation": int(retry_generation or 0)' not in source
+        assert '"regeneration_generation"' in source
 
 
 def test_last_mile_expert_rescue_prevents_empty_annotation_output():
@@ -35,5 +34,5 @@ def test_native_and_inline_annotation_bundle_remains_required():
     assert "inline_annotation_audit" in source
     assert "annotation_bundle_validation_passed" in source
     assert "document.add_comment" in exporter
-    assert "2.8.0-quality-gated-native" in exporter
-    assert "2.8.0-quality-gated-inline" in inline
+    assert "2.11.0-verified-placement-native" in exporter
+    assert "2.11.0-verified-placement-inline" in inline

@@ -144,7 +144,7 @@ def test_native_comments_group_same_sentence_but_keep_different_sentence_separat
     source = _chapter_source()
     output = Document(io.BytesIO(build_annotated_docx(source, _anchored_review(source))))
     comments = list(output.comments)
-    assert len(comments) == 1
+    assert len(comments) == 2
     text = "\n".join(comment.text for comment in comments)
     assert "Evidence is not demonstrated" in text
     assert "The unresolved issue is unclear" in text

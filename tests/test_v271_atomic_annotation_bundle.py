@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import pytest
 
 from docx import Document
 
@@ -219,7 +220,7 @@ def test_reconciliation_bypasses_group_deduplication_and_item_limits(monkeypatch
     assert "2. " in current_text
 
 
-def test_exact_missing_numbers_12_13_16_receive_lossless_native_fallbacks():
+def test_unverified_missing_numbers_are_not_attached_to_arbitrary_text():
     doc = Document()
     doc.add_heading("CHAPTER ONE", level=1)
     doc.add_paragraph("A stable academic paragraph for fallback anchoring.")
@@ -233,7 +234,6 @@ def test_exact_missing_numbers_12_13_16_receive_lossless_native_fallbacks():
         (13, dict(row), "The same grouped wording must not suppress finding thirteen."),
         (16, dict(row), "The same grouped wording must not suppress finding sixteen."),
     ]
-    _ensure_native_comment_reconciliation(
-        doc, numbered_rows, author="V-Professor", initials="VP"
-    )
-    assert _represented_finding_numbers(doc, author="V-Professor") == {12, 13, 16}
+    with pytest.raises(RuntimeError, match="No verified source location"):
+        _ensure_native_comment_reconciliation(doc, numbered_rows, author="V-Professor", initials="VP")
+    assert _represented_finding_numbers(doc, author="V-Professor") == set()
