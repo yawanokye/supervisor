@@ -51,6 +51,7 @@
     </section>
     {% endif %}
     {% if review and review.priority_actions %}<section class="portal-card"><p class="eyebrow">Priority guidance</p><h2>Corrections before resubmission</h2><div class="action-list">{% for action in review.priority_actions[:12] %}<article class="action-item {{ action.severity or 'moderate' }}"><strong>{{ action.section or 'Academic review' }}</strong><p>{{ action.action }}</p></article>{% endfor %}</div></section>{% endif %}
+    {% include 'related_work.html' %}
   </main>
 </body>
 </html>

@@ -50,6 +50,11 @@ from .source_cache import parse_document_cached
 from .results_ledger import run_final_consistency_audit
 from .comment_prose_quality import polish_selected_comments
 from .clean_revision import CLEAN_REVISION_VERSION, build_clean_revised_docx
+from .background_review import finish_chapter_turn, is_fresh_chapter_queue, public_job_progress
+from .related_work import DEFAULT_SOURCES, SOURCES, search_related_work
+from .review_timing import estimate_review
+from .processing_options import processing_options, processing_config
+from .openai_batch import BatchSession, cancel_batches
 from .supplementary_usage import append_usage
 from .provider_cancellation import cancel_retained_background_responses
 from .guided_review import (
@@ -108,7 +113,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.12.0"
+APP_VERSION = "2.13.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -542,6 +547,7 @@ async def lecturer_portal(request: Request, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     for row in reviews:
         row.is_stalled = _is_stalled_record(db, row)
+        row.ready_estimate = _review_time_estimate(row, db)
         last_activity = _stage_last_activity(db, row)
         row.stage_age_minutes = (
             int(max(0, (now - last_activity).total_seconds()) // 60)
@@ -1046,51 +1052,8 @@ def _normalise_db_datetime(value: Optional[datetime]) -> Optional[datetime]:
     return value.astimezone(timezone.utc)
 
 
-def _review_time_estimate(record: ReviewRecord) -> Dict[str, Any]:
-    """Return a conservative, stage-aware ETA without controlling job expiry."""
-    status = str(getattr(record, "status", "") or "").strip().lower()
-    if status in {"completed", "failed", "stopped"}:
-        return {
-            "estimated_seconds_remaining": 0,
-            "estimated_completion_at": None,
-        }
-
-    pages = max(1, int(getattr(record, "estimated_pages", 0) or 1))
-    progress = max(0, min(99, int(getattr(record, "progress", 0) or 0)))
-    stage = str(getattr(record, "current_stage", "") or "").strip().lower()
-    if stage == "document-export" or progress >= 98:
-        remaining = max(10, min(240, 20 + pages * 2))
-    else:
-        depth = str(getattr(record, "review_depth", "standard") or "standard").lower()
-        workflow = str(getattr(record, "workflow_type", "supervisory_review") or "").lower()
-        seconds_per_page = {
-            "light": 10,
-            "standard": 16,
-            "advanced": 24,
-        }.get(depth, 16)
-        if workflow == "external_assessment":
-            seconds_per_page = max(seconds_per_page, 28)
-        planned_total = max(300, pages * seconds_per_page)
-        planned_remaining = planned_total * max(1, 100 - progress) / 100
-
-        started = _normalise_db_datetime(
-            getattr(record, "started_at", None)
-            or getattr(record, "created_at", None)
-        )
-        observed_remaining = 0.0
-        if started and progress >= 8:
-            elapsed = max(1.0, (datetime.now(timezone.utc) - started).total_seconds())
-            observed_remaining = elapsed * max(1, 100 - progress) / progress
-        remaining = int(min(
-            AI_JOB_MAX_SECONDS,
-            max(30, planned_remaining, observed_remaining),
-        ))
-
-    completion = datetime.now(timezone.utc) + timedelta(seconds=remaining)
-    return {
-        "estimated_seconds_remaining": int(remaining),
-        "estimated_completion_at": completion.isoformat(),
-    }
+def _review_time_estimate(record: ReviewRecord, db: Optional[Session] = None) -> Dict[str, Any]:
+    return estimate_review(record, db, worker_slots=max(1, int(os.getenv("VPROF_WORKER_CONCURRENCY", "1"))))
 
 
 def _claim_job(job_id: str, *, resumed: bool) -> bool:
@@ -1102,7 +1065,7 @@ def _claim_job(job_id: str, *, resumed: bool) -> bool:
             .with_for_update()
             .first()
         )
-        if not record or record.status == "completed":
+        if not record or record.status not in {"queued", "processing", "paused"}:
             return False
         lease_expires = _normalise_db_datetime(record.lease_expires_at)
         if (
@@ -1386,6 +1349,14 @@ def _schedule_review_job(
         SCHEDULED_JOB_IDS.discard(job_id)
         JOB_TASKS.pop(job_id, None)
         BACKGROUND_TASKS.discard(completed)
+        # Continue only a successfully saved automatic chapter transition.
+        # Failures retain their existing recovery/backoff, and Stop stays stopped.
+        if not completed.cancelled() and completed.exception() is None:
+            with SessionLocal() as db:
+                record = db.query(ReviewRecord).filter(ReviewRecord.job_id == job_id).first()
+                advance = bool(record and record.review_delivery == "automatic" and is_fresh_chapter_queue(record))
+            if advance:
+                _schedule_review_job(job_id, resumed=False)
 
     task.add_done_callback(_cleanup)
     return True
@@ -1589,7 +1560,8 @@ async def _run_review_job(
     # Upgrade retained jobs created by an earlier build. On the next worker
     # start or manual recovery, a multi-chapter supervisory upload is converted
     # to the guided sequence without requiring another upload.
-    if not guided_mode and payload.get("workflow_type") == "supervisory_review":
+    retained_final = source_checkpoints.load("pipeline-final") if not guided_mode else None
+    if not guided_mode and not retained_final and payload.get("workflow_type") == "supervisory_review" and payload.get("processing_mode") != "batch":
         try:
             detected_units = guided_chapter_units(
                 await source_rows()
@@ -1713,6 +1685,10 @@ async def _run_review_job(
     )
     checkpoints = CheckpointManager(checkpoint_job_id, document_hash)
     current_stage = "pipeline-start"
+    mode = payload.get("processing_mode") or "standard"
+    options = {"mode":mode, "allow_standard_fallback":payload.get("flex_fallback", "standard") == "standard"}
+    processing_token = processing_options.set(options)
+    batch_session = None
 
     try:
         usage_snapshot: Dict[str, Any] = {}
@@ -1731,7 +1707,6 @@ async def _run_review_job(
             current_stage=current_stage,
             recoverable=True,
             payload_available=True,
-            started_at=datetime.now(timezone.utc),
         )
 
         final_hash = stable_hash({
@@ -1743,7 +1718,9 @@ async def _run_review_job(
         reviewer_name = clean_text(
             (payload.get("assessment_metadata") or {}).get("examiner_name")
         )
-        final_checkpoint = checkpoints.load(
+        delivery_hash = stable_hash({"document_hash": document_hash, "payload_hash": payload_hash, "delivery": "assembled-review-v1"})
+        delivery_checkpoint = checkpoints.load("delivery-final", expected_input_hash=delivery_hash)
+        final_checkpoint = delivery_checkpoint or checkpoints.load(
             "pipeline-final",
             expected_input_hash=final_hash,
         )
@@ -1840,7 +1817,22 @@ async def _run_review_job(
             review, runtime_context = enforce_current_submission_isolation(
                 review, runtime_context, document_hash=document_hash
             )
-            config = HybridAIConfig.from_env()
+            if payload.get("related_work_enabled"):
+                related_key = "related-work-discovery"
+                related = source_checkpoints.load(related_key)
+                if related is None:
+                    related = await search_related_work(
+                        await source_rows(), title=payload.get("related_work_title") or (payload.get("assessment_metadata") or {}).get("thesis_title", ""),
+                        keywords=payload.get("related_work_keywords", ""), filename=payload.get("filename", ""),
+                        sources=payload.get("related_work_sources") or DEFAULT_SOURCES,
+                    )
+                    source_checkpoints.save(related_key, related)
+                review["related_work"] = related
+            config = processing_config(HybridAIConfig.from_env(), mode)
+            review.setdefault("summary", {})["review_date_utc"] = payload.get("review_date_utc") or datetime.now(timezone.utc).date().isoformat()
+            if mode == "batch":
+                batch_session = BatchSession(config, source_checkpoints, job_id)
+                options["batch_session"] = batch_session
 
             async def progress_callback(value: int, message: str) -> None:
                 _assert_job_lease(job_id)
@@ -1907,7 +1899,7 @@ async def _run_review_job(
                         checkpoint_manager=checkpoints,
                         retry_generation=int(JOB_CACHE.get(job_id, {}).get("resume_count") or 0),
                     ),
-                    timeout=AI_JOB_MAX_SECONDS,
+                    timeout=259200 if mode == "batch" else AI_JOB_MAX_SECONDS,
                 )
                 checkpoints.save(
                     current_stage,
@@ -2043,7 +2035,7 @@ async def _run_review_job(
             )
 
         chapter_review_id = review.get("review_id")
-        if guided_mode and payload.get("guided_is_last"):
+        if guided_mode and payload.get("guided_is_last") and not delivery_checkpoint:
             # Preserve the final chapter as its own downloadable report before
             # assembling the complete-thesis result.
             if chapter_review_id:
@@ -2072,7 +2064,7 @@ async def _run_review_job(
                 filename=str(payload.get("filename") or ""),
                 expected_chapters=guided_units,
             )
-            config = HybridAIConfig.from_env()
+            config = processing_config(HybridAIConfig.from_env(), mode)
             if config.enabled and (config.openai_configured or config.deepseek_configured):
                 completed = set(review.get("summary", {}).get("guided_chapters_completed") or [])
                 audit_rows = [r for r in await source_rows() if r.get("chapter_number") in completed or not r.get("chapter_number")]
@@ -2103,9 +2095,15 @@ async def _run_review_job(
                 and merged_actionable
             )
 
+        if payload.get("related_work_enabled"):
+            review["related_work"] = source_checkpoints.load("related-work-discovery") or review.get("related_work") or {}
+        review.setdefault("summary", {}).update(processing_mode=mode, review_delivery=payload.get("review_delivery") or "guided")
+        review["summary"]["standard_fallback_used"] = bool(review["summary"].get("standard_fallback_used")) or any(row.get("standard_fallback_used") for row in usage_snapshot.get("usage", []) if isinstance(row, dict))
         if reviewer_name:
             review.setdefault("summary", {})["reviewer_name"] = reviewer_name
 
+        checkpoints.save("delivery-final", {"review": review, "usage_snapshot": usage_snapshot},
+            input_hash=delivery_hash, progress=97, message="Completed academic work saved for export-only recovery")
         current_stage = "document-export"
         _job_update(
             job_id,
@@ -2134,6 +2132,7 @@ async def _run_review_job(
                 if guided_mode
                 else bytes(payload.get("data") or original_source_data)
             )
+            export_step = "native Word comments"
             try:
                 annotated_data = await asyncio.to_thread(
                     build_annotated_docx,
@@ -2152,6 +2151,7 @@ async def _run_review_job(
                         + ", ".join(str(value) for value in native_audit.get("missing_finding_numbers") or expected_numbers)
                     )
 
+                export_step = "inline Word notes"
                 inline_data = await asyncio.to_thread(
                     build_inline_annotated_docx,
                     inline_export_source,
@@ -2165,6 +2165,7 @@ async def _run_review_job(
                         + ", ".join(str(value) for value in inline_audit.get("missing_finding_numbers") or expected_numbers)
                     )
 
+                export_step = "saving the annotated documents"
                 ANNOTATED_CACHE[review["review_id"]] = annotated_data
                 INLINE_ANNOTATED_CACHE[review["review_id"]] = inline_data
                 await asyncio.to_thread(save_annotated, review["review_id"], annotated_data)
@@ -2197,9 +2198,14 @@ async def _run_review_job(
                 raise
             except Exception as exc:
                 logger.exception("Annotated delivery bundle generation failed")
+                checkpoints.save("document-export-diagnostic", {
+                    "step": export_step, "exception_type": type(exc).__name__,
+                    "detail": clean_text(str(exc))[:1000],
+                })
                 raise ReviewOutputValidationError(
                     "The review findings were completed, but the annotated delivery bundle could not be generated. "
-                    "The job has been retained for export-stage recovery and has not been released as complete."
+                    "The job has been retained for export-stage recovery and has not been released as complete. "
+                    + f"Export step: {export_step}. Error type: {type(exc).__name__}. A diagnostic was saved for this job."
                 ) from exc
 
         if not review.get("external_assessment") and str(payload.get("filename") or "").lower().endswith(".docx"):
@@ -2221,64 +2227,33 @@ async def _run_review_job(
             next_chapter = int(guided_units[guided_current_index + 1])
             review.setdefault("summary", {}).update({
                 "guided_next_chapter": next_chapter,
-                "guided_continue_required": True,
+                "guided_continue_required": payload.get("review_delivery") != "automatic",
+                "review_delivery": payload.get("review_delivery") or "guided",
             })
             REVIEW_CACHE[review["review_id"]] = review
             await asyncio.to_thread(save_review_json, review["review_id"], review)
-            with SessionLocal() as db:
-                record = (
-                    db.query(ReviewRecord)
-                    .filter(ReviewRecord.job_id == job_id)
-                    .first()
-                )
-                if record:
-                    mapping = remember_chapter_review(
-                        parse_review_id_map(record.guided_review_ids_json),
-                        chapter=current_chapter,
-                        review_id=review["review_id"],
-                    )
-                    record.guided_review_ids_json = json.dumps(mapping)
-                    record.guided_tokens_used = int(record.guided_tokens_used or 0) + usage_token_total(usage_snapshot)
-                    record.tokens_used = int(record.guided_tokens_used or 0)
-                    record.review_id = review["review_id"]
-                    record.status = "awaiting_continue"
-                    record.progress = 100
-                    record.message = f"Chapter {current_chapter} review complete. Continue to Chapter {next_chapter}."
-                    record.current_stage = "awaiting-user"
-                    record.checkpoint_count = checkpoints.completed_count()
-                    record.recoverable = True
-                    record.overall_score = float((review.get("summary") or {}).get("overall_score") or 0)
-                    record.readiness_label = (review.get("summary") or {}).get("readiness_label")
-                    record.annotated_available = bool((review.get("summary") or {}).get("annotated_document_available"))
-                    record.completed_at = None
-                    record.lease_owner = None
-                    record.lease_expires_at = None
-                    db.commit()
-            _job_update(
-                job_id,
-                status="awaiting_continue",
-                progress=100,
-                message=f"Chapter {current_chapter} review complete. Continue to Chapter {next_chapter}.",
-                current_stage="awaiting-user",
-                checkpoint_count=checkpoints.completed_count(),
-                recoverable=True,
-                review_id=review["review_id"],
-                result_url=f'/api/review/{review["review_id"]}',
-                continue_url=f"/api/review/jobs/{job_id}/continue",
-                guided_mode=True,
-                guided_current_index=guided_current_index,
-                guided_total_units=len(guided_units),
-                guided_current_chapter=current_chapter,
-                guided_next_chapter=next_chapter,
+            state = await asyncio.to_thread(
+                finish_chapter_turn, job_id, worker_id=WORKER_ID,
+                current_index=guided_current_index, units=guided_units,
+                review_id=review["review_id"], usage_tokens=usage_token_total(usage_snapshot),
+                checkpoint_count=checkpoints.completed_count(), summary=review.get("summary") or {},
             )
+            if state is None:
+                raise asyncio.CancelledError()
+            # The transaction already saved the next queue state. Do not write
+            # a stale status after another worker may have claimed that chapter.
+            JOB_CACHE.pop(job_id, None)
             return
 
         with SessionLocal() as db:
             record = (
                 db.query(ReviewRecord)
                 .filter(ReviewRecord.job_id == job_id)
+                .with_for_update()
                 .first()
             )
+            if not record or record.status != "processing" or record.lease_owner != WORKER_ID:
+                raise asyncio.CancelledError()
             if record:
                 summary = review.get("summary") or {}
                 if guided_mode:
@@ -2359,7 +2334,7 @@ async def _run_review_job(
                 .filter(ReviewRecord.job_id == job_id)
                 .first()
             )
-            if record and record.status != "stopped":
+            if record and record.status == "processing" and record.lease_owner == WORKER_ID:
                 record.status = "queued"
                 record.message = "Review interrupted safely and queued for automatic recovery"
                 record.recoverable = bool(payload_available(job_id))
@@ -2461,6 +2436,9 @@ async def _run_review_job(
             checkpoint_count=checkpoints.completed_count(),
         )
     finally:
+        if batch_session is not None:
+            await batch_session.close()
+        processing_options.reset(processing_token)
         RUNNING_JOB_IDS.discard(job_id)
         heartbeat_task.cancel()
         try:
@@ -2537,6 +2515,13 @@ async def create_review(
     institutional_profile: str = Form("generic"),
     thesis_title: str = Form(""),
     review_scope: str = Form("chapter"),
+    review_delivery: str = Form("automatic"),
+    processing_mode: str = Form("flex"),
+    flex_fallback: str = Form("standard"),
+    related_work_enabled: bool = Form(False),
+    related_work_title: str = Form(""),
+    related_work_keywords: str = Form(""),
+    related_work_sources: List[str] = Form([]),
     selected_chapter: int = Form(0),
     guided_start_chapter: int = Form(0),
     section_scope_mode: str = Form("whole_chapter"),
@@ -2562,6 +2547,20 @@ async def create_review(
             status_code=400,
             detail="Choose Supervisory Review or External Assessment.",
         )
+    if review_delivery not in {"automatic", "guided"}:
+        raise HTTPException(status_code=400, detail="Choose automatic completion or chapter-by-chapter review.")
+    if processing_mode not in {"standard", "flex", "batch"} or flex_fallback not in {"standard", "wait"}:
+        raise HTTPException(status_code=400, detail="Choose a valid review processing option.")
+    if processing_mode in {"flex", "batch"} and not HybridAIConfig.from_env().openai_configured:
+        raise HTTPException(status_code=400, detail="Economy and Batch processing require the OpenAI API key to be configured.")
+    if related_work_enabled and (not related_work_sources or any(s not in SOURCES for s in related_work_sources)):
+        raise HTTPException(status_code=400, detail="Select at least one supported scholarly source.")
+    if len(related_work_title) > 300 or len(related_work_keywords) > 800:
+        raise HTTPException(status_code=400, detail="Use a title under 300 characters and keywords under 800 characters.")
+    if processing_mode == "batch":
+        review_delivery = "automatic"
+    if workflow_type == "external_assessment":
+        review_delivery = "automatic"
     if workflow_type == "external_assessment":
         if assessment_stage not in {
             "initial_examination",
@@ -2676,6 +2675,10 @@ async def create_review(
             review_scope=review_scope,
             units=guided_units,
         )
+        if processing_mode == "batch":
+            guided_mode = False
+            if len(guided_units) > 1 and review_scope != "chapter_range":
+                review_scope, selected_chapter, document_type = "full_thesis", 0, "full_thesis"
         if guided_mode:
             try:
                 guided_current_index = guided_start_index(
@@ -2839,6 +2842,14 @@ async def create_review(
             guided_units[guided_current_index] if guided_mode else 0
         ),
         "original_review_scope": submitted_review_scope,
+        "review_delivery": review_delivery,
+        "processing_mode": processing_mode,
+        "flex_fallback": flex_fallback,
+        "related_work_enabled": related_work_enabled,
+        "related_work_title": related_work_title.strip(),
+        "related_work_keywords": related_work_keywords.strip(),
+        "related_work_sources": list(dict.fromkeys(related_work_sources)),
+        "review_date_utc": datetime.now(timezone.utc).date().isoformat(),
     }
     try:
         manifest = save_job_payload(job_id, payload)
@@ -2869,6 +2880,8 @@ async def create_review(
             else selected_chapter or None
         ),
         review_depth=review_depth,
+        review_delivery=review_delivery,
+        processing_mode=processing_mode,
         submission_stage=submission_stage,
         workflow_type=workflow_type,
         assessment_stage=(
@@ -2929,6 +2942,10 @@ async def create_review(
         "stop_url": f"/api/review/jobs/{job_id}/stop",
         "estimated_pages": estimated_pages,
         "reserved_tokens": token_plan.reserved_tokens if token_reserved else 0,
+        "review_delivery": review_delivery,
+        "background_processing": True,
+        "processing_mode": processing_mode,
+        **_review_time_estimate(record, db),
         "guided_mode": guided_mode,
         "guided_current_index": guided_current_index,
         "guided_total_units": len(guided_units) if guided_mode else 0,
@@ -2998,6 +3015,8 @@ async def stop_review_job(
     db.commit()
 
     cancellation = await cancel_retained_background_responses(job_id, HybridAIConfig.from_env())
+    batch_cancellation = await cancel_batches(job_id, HybridAIConfig.from_env())
+    cancellation["failed"] += batch_cancellation["failed"]
     if cancellation["failed"]:
         logger.warning("Could not cancel %s retained background response(s) for stopped job %s", cancellation["failed"], job_id)
     # Remove the job from automatic execution before cancelling its task.
@@ -3350,7 +3369,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
                 else None
             ),
         })
-        timing = _review_time_estimate(record)
+        timing = _review_time_estimate(record, db)
         response.update(timing)
         if record.guided_mode:
             units = [int(value) for value in parse_json_list(record.guided_units_json) if str(value).isdigit()]
@@ -3378,7 +3397,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
         if record.status in {"queued", "processing"}:
             response["stop_url"] = f"/api/review/jobs/{job_id}/stop"
-        return response
+        return public_job_progress(response, record)
     response = {
         "job_id": record.job_id,
         "status": record.status,
@@ -3406,7 +3425,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
             record.completed_at.isoformat() if record.completed_at else None
         ),
     }
-    timing = _review_time_estimate(record)
+    timing = _review_time_estimate(record, db)
     response.update(timing)
     if record.guided_mode:
         units = [int(value) for value in parse_json_list(record.guided_units_json) if str(value).isdigit()]
@@ -3431,7 +3450,7 @@ async def get_review_job(job_id: str, request: Request, db: Session = Depends(ge
         response["resume_url"] = f"/api/review/jobs/{job_id}/resume"
     if record.status in {"queued", "processing"}:
         response["stop_url"] = f"/api/review/jobs/{job_id}/stop"
-    return response
+    return public_job_progress(response, record)
 
 
 @app.get("/api/review/{review_id}")

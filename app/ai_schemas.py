@@ -197,6 +197,8 @@ class AIUsageRecord(StrictModel):
     input_tokens: int = 0
     cached_input_tokens: int = 0
     cache_write_input_tokens: int = 0
+    service_tier: str = "default"
+    standard_fallback_used: bool = False
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
     request_id: str = ""

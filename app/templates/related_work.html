@@ -1,0 +1,13 @@
+{% if review and review.related_work %}
+<section class="portal-card">
+  <h2>Related works and suggested readings</h2>
+  <p>Search: {{ review.related_work.title }}. Keywords: {{ review.related_work.keywords|join(', ') }}.</p>
+  <p>{{ review.related_work.scope }}</p>
+  <p>{% for source in review.related_work.source_status %}{{ source.source|replace('_', ' ')|title }}: {{ source.status }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  <h3>Suggested readings</h3>
+  <ol>{% for work in review.related_work.suggested_readings %}
+    <li><a href="{{ work.url }}" target="_blank" rel="noopener noreferrer">{{ work.title }}</a><p>{{ work.authors|join(', ') }} ({{ work.year or 'year unavailable' }}). {{ work.venue }}</p><p>{{ work.reason }} Sources: {{ work.sources|join(', ') }}.</p>{% if work.open_access_url %}<a href="{{ work.open_access_url }}" target="_blank" rel="noopener noreferrer">Open-access copy</a>{% endif %}</li>
+  {% else %}<li>No matching suggestions were returned in this search.</li>{% endfor %}</ol>
+  {% for work in review.related_work.works if work.already_cited %}{% if loop.first %}<h3>Related works already cited</h3>{% endif %}<p><a href="{{ work.url }}" target="_blank" rel="noopener noreferrer">{{ work.title }}</a> ({{ work.year or 'year unavailable' }})</p>{% endfor %}
+</section>
+{% endif %}

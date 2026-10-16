@@ -76,6 +76,9 @@
                   {% endif %}
                 {% endif %}
               {% elif item.status in ['queued', 'processing'] %}
+                <a href="/review?job={{ item.job_id }}">View progress</a>
+                <small>{{ {'flex':'Economy', 'standard':'Standard', 'batch':'Overnight Batch'}.get(item.processing_mode, 'Standard') }} · {{ 'Continues automatically' if item.review_delivery == 'automatic' else 'Pauses after each chapter' }}</small>
+                {% if item.ready_estimate.check_back_at %}<small>Suggested check-back: <span data-ready-time="{{ item.ready_estimate.check_back_at }}">{{ item.ready_estimate.check_back_at }}</span></small><small>{{ item.ready_estimate.estimate_note }}</small>{% endif %}
                 <form method="post" action="/api/review/jobs/{{ item.job_id }}/stop" class="inline-action-form" onsubmit="return confirm('Stop this review? Completed checkpoints will be kept and you can resume later.');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <button type="submit" class="table-action-button table-action-danger">Stop review</button>
@@ -106,5 +109,6 @@
       {% endif %}
     </section>
   </main>
+  <script src="/static/review_extras.js?v=2.13.0"></script>
 </body>
 </html>

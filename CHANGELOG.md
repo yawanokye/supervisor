@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.13.0 background reviews and scholarly discovery
+
+- Added automatic chapter progression with durable transitions, aggregate progress and existing manual progression as an option.
+- Added saved-upload acknowledgement, cross-device progress links and approximate queue-aware readiness ranges.
+- Added Economy Flex, Standard and optional overnight Batch processing. Discounted modes use Luna for mechanical roles and Sol for academic roles.
+- Made standard-price fallback an explicit user selection; recorded returned service tiers and fallback usage for cost estimates.
+- Added JSONL grouping, stable custom IDs, durable Batch IDs, unordered result collection, partial-result recovery and explicit-stop cancellation. Uncertain submissions are reconciled before another paid submission is allowed.
+- Reserved worker capacity for routine reviews when overnight work is waiting.
+- Added optional Semantic Scholar, OpenAlex, Crossref and Europe PMC discovery with local title/keyword extraction, source status, deduplication, detected existing citations, bounded reviewer context and suggested readings.
+- Added reading lists to the live results, saved review page, supervisory report and external examination report.
+- Reproduced and fixed missing-section native comment reconciliation. Structural actions attach to labelled reviewer notes; passage comments retain strict source verification.
+- Saved the assembled academic result separately for export-only recovery, and retained the failed export step and exception details in a diagnostic checkpoint.
+- Preserved Stop against late worker claims and competing chapter completion.
+
 ## 2.12.0 clean revision and student action comments
 
 - Added bounded local edit proposals to primary, compact and verification schemas and preserved them through provider normalisation and the finding ledger.

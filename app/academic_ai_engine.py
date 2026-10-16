@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from .processing_options import batch_primary_enabled
+from .related_work import reviewer_context
+
 import asyncio
 import hashlib
 import inspect
@@ -1164,7 +1167,7 @@ def _batch_prompt(
 
     packet = {
         "review_context": {
-            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
+            "current_date_utc": summary.get("review_date_utc") or datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "document_label": summary.get("document_label"),
@@ -1290,6 +1293,7 @@ def _batch_prompt(
             "Apply the degree_specific_review_contract operationally. Do not stop after proofreading and broad structural comments. For each material issue, write enough detail to explain the defect, its academic consequence and the exact revision action. For research-intensive Master’s and doctoral work, assess theoretical and conceptual grounding, problem-gap evidence, construct roles, one-to-one alignment, design-language compatibility, citation and reference consistency and contribution wherever relevant. Do not repeat the programme level in routine comments. "
             "Apply the professional_scope_contract exactly: a single chapter receives a bounded chapter judgement, combined chapters receive separate chapter judgements plus an integration audit, and a complete thesis receives examiner-style chapter judgements, whole-thesis alignment, methods-results accuracy evaluation, contribution assessment and a defensible recommendation."
         ),
+        "related_work_discovery": reviewer_context(review.get("related_work")),
         "sections": sections,
     }
     return json.dumps(packet, ensure_ascii=False)
@@ -1304,7 +1308,7 @@ def _focused_section_recovery_prompt(
     summary = review.get("summary") or {}
     packet = {
         "review_context": {
-            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
+            "current_date_utc": summary.get("review_date_utc") or datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -1400,7 +1404,7 @@ def _verification_prompt(
             paragraphs[_pid(paragraph)] = _payload(paragraph)
     packet = {
         "review_context": {
-            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
+            "current_date_utc": summary.get("review_date_utc") or datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -1519,7 +1523,7 @@ def _compact_quality_audit_prompt(
 
     packet = {
         "review_context": {
-            "current_date_utc": datetime.now(timezone.utc).date().isoformat(),
+            "current_date_utc": summary.get("review_date_utc") or datetime.now(timezone.utc).date().isoformat(),
             "declared_academic_level": summary.get("academic_level"),
             "research_approach": summary.get("research_approach"),
             "review_depth": depth,
@@ -2404,7 +2408,7 @@ async def enrich_review_with_academic_ai(
             )
             for batch in section_batches
         ],
-        min(config.chapter_review_concurrency, max(1, len(section_batches))),
+        max(1, len(section_batches)) if batch_primary_enabled() else min(config.chapter_review_concurrency, max(1, len(section_batches))),
     )
     await _notify(
         progress_callback,

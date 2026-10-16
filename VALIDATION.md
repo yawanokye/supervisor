@@ -1,4 +1,16 @@
-# VProfessor 2.12.0 validation
+# VProfessor 2.13.0 validation
+
+Validated on 16 October 2026: **166 focused tests passed** with one dependency warning. The focused release suite covers background chapter progression, Stop and lease ownership, job permissions, upload acknowledgement ordering, queue/readiness estimates, Flex routing and pricing, Batch grouping and recovery, related-work discovery and exports, plus the previous clean-revision and annotation regressions. The exact test command is recorded in the release validation log.
+
+The export defect was reproduced with a canonical missing-section finding and no source quotation. Native export raised a reconciliation error, while inline export completed. The fix anchors the missing-section action to a labelled reviewer addition and passes native and inline audits in both grouped and individual comment modes. A separate interrupted-export test restores the saved assembled review and completes without invoking academic analysis, review, consistency-audit or prose-polish functions.
+
+The supplied manuscript was also processed locally with synthetic export findings from several chapters plus an absent-section action. Native and inline bundle audits passed. This was an export smoke check, not an academic review of that manuscript.
+
+A two-page suggested-reading sample was rendered and both pages visually inspected. Python modules compiled and browser JavaScript passed syntax checks. HTML templates rendered successfully. A Playwright run could not start because the runtime does not contain a Chromium executable, so browser interaction and mobile layout were not visually verified.
+
+Provider and scholarly API behaviour used mocked responses. No paid model request, live scholarly query from the app, live deployment or production job recovery was performed. Real account access, processing times and server-specific failures remain unverified. Historical full-suite results below describe older builds, not this update.
+
+## Historical 2.12.0 validation
 
 Validated on 16 October 2026. The focused release suite passed **100 tests** across the new clean revision, verified placement, professional comment quality, framework assurance, atomic annotation bundle, native comments, DOCX tables guided chapter export, GPT-6 hybrid costs, and model routing tests. All application Python modules parsed successfully and browser JavaScript passed syntax validation. The application imported successfully and registered the clean revision route.
 

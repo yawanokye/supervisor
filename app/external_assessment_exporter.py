@@ -338,6 +338,8 @@ def build_external_examination_report(review: Dict[str, Any]) -> bytes:
     doc.add_paragraph(_clean(assessment.get("examiner_declaration")))
     doc.add_paragraph("Examiner’s signature: ______________________________________")
     doc.add_paragraph("Date: ______________________________")
+    from .report_exporter import _add_related_readings
+    _add_related_readings(doc, review)
     return _bytes(doc)
 
 

@@ -31,7 +31,7 @@ from .annotation_placement import resolve_verified_location, validate_review_pla
 from .natural_supervisor_comment import natural_group_item, natural_supervisor_comment
 from .finding_order import priority_order_key
 
-ANNOTATION_EXPORT_VERSION = "2.11.0-verified-placement-native"
+ANNOTATION_EXPORT_VERSION = "2.13.0-verified-placement-structural-notes"
 PROFESSIONAL_REVIEW_PRODUCT_VERSION = "2.11.0-verified-placement-native"
 ACTIONABLE_STATUSES = {STATUS_PARTIAL, STATUS_MISSING, STATUS_MANUAL}
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -2570,6 +2570,30 @@ def _attach_lossless_reconciliation_comments(
             )
 
 
+def _attach_missing_section_native_notes(document, numbered_rows, *, author, initials):
+    """Anchor absent-section actions to labelled reviewer notes, never thesis text.
+
+    A missing section has no source passage. Creating its explicit correction
+    note before reconciliation preserves the canonical number without guessing
+    a paragraph elsewhere in the manuscript.
+    """
+    represented = _represented_finding_numbers(document, author=author)
+    heading = None
+    for number, row, comment in numbered_rows:
+        if (not number or number in represented or row.get("annotation_eligible") is False
+                or not _is_missing_section_finding(row)):
+            continue
+        if heading is None:
+            heading = document.add_paragraph()
+            heading.add_run("Reviewer notes for missing sections").bold = True
+            document.add_paragraph("These notes identify material to add. They are reviewer additions, not quotations from the submitted thesis.")
+        note = document.add_paragraph(f"Correction {number}: add or clarify the {_missing_section_name(row)} section.")
+        note.paragraph_format.keep_with_next = False
+        if not _add_native_comment(document, note.runs, f"{number}. " + _reconciliation_comment_body(row, comment), author=author, initials=initials):
+            raise RuntimeError(f"The reviewer note for missing-section finding {number} could not receive a native comment.")
+        represented.add(number)
+
+
 def _ensure_native_comment_reconciliation(
     document,
     numbered_rows: Sequence[Tuple[int, Dict[str, Any], str]],
@@ -2769,6 +2793,7 @@ def _build_grouped_annotated_docx(
         author=author,
         initials=initials,
     )
+    _attach_missing_section_native_notes(document, numbered_rows, author=author, initials=initials)
     _ensure_native_comment_reconciliation(
         document, numbered_rows, author=author, initials=initials
     )
@@ -2999,6 +3024,7 @@ def build_annotated_docx(
         author=author,
         initials=initials,
     )
+    _attach_missing_section_native_notes(document, numbered_rows, author=author, initials=initials)
     _ensure_native_comment_reconciliation(
         document, numbered_rows, author=author, initials=initials
     )

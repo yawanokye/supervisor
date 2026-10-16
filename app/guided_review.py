@@ -212,5 +212,6 @@ def merge_guided_reviews(
         "guided_chapter_report_count": len(reviews),
         "overall_score": round(sum(scores) / len(scores), 1) if scores else 0,
         "partial_report_generated": False,
+        "standard_fallback_used": any((item.get("summary") or {}).get("standard_fallback_used") for item in reviews),
     })
     return merged

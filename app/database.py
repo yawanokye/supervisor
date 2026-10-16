@@ -74,6 +74,9 @@ class ReviewRecord(Base):
     review_scope: Mapped[str] = mapped_column(String(30), nullable=False)
     selected_chapter: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     review_depth: Mapped[str] = mapped_column(String(30), nullable=False)
+    review_delivery: Mapped[str] = mapped_column(String(20), default="guided", nullable=False)
+    processing_mode: Mapped[str] = mapped_column(String(20), default="standard", nullable=False)
+    batch_deadline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     submission_stage: Mapped[str] = mapped_column(String(30), nullable=False)
     workflow_type: Mapped[str] = mapped_column(String(40), default="supervisory_review", nullable=False)
     assessment_stage: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -207,6 +210,9 @@ def _ensure_review_record_columns() -> None:
             "ALTER TABLE review_records ADD COLUMN assessment_stage VARCHAR(50)"
         )
     migration_columns = {
+        "review_delivery": "VARCHAR(20) DEFAULT 'guided'",
+        "processing_mode": "VARCHAR(20) DEFAULT 'standard'",
+        "batch_deadline_at": "TIMESTAMP",
         "document_hash": "VARCHAR(64)",
         "current_stage": "VARCHAR(180)",
         "checkpoint_count": "INTEGER DEFAULT 0",
@@ -260,6 +266,8 @@ def _ensure_review_record_columns() -> None:
         connection.execute(text("UPDATE review_records SET tokens_used=0 WHERE tokens_used IS NULL"))
         connection.execute(text("UPDATE review_records SET token_accounting_status='unmetered' WHERE token_accounting_status IS NULL OR token_accounting_status=''"))
         connection.execute(text("UPDATE review_records SET guided_mode=FALSE WHERE guided_mode IS NULL"))
+        connection.execute(text("UPDATE review_records SET review_delivery='guided' WHERE review_delivery IS NULL OR review_delivery=''"))
+        connection.execute(text("UPDATE review_records SET processing_mode='standard' WHERE processing_mode IS NULL OR processing_mode=''"))
         connection.execute(text("UPDATE review_records SET guided_current_index=0 WHERE guided_current_index IS NULL"))
         connection.execute(text("UPDATE review_records SET guided_total_units=0 WHERE guided_total_units IS NULL"))
         connection.execute(text("UPDATE review_records SET guided_tokens_used=0 WHERE guided_tokens_used IS NULL"))

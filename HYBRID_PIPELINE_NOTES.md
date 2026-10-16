@@ -1,4 +1,4 @@
-# Proposed hybrid review pipeline
+# Hybrid review pipeline
 
 The three-phase proposal is suitable as a product direction. The input rates were checked against official OpenAI documentation on 16 October 2026. These are short-context rates per million tokens and exclude regional premiums.
 
@@ -22,11 +22,11 @@ The 95 percent cached-input discount applies only to eligible matching input. Th
 
 The example is optional and does not change the deployment's existing model settings. The displayed costs remain estimates. The code does not infer a cache hit or claim a Batch discount merely because a review is asynchronous.
 
-## Separate features still needed
+## Batch and Flex added in 2.13.0
 
-Batch submission needs durable batch IDs and custom request IDs, collection of individual results, partial-failure handling, cancellation, recovery and an explicit overnight workflow in the interface. Successive dependent review stages may require separate Batch jobs and must not promise a whole review within one 24-hour window.
+Economy now requests Flex for Sol processing, with an explicit standard-price fallback option. Overnight Batch now includes durable batch IDs and custom request IDs, collection of individual results, partial-failure handling, cancellation, recovery and an explicit workflow in the interface. Successive dependent review stages may require separate Batch jobs and do not promise a whole review within one 24-hour window. Verification and export are outside the batched core work. See `UPDATE_v2.13.0.md`.
 
-Interactive follow-up needs an authorised conversation interface grounded in the relevant manuscript passages and previous review, with stable prefixes where useful and recorded actual cache hits. This release does not add Batch scheduling or a follow-up chat and should not be advertised as already providing them.
+Interactive follow-up still needs an authorised conversation interface grounded in the relevant manuscript passages and previous review, with stable prefixes where useful and recorded actual cache hits. This release does not add a follow-up chat.
 
 ## Official sources
 

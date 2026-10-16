@@ -188,6 +188,45 @@
             <div class="doctoral-note hidden" id="doctoralNote">Professional Doctorate and PhD work is assessed at doctoral standard. Professional Doctorate submissions normally follow the five-chapter structure. PhD submissions may use custom chapter numbers, order and titles, but every prescribed doctoral research element must be present and integrated.</div>
           </div>
 
+          <label class="field">
+            <span>Processing speed and cost</span>
+            <select name="processing_mode" id="processingMode">
+              <option value="flex" selected>Economy: best balance of cost and waiting time</option>
+              <option value="standard">Standard: urgent reviews</option>
+              <option value="batch">Overnight Batch: allow up to 24 hours per batch</option>
+            </select>
+            <small class="field-help">Economy uses discounted processing when available. Batch discounts the core academic packets; verification and export follow afterwards. All options continue after you close the browser.</small>
+          </label>
+          <label class="field" id="flexFallbackField">
+            <span>If economy capacity is unavailable</span>
+            <select name="flex_fallback">
+              <option value="standard" selected>Continue at standard pricing</option>
+              <option value="wait">Keep economy pricing and retry later</option>
+            </select>
+            <small class="field-help">Continuing at standard pricing costs more for the affected requests.</small>
+          </label>
+          <label class="field">
+            <span>Chapter progression</span>
+            <select name="review_delivery" id="reviewDelivery">
+              <option value="automatic" selected>Complete all uploaded chapters automatically</option>
+              <option value="guided">Pause after each chapter for my instruction</option>
+            </select>
+            <small class="field-help">Batch and external assessment complete automatically.</small>
+          </label>
+          <details class="field" id="relatedWorkOptions">
+            <summary>Related works and suggested readings</summary>
+            <label><input type="checkbox" name="related_work_enabled" id="relatedWorkEnabled" value="true"> Search scholarly sources to guide the review</label>
+            <div id="relatedWorkFields" class="hidden">
+              <label class="field"><span>Thesis title (optional override)</span><input type="text" name="related_work_title" maxlength="300" placeholder="Leave blank to use the uploaded title"></label>
+              <label class="field"><span>Keywords (optional override)</span><input type="text" name="related_work_keywords" maxlength="800" placeholder="Separate keywords with commas"></label>
+              <label><input type="checkbox" name="related_work_sources" value="semantic_scholar" checked> Semantic Scholar</label>
+              <label><input type="checkbox" name="related_work_sources" value="openalex" checked> OpenAlex</label>
+              <label><input type="checkbox" name="related_work_sources" value="crossref" checked> Crossref</label>
+              <label><input type="checkbox" name="related_work_sources" value="europe_pmc"> Europe PMC (biomedical topics)</label>
+              <p class="field-help">Sends the title and keywords to selected sources. Results include links, matching terms and suggested readings. Bibliographic matches guide the reviewer and require reading before use.</p>
+            </div>
+          </details>
+
           <div class="field" id="reviewScopeField">
             <span>Review scope</span>
             <div class="segmented scope-segmented">
@@ -399,6 +438,8 @@
           <h2 id="loadingTitle">Reviewing the document</h2>
           <p id="guidedStage" class="guided-stage hidden"></p>
           <p id="loadingMessage">Preparing the document for academic review.</p>
+          <p id="uploadReceipt" class="hidden">Upload saved. You may close this page and return through <a href="/portal">Review history</a> on any device.</p>
+          <p id="readyEstimate" aria-live="polite"></p>
           <div class="progress-track"><span id="progressBar"></span></div>
           <small id="progressText">Starting…</small>
           <button type="button" id="stopReviewButton" class="loading-stop-button hidden">Stop review</button>
@@ -418,6 +459,8 @@
           </div>
 
           <div class="metrics" id="metrics"></div>
+          <p id="processingSummary" class="field-help"></p>
+          <section id="relatedWorkResults" class="result-section hidden"></section>
 
           <section class="result-section external-assessment-result hidden" id="externalAssessmentSection">
             <div class="section-title">
@@ -517,6 +560,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=2.12.0"></script>
+  <script src="/static/review_extras.js?v=2.13.0"></script>
+  <script src="/static/app.js?v=2.13.0"></script>
 </body>
 </html>

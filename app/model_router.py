@@ -795,6 +795,8 @@ class CostAwareAIProvider:
             + written / 1_000_000 * p_write
             + usage.output_tokens / 1_000_000 * p_out
         )
+        if usage.provider == "openai" and usage.service_tier in {"batch", "flex"}:
+            cost *= .5
         return usage.model_copy(update={"estimated_cost_usd": round(cost, 6)})
 
     def _combine_usage(
@@ -815,6 +817,8 @@ class CostAwareAIProvider:
                 first.cached_input_tokens + final.cached_input_tokens
             ),
             cache_write_input_tokens=first.cache_write_input_tokens + final.cache_write_input_tokens,
+            service_tier=first.service_tier if first.service_tier == final.service_tier else "mixed",
+            standard_fallback_used=first.standard_fallback_used or final.standard_fallback_used,
             output_tokens=first.output_tokens + final.output_tokens,
             estimated_cost_usd=round(
                 first.estimated_cost_usd + final.estimated_cost_usd, 6

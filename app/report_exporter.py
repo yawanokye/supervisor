@@ -1039,6 +1039,45 @@ def _add_clean_revision_record(doc, review: Dict[str, Any]) -> None:
         doc.add_paragraph("The following findings remain in this report because their exact comment locations could not be verified: " + ", ".join(str(n) for n in pending) + ".")
 
 
+def _add_reading_link(doc, url, *, keep_next=False):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.opc.constants import RELATIONSHIP_TYPE
+    from .related_work import safe_url
+    url = safe_url(url)
+    if not url:
+        return
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.keep_with_next = keep_next
+    link = OxmlElement("w:hyperlink")
+    link.set(qn("r:id"), paragraph.part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True))
+    run = OxmlElement("w:r"); text = OxmlElement("w:t"); text.text = url
+    run.append(text); link.append(run); paragraph._p.append(link)
+
+
+def _add_related_readings(doc, review):
+    packet = review.get("related_work")
+    if not packet:
+        return
+    doc.add_heading("Related works and suggested readings", level=1)
+    doc.add_paragraph("Search title: " + str(packet.get("title", "")))
+    doc.add_paragraph("Keywords: " + ", ".join(packet.get("keywords") or []))
+    doc.add_paragraph(str(packet.get("scope", "Bibliographic suggestions require verification.")))
+    doc.add_paragraph("Sources: " + "; ".join(s["source"].replace("_", " ") + ": " + s["status"] for s in packet.get("source_status", [])))
+    for label, works in (("Suggested readings", packet.get("suggested_readings") or []), ("Related works already cited", [w for w in packet.get("works", []) if w.get("already_cited")])):
+        doc.add_heading(label, level=2)
+        if not works:
+            doc.add_paragraph("No matching works returned in this search.")
+        for work in works:
+            citation = doc.add_paragraph("; ".join(work.get("authors") or []) + f" ({work.get('year') or 'year unavailable'}). " + str(work.get("title", "")) + ". " + str(work.get("venue", "")), style="List Number")
+            citation.paragraph_format.keep_with_next = True
+            _add_reading_link(doc, work.get("url", ""), keep_next=True)
+            reason = doc.add_paragraph(str(work.get("reason", "")) + " Sources: " + ", ".join(work.get("sources") or []))
+            if work.get("open_access_url"):
+                reason.paragraph_format.keep_with_next = True
+                _add_reading_link(doc, work["open_access_url"])
+
+
 def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     """Build a supervisor/examiner report aligned with the supplied review specification.
 
@@ -1269,6 +1308,7 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
 
     _add_clean_revision_record(doc, review)
+    _add_related_readings(doc, review)
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
@@ -1464,6 +1504,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
 
     _add_clean_revision_record(doc, review)
+    _add_related_readings(doc, review)
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()

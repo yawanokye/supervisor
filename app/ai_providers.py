@@ -5,6 +5,8 @@ import copy
 import random
 import os
 from .model_compatibility import capabilities, compatible_effort, adapt_rejected_parameter
+from .processing_options import processing_options
+from .openai_batch import BatchTransportError
 from .provider_state import request_state
 import hashlib
 import json
@@ -701,10 +703,15 @@ class OpenAIProvider:
                 cache_source.encode("utf-8")
             ).hexdigest()[:64]
 
+        options = processing_options.get()
+        if options.get("mode") == "flex" and model.lower().startswith("gpt-6.1-sol"):
+            base_body["service_tier"] = "flex"
+
         use_background = bool(
             self.config.openai_background_mode_enabled
             and caps["background"]
             and effort in {"high", "xhigh", "max"}
+            and base_body.get("service_tier") != "flex"
         )
         if use_background:
             base_body["background"] = True
@@ -757,6 +764,8 @@ class OpenAIProvider:
                     "Content-Type": "application/json",
                 }
                 timeout = request_timeout_seconds or self.config.timeout_seconds
+                if base_body.get("service_tier") == "flex":
+                    timeout = max(900, timeout)
                 retries = self.config.max_retries if request_max_retries is None else request_max_retries
                 manager, state_key, state_hash = request_state(body)
                 saved = manager.load(state_key, expected_input_hash=state_hash) if manager else None
@@ -788,8 +797,25 @@ class OpenAIProvider:
                             if 'reasoning' in body:
                                 request_body['reasoning_effort'] = body['reasoning']['effort']
                         try:
-                            payload, request_id = await _post_json_with_retry(url=f'{self.config.openai_base_url}/'+('chat/completions' if endpoint=='chat' else 'responses'), headers=headers, payload=request_body,
-                                timeout_seconds=min(90,timeout) if body.get('background') else timeout, max_retries=retries)
+                            batch_session = options.get("batch_session")
+                            if options.get("mode") == "batch" and schema_model.__name__ == "AcademicReviewBatch":
+                                if not batch_session or endpoint != 'responses':
+                                    raise AIProviderError('The Batch review session is not configured for Responses requests.')
+                                try:
+                                    payload, request_id = await batch_session.request(request_body)
+                                except BatchTransportError as error:
+                                    raise AIProviderError(str(error)) from error
+                            else:
+                                try:
+                                    payload, request_id = await _post_json_with_retry(url=f'{self.config.openai_base_url}/'+('chat/completions' if endpoint=='chat' else 'responses'), headers=headers, payload=request_body,
+                                        timeout_seconds=min(90,timeout) if body.get('background') else timeout, max_retries=retries)
+                                except AIProviderError as error:
+                                    if request_body.get('service_tier') == 'flex' and options.get('allow_standard_fallback') and 'HTTP 429' in str(error) and re.search(r'resource[_\s]+unavailable', str(error), re.I):
+                                        fallback_body = {k:v for k,v in request_body.items() if k != 'service_tier'}
+                                        payload, request_id = await _post_json_with_retry(url=f'{self.config.openai_base_url}/responses',headers=headers,payload=fallback_body,timeout_seconds=timeout,max_retries=0)
+                                        payload['_vprof_flex_fallback'] = True
+                                    else:
+                                        raise
                             if endpoint == 'chat':
                                 message = ((payload.get('choices') or [{}])[0].get('message') or {}).get('content','')
                                 if (payload.get('choices') or [{}])[0].get('finish_reason') == 'length':
@@ -830,6 +856,8 @@ class OpenAIProvider:
                 )
                 usage = AIUsageRecord(
                     provider="openai",
+                    service_tier=payload.get("_vprof_service_tier") or payload.get("service_tier") or "default",
+                    standard_fallback_used=bool(payload.get("_vprof_flex_fallback")),
                     model=model,
                     purpose=purpose,
                     input_tokens=input_tokens,

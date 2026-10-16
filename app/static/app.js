@@ -802,6 +802,8 @@ function renderExternalAssessment(review) {
 function renderReview(review) {
   currentReview = review;
   const s = review.summary;
+  window.VProfExtras.readings(review.related_work, document.getElementById("relatedWorkResults"));
+  document.getElementById("processingSummary").textContent = s.processing_mode ? `Processing: ${{flex: "Economy", standard: "Standard", batch: "Overnight Batch"}[s.processing_mode] || s.processing_mode}. ${s.standard_fallback_used ? "Some requests used the selected standard-price fallback." : ""}` : "";
   const isExternal = Boolean(review.external_assessment);
   document.getElementById("resultTitle").textContent = isExternal
     ? `External assessment: ${s.filename}`
@@ -952,12 +954,14 @@ async function readJsonSafely(response) {
 }
 
 function updateProgress(job) {
+  document.getElementById("uploadReceipt").classList.remove("hidden");
+  window.VProfExtras.estimate(job, document.getElementById("readyEstimate"));
   if (job.guided_mode && Number(job.guided_total_units || 0) > 1) {
     const position = Number(job.guided_current_index || 0) + 1;
     const total = Number(job.guided_total_units || 0);
     const chapter = job.guided_current_chapter || job.guided_units?.[position - 1] || position;
     loadingTitle.textContent = `Reviewing Chapter ${chapter}`;
-    guidedStage.textContent = `Chapter ${position} of ${total} · Only this chapter is being reviewed now`;
+    guidedStage.textContent = `Chapter ${position} of ${total} · ${job.review_delivery === "automatic" ? "Remaining chapters continue automatically" : "Pauses after this chapter for your instruction"}`;
     guidedStage.classList.remove("hidden");
   } else {
     loadingTitle.textContent = "Reviewing the document";
@@ -1417,7 +1421,10 @@ showAllButton.addEventListener("click", () => {
 
 
 async function resumeActiveReviewJob() {
-  const raw = localStorage.getItem(ACTIVE_REVIEW_JOB_KEY);
+  const linkedJob = new URLSearchParams(window.location.search).get("job");
+  const raw = linkedJob && /^[a-f0-9]{32}$/.test(linkedJob)
+    ? JSON.stringify({ jobId: linkedJob, pollUrl: `/api/review/jobs/${linkedJob}`, startedAt: Date.now() })
+    : localStorage.getItem(ACTIVE_REVIEW_JOB_KEY);
   if (!raw) return;
 
   let activeJob = null;
@@ -1465,5 +1472,19 @@ async function resumeActiveReviewJob() {
 }
 
 updateUploadWorkflow();
+
+const processingMode = document.getElementById("processingMode");
+function updateProcessingOptions() {
+  const batch = processingMode.value === "batch";
+  document.getElementById("flexFallbackField").classList.toggle("hidden", processingMode.value !== "flex");
+  const delivery = document.getElementById("reviewDelivery");
+  const forced = batch || selectedWorkflow() === "external_assessment";
+  if (forced) delivery.value = "automatic";
+  delivery.querySelector('option[value="guided"]').disabled = forced;
+}
+processingMode.addEventListener("change", updateProcessingOptions);
+form.querySelectorAll('input[name="workflow_type"]').forEach(el => el.addEventListener("change", updateProcessingOptions));
+document.getElementById("relatedWorkEnabled").addEventListener("change", event => document.getElementById("relatedWorkFields").classList.toggle("hidden", !event.target.checked));
+updateProcessingOptions();
 
 resumeActiveReviewJob();

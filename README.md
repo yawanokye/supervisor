@@ -1,6 +1,18 @@
-# V-Professor Supervisory Review 2.12.0
+# V-Professor Supervisory Review 2.13.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
+
+## Changes in 2.13.0
+
+Upload, wait for the saved-upload acknowledgement, then close the browser. New multi-chapter submissions continue automatically by default. Review history provides a progress link that works after signing in on another device. A guided option still pauses after each chapter.
+
+Economy uses Flex for Sol requests and is the recommended balance of price and waiting time. Standard uses the existing live configuration. Overnight Batch packages independent academic packets, including the source evidence and grading instructions, into JSONL. Follow-up verification and document generation run afterwards. Batch has a 24-hour window per submission; successive submissions can extend the whole review. The displayed readiness range is approximate and updates with the queue, document size, review depth and progress.
+
+Optional related-work discovery uses the uploaded title and keywords, with editable overrides. Choose Semantic Scholar, OpenAlex and Crossref, plus optional Europe PMC for biomedical topics. Linked suggested readings, detected existing citations, matching title terms and source availability appear in the dashboard and Word report. Search uses bounded metadata requests without an extra model call, and reuses the results across chapters.
+
+Fixed a native export failure for genuinely absent sections: their comments now attach to explicit reviewer correction notes. Existing passages still require verified source anchors. A completed delivery checkpoint allows an interrupted export to recover without repeating academic model calls.
+
+Deploy the full archive and restart web and worker services. See `UPDATE_v2.13.0.md` for settings, recovery steps and validation limits.
 
 ## Changes in 2.12.0
 

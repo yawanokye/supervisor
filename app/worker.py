@@ -10,6 +10,7 @@ from .checkpointing import load_job_payload, payload_available
 from .database import ReviewRecord, SessionLocal, init_db
 from .main import JOB_LEASE_SECONDS, _normalise_db_datetime, _run_review_job
 from .storage import ensure_storage
+from .background_review import is_fresh_chapter_queue
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -29,8 +30,13 @@ def _next_job_id(excluded_job_ids: Optional[set[str]] = None) -> Optional[tuple[
     now = datetime.now(timezone.utc)
     excluded = excluded_job_ids or set()
     with SessionLocal() as db:
+        active_batches = db.query(ReviewRecord).filter(ReviewRecord.status == "processing", ReviewRecord.processing_mode == "batch", ReviewRecord.lease_expires_at > now).count()
+        batch_limit = max(1, int(os.getenv("VPROF_BATCH_WORKER_LIMIT", str(max(1, WORKER_CONCURRENCY - 1)))))
+        query = db.query(ReviewRecord)
+        if active_batches >= batch_limit:
+            query = query.filter(ReviewRecord.processing_mode != "batch")
         records = (
-            db.query(ReviewRecord)
+            query
             .filter(
                 ReviewRecord.status.in_(["queued", "processing", "paused"]),
                 ReviewRecord.recoverable.is_(True),
@@ -41,6 +47,8 @@ def _next_job_id(excluded_job_ids: Optional[set[str]] = None) -> Optional[tuple[
             .all()
         )
         for record in records:
+            if record.processing_mode == "batch" and active_batches >= batch_limit:
+                continue
             if record.job_id in excluded:
                 continue
             lease_expires = _normalise_db_datetime(record.lease_expires_at)
@@ -59,7 +67,7 @@ def _next_job_id(excluded_job_ids: Optional[set[str]] = None) -> Optional[tuple[
                 record.error = "The saved upload is unavailable to the worker. Submit the document again."
                 db.commit()
                 continue
-            resumed = bool(
+            resumed = not is_fresh_chapter_queue(record) and bool(
                 int(record.resume_count or 0) > 0
                 or int(record.checkpoint_count or 0) > 0
                 or record.started_at is not None
