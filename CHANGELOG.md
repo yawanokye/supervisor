@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.13.1 inline annotation reconciliation
+
+- Reproduced the worker's inline `No verified source location` RuntimeError through missing-section note omission and post-highlighting source verification.
+- Preserved immutable source text in the inline locator map before adding red reference markers.
+- Added explicit reviewer notes for absent sections when their normal notes are disabled or omitted. No unrelated manuscript paragraph is used as a substitute anchor.
+- Preserved a single reference marker when restoring a filtered inline note.
+- Included the finding number in any remaining inline placement error.
+- Updated application and inline export versions and browser cache identifiers.
+- Added regression coverage for the two reproduced failures, manual-location preservation, ordered structural notes, and inline-only recovery without academic provider calls.
+- Passed 172 focused tests and visually inspected both pages of a synthetic inline export.
+
 ## 2.13.0 background reviews and scholarly discovery
 
 - Added automatic chapter progression with durable transitions, aggregate progress and existing manual progression as an option.

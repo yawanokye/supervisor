@@ -1,6 +1,12 @@
-# V-Professor Supervisory Review 2.13.0
+# V-Professor Supervisory Review 2.13.1
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
+
+## Inline export repair in 2.13.1
+
+Fixed the reported `No verified source location is available for this inline finding` failure. The inline exporter now verifies against the original text even after adding red highlights and reference markers. Missing-section findings receive explicit reviewer notes when their preferred end-note formatter is disabled or does not produce a note. Unverified ordinary passages still remain in the report for manual location checking.
+
+Deploy this full package to both web and worker services, then select Recover on the existing job. The completed academic review and provider checkpoints remain available. See `UPDATE_v2.13.1.md` for the repair, changed files and checks.
 
 ## Changes in 2.13.0
 

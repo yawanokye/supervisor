@@ -1,4 +1,14 @@
-# VProfessor 2.13.0 validation
+# VProfessor 2.13.1 validation
+
+Validated on 16 October 2026: **172 focused tests passed** with one dependency warning. This includes the previous 166-test release suite, five new inline reconciliation cases and an additional inline-failure recovery case.
+
+The supplied worker traceback identifies `build_inline_annotated_docx` calling reconciliation and raising `No verified source location is available for this inline finding`. Two local cases reproduced that exact failure in the previous exporter. A missing-section finding fails when its preferred note is disabled or omitted. A previously verified passage can fail after a reference marker changes its text and its presentation note needs restoration. The patch preserves the original verification text and gives absent sections their own labelled reviewer additions.
+
+Regression tests verify correct note placement, retained manual-location findings, distinct ordered finding numbers, and no duplicate reference marker. Recovery is tested after failures in both native and inline export, with academic analysis, review, final consistency audit and prose-polish functions forbidden from being called.
+
+A two-page synthetic inline document was rendered and both pages visually inspected. Red highlighting, blue italic notes and the explicit missing-section action were readable. Python compilation and JavaScript syntax validation passed. No paid model request or production recovery was performed from this workspace. The exact production finding that triggered the traceback is unavailable, so validation establishes the reproduced failure paths rather than claiming to have inspected the live job.
+
+## Historical 2.13.0 validation
 
 Validated on 16 October 2026: **166 focused tests passed** with one dependency warning. The focused release suite covers background chapter progression, Stop and lease ownership, job permissions, upload acknowledgement ordering, queue/readiness estimates, Flex routing and pricing, Batch grouping and recovery, related-work discovery and exports, plus the previous clean-revision and annotation regressions. The exact test command is recorded in the release validation log.
 
