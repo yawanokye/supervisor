@@ -128,7 +128,7 @@ def test_portal_and_api_expose_explicit_continue_action():
     portal = Path("app/templates/portal.html").read_text(encoding="utf-8")
     javascript = Path("app/static/app.js").read_text(encoding="utf-8")
     assert '@app.post("/api/review/jobs/{job_id}/continue"' in source
-    assert 'status="awaiting_continue"' in source
+    assert 'record.status = "awaiting_continue"' in Path("app/background_review.py").read_text()
     assert "Continue to next chapter" in portal
     assert 'job.status === "awaiting_continue"' in javascript
     assert "requestChapterContinue" in javascript
@@ -143,7 +143,8 @@ def test_every_multichapter_supervisory_upload_is_guided_and_visible():
     assert "Upgrade retained jobs created by an earlier build" in source
     assert 'id="loadingTitle"' in page
     assert 'id="guidedStage"' in page
-    assert "Only this chapter is being reviewed now" in javascript
+    assert "Remaining chapters continue automatically" in javascript
+    assert "Pauses after this chapter for your instruction" in javascript
     assert 'name="guided_start_chapter"' in page
     assert "scanGuidedChapterPlan" in javascript
     assert "Each completed annotated chapter will become the working copy" in javascript
