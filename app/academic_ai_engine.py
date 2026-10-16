@@ -1811,6 +1811,8 @@ def _finding_row(issue: Dict[str, Any], paragraph_index: Dict[str, Dict[str, Any
         "required_action": clean_text(issue.get("required_action", "")),
         "illustrative_guidance": clean_text(issue.get("illustrative_guidance", "")),
         "guidance_type": issue.get("guidance_type", "direct_correction"),
+        "direct_edits": list(issue.get("direct_edits") or []),
+        "edit_resolves_finding": issue.get("edit_resolves_finding") is True,
         "source_verification_required": bool(issue.get("source_verification_required")),
         "context_guard_adjusted": bool(issue.get("context_guard_adjusted")),
         "problematic_quote": clean_text(issue.get("problematic_quote", "")),
@@ -1929,6 +1931,8 @@ def _apply_verification(primary_issues: List[Dict[str, Any]], verification: Dict
             "guidance_type": value.get("guidance_type", source.get("guidance_type", "direct_correction")),
             "source_verification_required": value.get("source_verification_required", source.get("source_verification_required", False)),
             "context_guard_adjusted": value.get("context_guard_adjusted", source.get("context_guard_adjusted", False)),
+            "direct_edits": list(value.get("direct_edits") or []),
+            "edit_resolves_finding": value.get("edit_resolves_finding") is True,
         })
     values = list(by_id.values())
     values.extend(verification.get("missed_issues") or [])

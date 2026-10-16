@@ -68,7 +68,10 @@ Context and factual accuracy rules:
 39. In a complete thesis, dissertation or project work, also check the title page, declaration, abstract, table of contents, conditional lists of tables and figures, references and applicable appendices or instruments. Do not request these components in a single-chapter submission.
 40. When research objectives require inferential testing, check for corresponding hypotheses or a defensible approved alternative. Where objectives are descriptive, research questions may be sufficient. Do not require both mechanically when the design and institutional format do not call for both.
 41. The supplied work is evidence for the current review job only. Do not convert its names, sectors, constructs, wording, examples or weaknesses into reusable defaults for another submission. Every new job starts with an empty study-specific context; only generic academic standards persist.
-42. Treat benchmark and test documents as disposable examples. Never mention their names or domain details in a review of a different work, and never rewrite a generic rule around one example topic."""
+42. Treat benchmark and test documents as disposable examples. Never mention their names or domain details in a review of a different work, and never rewrite a generic rule around one example topic.
+43. For an unambiguous local spelling, grammar, punctuation, repeated phrase or plain-expression repair, supply direct_edits with the exact original span and replacement. Use only verbatim source wording for original. Supply an empty list when the repair requires the student's evidence or a scholarly decision. Set edit_resolves_finding true only if these exact edits completely resolve a purely editorial finding at this location. Never mark a pattern across a section as resolved by editing one instance.
+44. Direct edits must preserve meaning, citations, quotations, figures, construct names, hypotheses, study design, research stage, certainty and conclusions. Never invent or choose between conflicting item counts, sample sizes, coefficients, sources, ethics approvals, pilot findings or methods. Leave these as concise student actions naming the conflict and the evidence needed to resolve it. If mediation, moderation or the framework does not match the objectives, explain the precise mismatch for the student instead of silently redesigning the study.
+45. Keep the corrected manuscript readable. Comments are for unresolved decisions or evidence, not announcements of spelling changes already made. State the actual problem and the next action in natural prose. Do not impose a fixed diagnosis-consequence-example formula on every comment."""
 
 
 
@@ -184,7 +187,7 @@ Rules:
 5. Use only supplied paragraph IDs and exact source quotations where available.
 6. State the exact supplied section or subsection heading in every finding.
 7. When a finding concerns a table, name the supplied table number and title and cite the relevant table row. Do not infer a table finding from narrative in another section.
-8. Do not rewrite the thesis. Provide focused revision guidance.
+8. Preserve the student's argument and research decisions. Supply only safe local editorial replacements through direct_edits. Give focused student guidance for substantive changes.
 9. Illustrative guidance must be short, contextual and based only on supplied facts. If a verified detail is unavailable, omit the illustration and give a direct revision instruction without placeholders.
 10. Group repeated language problems into one pattern-level issue per section.
 11. Compare objective-question correspondence by meaning and scope, not identical wording.

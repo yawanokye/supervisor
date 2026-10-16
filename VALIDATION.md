@@ -1,4 +1,16 @@
-# VProfessor 2.11.0 validation
+# VProfessor 2.12.0 validation
+
+Validated on 16 October 2026. The focused release suite passed **100 tests** across the new clean revision, verified placement, professional comment quality, framework assurance, atomic annotation bundle, native comments, DOCX tables guided chapter export, GPT-6 hybrid costs, and model routing tests. All application Python modules parsed successfully and browser JavaScript passed syntax validation. The application imported successfully and registered the clean revision route.
+
+The new tests cover protected numbers, citations, uncertainty, negation, research stage, logical conjunctions, methods and construct names. They also check preserved formatting across runs, student comments after an edit, unresolved numerical conflicts, ambiguous duplicate evidence, existing comments, table cells, source quotations, comment-budget retention, authorised download access and cached export delivery.
+
+A rendered one-page sample was visually inspected. Its grammar repair preserved bold and italic text, while conflicting item counts and ethics-stage statements remained unchanged with two native Word comments. Comment records and exact anchors were checked in Word XML because headless PDF export does not show margin comments.
+
+This release validation used synthetic review payloads and mocked provider behaviour. No live model review or paid API call was performed. The full historical suite was not rerun for this release. The historical validation below is retained as a record of the preceding version.
+
+The cost tests distinguish ordinary input, actual cache reads, cache writes and output, including long-context rates. They confirm that live requests receive no Batch discount and that the optional role profile routes mechanical work to Luna and academic work to Sol.
+
+## Historical 2.11.0 validation
 
 Validated locally on 4 October 2026 with Python 3.12 and the pinned runtime dependencies.
 

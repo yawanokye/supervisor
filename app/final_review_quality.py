@@ -490,6 +490,10 @@ def _merge_rows(primary: Dict[str, Any], duplicate: Dict[str, Any]) -> Dict[str,
     if _is_evidence_locked(duplicate) and not _is_evidence_locked(primary):
         primary, duplicate = duplicate, primary
     output = dict(primary)
+    # A merged finding can contain an additional unresolved obligation. Keep
+    # its comment even if every local editorial replacement succeeds.
+    output["direct_edits"] = list(primary.get("direct_edits") or []) + list(duplicate.get("direct_edits") or [])
+    output["edit_resolves_finding"] = False
     if _severity_rank(duplicate.get("severity")) < _severity_rank(output.get("severity")):
         output["severity"] = duplicate.get("severity")
     output["confidence"] = max(float(output.get("confidence") or 0), float(duplicate.get("confidence") or 0))

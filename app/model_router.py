@@ -776,13 +776,23 @@ class CostAwareAIProvider:
     def _price_usage(self, usage: AIUsageRecord) -> AIUsageRecord:
         if usage.estimated_cost_usd > 0:
             return usage
-        uncached = max(0, usage.input_tokens - usage.cached_input_tokens)
+        cached = min(usage.input_tokens, max(0, usage.cached_input_tokens))
+        written = min(max(0, usage.input_tokens - cached), max(0, usage.cache_write_input_tokens))
+        uncached = max(0, usage.input_tokens - cached - written)
         p_in, p_cache, p_out = self.config.prices_for_model(
             usage.provider, usage.model
         )
+        # Current GPT-6 Luna/Sol standard rates include distinct cache writes
+        # and a long-context multiplier. Never apply a Batch discount to the
+        # live/background Responses requests used by this application.
+        modern = usage.provider == "openai" and usage.model.lower().startswith(("gpt-6-luna", "gpt-6.1-sol"))
+        p_write = p_in * 1.25 if modern else p_in
+        if modern and usage.input_tokens > 272_000:
+            p_in, p_cache, p_write, p_out = p_in * 2, p_cache * 2, p_write * 2, p_out * 1.5
         cost = (
             uncached / 1_000_000 * p_in
-            + usage.cached_input_tokens / 1_000_000 * p_cache
+            + cached / 1_000_000 * p_cache
+            + written / 1_000_000 * p_write
             + usage.output_tokens / 1_000_000 * p_out
         )
         return usage.model_copy(update={"estimated_cost_usd": round(cost, 6)})
@@ -804,6 +814,7 @@ class CostAwareAIProvider:
             cached_input_tokens=(
                 first.cached_input_tokens + final.cached_input_tokens
             ),
+            cache_write_input_tokens=first.cache_write_input_tokens + final.cache_write_input_tokens,
             output_tokens=first.output_tokens + final.output_tokens,
             estimated_cost_usd=round(
                 first.estimated_cost_usd + final.estimated_cost_usd, 6

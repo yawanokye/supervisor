@@ -1022,6 +1022,23 @@ def _add_manual_location_findings(doc: Document, review: Dict[str, Any]) -> None
     _add_professional_finding_table(doc, ledger, "Corrections requiring location checking")
 
 
+def _add_clean_revision_record(doc, review: Dict[str, Any]) -> None:
+    revision = review.get("clean_revision") or {}
+    if not revision.get("passed"):
+        return
+    doc.add_heading("Clean revised document", level=1)
+    edits = revision.get("applied_edits") or []
+    doc.add_paragraph(
+        f"The separate clean revised Word copy contains {len(edits)} permitted local wording corrections. "
+        "Its margin comments cover remaining student actions. The findings in this report describe the original reviewed text."
+    )
+    for edit in edits:
+        doc.add_paragraph(f"Finding {edit.get('finding_number')}: “{edit.get('original')}” changed to “{edit.get('replacement')}”.")
+    pending = revision.get("manual_location_finding_numbers") or []
+    if pending:
+        doc.add_paragraph("The following findings remain in this report because their exact comment locations could not be verified: " + ", ".join(str(n) for n in pending) + ".")
+
+
 def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     """Build a supervisor/examiner report aligned with the supplied review specification.
 
@@ -1251,6 +1268,7 @@ def _build_spec_aligned_docx_report(review: Dict[str, Any]) -> bytes:
     footer_run.font.size = Pt(7.5)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
 
+    _add_clean_revision_record(doc, review)
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
@@ -1445,6 +1463,7 @@ def build_docx_report(review: Dict[str, Any]) -> bytes:
     footer_run.font.size = Pt(7.5)
     footer_run.font.color.rgb = RGBColor.from_string(MUTED)
 
+    _add_clean_revision_record(doc, review)
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()

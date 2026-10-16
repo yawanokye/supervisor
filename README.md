@@ -1,6 +1,18 @@
-# V-Professor Supervisory Review 2.11.0
+# V-Professor Supervisory Review 2.12.0
 
 V-Professor provides degree-calibrated supervisory review and external assessment for Bachelor’s, Non-Research Master’s, Research Master’s/MPhil, Professional Doctorate and PhD work.
+
+## Changes in 2.12.0
+
+The new **Download clean revised document** option produces a readable manuscript with permitted local wording corrections applied and native Word comments for remaining student actions. Corrected language issues do not receive redundant comments. The source manuscript, ordinary annotated copies and full review report remain available.
+
+Direct edits pass a conservative exact-text gate. The gate accepts recognised spelling and British English changes, agreement/article repairs, adjacent repetition and redundant spacing or repeated commas. It preserves numerical values, citations, quotations, content words, research stage, uncertainty and negation. Changes outside these limits require student action. The system does not silently resolve competing item counts, ethics claims, sample sizes or research design choices.
+
+The export rechecks each comment against the revised passage and records accepted edits. Unverified comment locations remain explicit in the report. Major issues and pending editorial repairs are retained even when they exceed the normal comment budget. No additional model call is introduced by the clean export.
+
+An optional `vprofessor-gpt6-hybrid.env.example` configures Luna mechanical roles and Sol academic roles. `HYBRID_PIPELINE_NOTES.md` explains verified token prices, cache conditions and the separate work needed for Batch scheduling and interactive follow-up. This release does not add those two features.
+
+See `UPDATE_v2.12.0.md` for deployment files, validation and the limits of older review regeneration.
 
 ## Changes in 2.11.0
 

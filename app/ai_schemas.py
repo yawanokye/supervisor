@@ -84,6 +84,12 @@ class AcademicStrength(StrictModel):
     observation: str
 
 
+class PermittedTextEdit(StrictModel):
+    original: str
+    replacement: str
+    kind: Literal["spelling", "grammar", "punctuation", "local_repetition", "expression"]
+
+
 class AcademicIssue(StrictModel):
     finding_id: str
     category: AcademicCategory
@@ -101,6 +107,8 @@ class AcademicIssue(StrictModel):
     guidance_type: GuidanceType = "direct_correction"
     source_verification_required: bool = False
     context_guard_adjusted: bool = False
+    direct_edits: List[PermittedTextEdit] = Field(default_factory=list)
+    edit_resolves_finding: bool = False
 
 
 class AcademicSectionReview(StrictModel):
@@ -141,6 +149,8 @@ class CompactAcademicIssue(StrictModel):
     required_action: str = ""
     source_verification_required: bool = False
     supervisory_comment: str = ""
+    direct_edits: List[PermittedTextEdit] = Field(default_factory=list)
+    edit_resolves_finding: bool = False
 
 
 class CompactAcademicSectionReview(StrictModel):
@@ -171,6 +181,8 @@ class AcademicIssueVerification(StrictModel):
     guidance_type: GuidanceType = "direct_correction"
     source_verification_required: bool = False
     context_guard_adjusted: bool = False
+    direct_edits: List[PermittedTextEdit] = Field(default_factory=list)
+    edit_resolves_finding: bool = False
 
 
 class AcademicVerificationBatch(StrictModel):
@@ -184,6 +196,7 @@ class AIUsageRecord(StrictModel):
     purpose: str
     input_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
     request_id: str = ""

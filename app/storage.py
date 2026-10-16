@@ -226,6 +226,22 @@ def load_inline_annotated(review_id: str) -> Optional[bytes]:
     return _load_db_result_artifact(review_id, "-inline-annotated.docx")
 
 
+def save_clean_revised(review_id: str, data: bytes) -> None:
+    target = _path(review_id, "-clean-revised.docx")
+    temp = target.with_suffix(".docx.tmp")
+    temp.write_bytes(data)
+    temp.replace(target)
+    _save_db_result_artifact(review_id, "-clean-revised.docx", data,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
+def load_clean_revised(review_id: str) -> Optional[bytes]:
+    target = _path(review_id, "-clean-revised.docx")
+    if target.exists():
+        return target.read_bytes()
+    return _load_db_result_artifact(review_id, "-clean-revised.docx")
+
+
 def storage_status() -> Dict[str, Any]:
     root = ensure_storage()
     path_text = str(root)

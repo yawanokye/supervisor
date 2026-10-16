@@ -880,6 +880,16 @@ function renderReview(review) {
   }
 
   renderExternalAssessment(review);
+  const cleanRevisedButton = document.getElementById("cleanRevisedButton");
+  if (cleanRevisedButton) {
+    const cleanAvailable = !isExternal && Boolean(s.clean_revised_document_available ||
+      (s.annotation_regeneration_available && /\.docx$/i.test(s.filename || "")));
+    cleanRevisedButton.classList.toggle("hidden", !cleanAvailable);
+    cleanRevisedButton.onclick = cleanAvailable ? () => {
+      window.location.href = `/api/review/${encodeURIComponent(review.review_id)}/clean-revised.docx`;
+    } : null;
+    cleanRevisedButton.title = "Applies safe wording corrections and leaves Word comments for student action.";
+  }
   const annotatedButton = document.getElementById("annotatedButton");
   const inlineAnnotatedButton = document.getElementById("inlineAnnotatedButton");
   const canRegenerateAnnotations = Boolean(s.annotation_regeneration_available);

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.12.0 clean revision and student action comments
+
+- Added bounded local edit proposals to primary, compact and verification schemas and preserved them through provider normalisation and the finding ledger.
+- Added a separate clean revised manuscript download with strict exact-source, protected-content and overlap checks.
+- Preserved formatting through minimal text-node replacements. Fields, objects, tracked passages, source quotations and existing commented passages are protected from direct editing.
+- Removed redundant comments for fully resolved local editorial findings. Kept substantive and pattern-level student actions and rechecked their locations after editing.
+- Recorded applied edits and unplaced actions in the review report. Preserved the original review and annotated outputs.
+- Kept all critical and major actions and all pending editorial proposals through the comment budget.
+- Added persistent local, object-store and database-backed clean export storage and authorised download recovery.
+- Added the clean download to the results and saved review pages, with browser cache versioning.
+- Added an optional GPT-6 Luna and GPT-6.1 Sol role profile, current Luna price and reasoning-effort support, and cache-write-aware cost estimates for these models.
+- Documented verified Batch pricing and prompt caching conditions. Batch scheduling and interactive follow-up chat remain separate features.
+- Passed 100 focused regression checks. Visually inspected a rendered sample and checked its native Word comments.
+
 ## 2.11.0 accurate review and varied supervisory comments
 
 - Verified annotation locations against source text, chapter, section and table-row evidence; removed arbitrary body-paragraph placement fallbacks.

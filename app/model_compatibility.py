@@ -13,6 +13,7 @@ def capabilities(model: str) -> dict:
     reasoning = value.startswith(('gpt-5', 'gpt-6', 'o1', 'o3', 'o4'))
     efforts = _EFFORTS[:]
     if value.startswith(('gpt-6.1-sol', 'gpt-6-astra')): efforts = ['low','medium','high','xhigh','max']
+    elif value.startswith('gpt-6-luna'): efforts = ['none','low','medium','high','xhigh','max']
     elif value.startswith(('o1','o3','o4')): efforts = ['low','medium','high']
     elif value.startswith('gpt-5') and not value.startswith(('gpt-5.1','gpt-5.2','gpt-5.4','gpt-5.5','gpt-5.6')): efforts = ['minimal','low','medium','high']
     result = {'endpoint': 'chat' if value.startswith(('gpt-3.5', 'gpt-4-')) or value == 'gpt-4' else 'responses',

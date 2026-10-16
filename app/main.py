@@ -49,6 +49,7 @@ from .document_parser import clean_text, parse_document
 from .source_cache import parse_document_cached
 from .results_ledger import run_final_consistency_audit
 from .comment_prose_quality import polish_selected_comments
+from .clean_revision import CLEAN_REVISION_VERSION, build_clean_revised_docx
 from .supplementary_usage import append_usage
 from .provider_cancellation import cancel_retained_background_responses
 from .guided_review import (
@@ -85,6 +86,7 @@ from .review_scope import (
 from .submission_readiness import attach_supervisory_readiness
 from .final_review_quality import attach_canonical_findings
 from .storage import ensure_storage, load_annotated, load_inline_annotated, load_review_json, save_annotated, save_inline_annotated, save_review_json, storage_status
+from .storage import load_clean_revised, save_clean_revised
 from .token_budget import (
     DEFAULT_SUPERVISOR_TOKENS,
     TOKEN_ACCOUNTING_ENABLED,
@@ -106,7 +108,7 @@ from .token_budget import (
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-APP_VERSION = "2.11.0"
+APP_VERSION = "2.12.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_CONTEXT_FILES = 5
@@ -2200,6 +2202,12 @@ async def _run_review_job(
                     "The job has been retained for export-stage recovery and has not been released as complete."
                 ) from exc
 
+        if not review.get("external_assessment") and str(payload.get("filename") or "").lower().endswith(".docx"):
+            clean_data = await asyncio.to_thread(
+                build_clean_revised_docx, original_source_data, review, reviewer_name or None,
+            )
+            await asyncio.to_thread(save_clean_revised, review["review_id"], clean_data)
+
         _assert_job_lease(job_id)
         REVIEW_CACHE[review["review_id"]] = review
         await asyncio.to_thread(
@@ -3629,6 +3637,37 @@ async def export_inline_annotated_document(review_id: str, request: Request, db:
             )
         },
     )
+
+
+@app.get("/api/review/{review_id}/clean-revised.docx")
+async def export_clean_revised_document(review_id: str, request: Request, db: Session = Depends(get_db)):
+    user = _current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    record = _authorised_review_record(db, user, review_id)
+    review = REVIEW_CACHE.get(review_id) or load_review_json(review_id)
+    if not review or review.get("external_assessment"):
+        raise HTTPException(status_code=404, detail="A supervisory review is required.")
+    summary = review.setdefault("summary", {})
+    data = (load_clean_revised(review_id)
+            if summary.get("clean_revision_version") == CLEAN_REVISION_VERSION else None)
+    if data is None:
+        if not record.job_id or not payload_available(record.job_id):
+            raise HTTPException(status_code=409, detail="The original Word file is unavailable. Submit a fresh review.")
+        payload = await asyncio.to_thread(load_job_payload, record.job_id)
+        source = bytes((payload or {}).get("data") or b"")
+        filename = str((payload or {}).get("filename") or record.filename or "")
+        if not source or not filename.lower().endswith(".docx"):
+            raise HTTPException(status_code=409, detail="A Word source file is required for a clean revision.")
+        author = clean_text((record.lecturer.full_name if record.lecturer else "") or summary.get("reviewer_name") or user.full_name)
+        data = await asyncio.to_thread(build_clean_revised_docx, source, review, author or None)
+        await asyncio.to_thread(save_clean_revised, review_id, data)
+        await asyncio.to_thread(save_review_json, review_id, review)
+        REVIEW_CACHE[review_id] = review
+    stem = os.path.splitext(os.path.basename(record.filename or "thesis.docx"))[0]
+    return Response(content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{stem}-clean-revised.docx"'})
 
 
 @app.get("/api/review/{review_id}/export.docx")

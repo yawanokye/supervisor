@@ -1438,6 +1438,7 @@ def _mark_span_and_insert_comment(
     *,
     author: str,
     initials: str,
+    include_markers: Optional[bool] = None,
 ) -> bool:
     """Anchor a native comment to an exact text range.
 
@@ -1474,7 +1475,7 @@ def _mark_span_and_insert_comment(
     if not marked_elements:
         return False
     reference_numbers = _group_reference_numbers_from_comment(comment)
-    if _native_group_location_markers_enabled() and reference_numbers:
+    if (include_markers if include_markers is not None else _native_group_location_markers_enabled()) and reference_numbers:
         _insert_red_reference_markers_after_span(
             paragraph, trailing_element, reference_numbers, trailing_source_run
         )

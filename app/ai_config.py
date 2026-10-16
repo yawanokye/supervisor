@@ -934,6 +934,9 @@ class HybridAIConfig:
         if value.startswith("gpt-6.1-sol"):
             return (_env_float("PRICE_OPENAI_61_SOL_INPUT", 2.0), _env_float("PRICE_OPENAI_61_SOL_CACHED_INPUT", .10), _env_float("PRICE_OPENAI_61_SOL_OUTPUT", 10.0))
 
+        if value.startswith("gpt-6-luna"):
+            return (_env_float("PRICE_OPENAI_6_LUNA_INPUT", .10), _env_float("PRICE_OPENAI_6_LUNA_CACHED_INPUT", .01), _env_float("PRICE_OPENAI_6_LUNA_OUTPUT", .50))
+
         if value.startswith("gpt-5.6-luna"):
             return (
                 _env_float("PRICE_OPENAI_LUNA_INPUT", 1.00),

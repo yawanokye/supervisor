@@ -184,6 +184,8 @@ def _normalise_model_payload(raw: Dict[str, Any], schema_model: type[BaseModel])
                 "academic_consequence": str(item.get("academic_consequence") or item.get("consequence") or item.get("implication") or "").strip(),
                 "required_action": str(item.get("required_action") or item.get("action") or item.get("recommendation") or "").strip(),
                 "supervisory_comment": str(item.get("supervisory_comment") or "").strip(),
+                "direct_edits": _list(item.get("direct_edits")),
+                "edit_resolves_finding": item.get("edit_resolves_finding") is True,
                 "illustrative_guidance": str(item.get("illustrative_guidance") or item.get("example") or item.get("illustrative_example") or "").strip(),
             })
         normalised_section = {
@@ -594,6 +596,7 @@ class DeepSeekProvider:
                     purpose=purpose,
                     input_tokens=input_tokens,
                     cached_input_tokens=cached_tokens,
+                    cache_write_input_tokens=_usage_value(usage_source, "prompt_tokens_details.cache_write_tokens"),
                     output_tokens=output_tokens,
                     request_id=request_id or payload.get("id", ""),
                 )
@@ -831,6 +834,7 @@ class OpenAIProvider:
                     purpose=purpose,
                     input_tokens=input_tokens,
                     cached_input_tokens=cached_tokens,
+                    cache_write_input_tokens=_usage_value(usage_source, "input_tokens_details.cache_write_tokens"),
                     output_tokens=output_tokens,
                     request_id=request_id or payload.get("id", ""),
                 )

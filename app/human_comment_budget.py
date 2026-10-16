@@ -66,7 +66,9 @@ def apply_human_comment_budget(review: Dict[str, Any]) -> Dict[str, Any]:
         )
         repeated = repeated or equivalent
         category_crowded = category_counts[category] >= max(3, limit // 4) and severity not in {"critical", "major"}
-        must_keep = severity == "critical"
+        # The prose budget must never hide a material student action or discard
+        # a proposed local repair before the clean-revision safety gate sees it.
+        must_keep = severity in {"critical", "major"} or bool(row.get("direct_edits"))
         if must_keep or (len(selected) < limit and not repeated and not category_crowded):
             selected.append(row)
             if root:
