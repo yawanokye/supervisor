@@ -26,6 +26,7 @@ from .annotated_exporter import (
     _source_locator_map,
     _add_missing_section_inline_bottom_notes,
     _is_missing_section_finding,
+    _missing_section_name,
     _RICH_RED_RE,
     COMMENT_RED,
     _with_comment_reference,
@@ -39,12 +40,12 @@ from .annotated_exporter import (
 from .comment_quality import public_text
 from .final_review_quality import build_canonical_finding_rows
 from .reviewer_language import professionalise_reviewer_language
-from .annotation_placement import resolve_verified_location, validate_review_placements
+from .annotation_placement import locator_text, resolve_verified_location, validate_review_placements
 from .natural_supervisor_comment import natural_supervisor_comment
 from .document_parser import clean_text, normalised
 
-INLINE_ANNOTATION_EXPORT_VERSION = "2.11.0-verified-placement-inline"
-PROFESSIONAL_INLINE_PRODUCT_VERSION = "2.11.0-verified-placement-inline"
+INLINE_ANNOTATION_EXPORT_VERSION = "2.13.1-verified-inline-structural-reconciliation"
+PROFESSIONAL_INLINE_PRODUCT_VERSION = INLINE_ANNOTATION_EXPORT_VERSION
 REVISION_RED = "C00000"
 COMMENT_BLUE = RGBColor(0x00, 0x70, 0xC0)
 
@@ -316,6 +317,7 @@ def _ensure_inline_comment_reconciliation(
     document: Document,
     review_rows: Sequence[Dict[str, Any]],
     source_map: Dict[int, Dict[str, Any]],
+    highlighted_numbers: Optional[set[int]] = None,
 ) -> None:
     """Restore any final finding lost through grouping, truncation or anchoring."""
     represented = _represented_inline_finding_numbers(document)
@@ -330,14 +332,27 @@ def _ensure_inline_comment_reconciliation(
         if number > 0:
             by_number[number] = row
 
+    structural_anchor = None
     for number in sorted(set(by_number) - represented, reverse=True):
         row = by_number[number]
         comment = _lossless_inline_text(row, _row_comment(row))
+        if _is_missing_section_finding(row):
+            # Absent text has no source quotation. The preferred end-note
+            # formatter may be disabled or reject legacy wording, but the
+            # final ledger still requires an explicit structural action.
+            if structural_anchor is None:
+                document.add_paragraph("Reviewer notes for missing sections")
+                structural_anchor = document.add_paragraph(
+                    "These reviewer additions identify material to add. They are not quotations from the submitted thesis."
+                )
+            _add_lossless_inline_comment(structural_anchor, number, f"Missing section: {_missing_section_name(row)}. {comment}")
+            represented.add(number)
+            continue
         anchor = _lossless_inline_anchor(document, row, source_map)
         if anchor is None:
-            raise RuntimeError("No verified source location is available for this inline finding.")
+            raise RuntimeError(f"No verified source location is available for inline finding {number}. The finding remains in the review for manual location checking.")
         text = _visible_paragraph_text(anchor)
-        if text:
+        if text and number not in (highlighted_numbers or set()):
             quote = clean_text(row.get("problematic_quote") or "")
             if quote and quote in text:
                 start = text.find(quote)
@@ -373,6 +388,10 @@ def build_inline_annotated_docx(
     """
     document = Document(io.BytesIO(source_bytes))
     source_map, _ = _source_locator_map(document)
+    # Freeze the verified input text before highlights and reference markers
+    # alter paragraph XML. Paragraph objects remain the original anchors.
+    for locator in source_map.values():
+        locator["text"] = locator_text(locator)
     academic_level = (review.get("summary") or {}).get("academic_level")
     synchronise_export_fallback_findings(review, source_map)
     # Rebuild after export fallbacks have been synchronised. Numbering is then
@@ -451,6 +470,7 @@ def build_inline_annotated_docx(
     if _specific_corrections_required_enabled():
         _add_specific_corrections_required(document, numbered_rows)
 
+    highlighted_numbers: set[int] = set()
     for paragraph_number, group in sorted(after_anchor.items(), reverse=True):
         locator = source_map.get(paragraph_number) or {}
         paragraph = locator.get("paragraph")
@@ -464,14 +484,16 @@ def build_inline_annotated_docx(
         grouped = _format_comment_group(comments, anchor_context=text)
         for start, end in sorted(set(spans), reverse=True):
             start, end = _expand_to_safe_text_span(text, start, end)
-            _mark_span_red(paragraph, start, end, _group_reference_numbers_from_comment(grouped))
+            numbers = _group_reference_numbers_from_comment(grouped)
+            if _mark_span_red(paragraph, start, end, numbers):
+                highlighted_numbers.update(numbers)
 
         _add_inline_comment(paragraph, comments)
 
     # Grouped presentation can be intentionally concise, but it must never
     # remove a final canonical number. Restore any omitted finding as a
     # standalone, naturally worded inline note before release.
-    _ensure_inline_comment_reconciliation(document, review_rows, source_map)
+    _ensure_inline_comment_reconciliation(document, review_rows, source_map, highlighted_numbers)
 
     output = io.BytesIO()
     document.save(output)
